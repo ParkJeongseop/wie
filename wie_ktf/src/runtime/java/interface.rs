@@ -8,7 +8,7 @@ use alloc::{
 use core::mem::size_of;
 
 use java_runtime::classes::java::util::Vector;
-use jvm::{ClassInstanceRef, Jvm, runtime::JavaLangString};
+use jvm::{ClassInstance, ClassInstanceRef, Jvm, runtime::JavaLangString};
 use wipi_types::ktf::java::WIPIJBInterface;
 
 use wie_core_arm::{Allocator, ArmCore, EmulatedFunction, ResultWriter, SvcId};
@@ -35,8 +35,8 @@ async fn handle_java_interface_svc(core: &mut ArmCore, jvm: &mut Jvm, id: SvcId)
         JavaSvcId::GetField => EmulatedFunction::call(&get_field, core, &mut ()).await?.write(core, lr),
         JavaSvcId::JbUnk4 => EmulatedFunction::call(&jb_unk4, core, &mut ()).await?.write(core, lr),
         JavaSvcId::JbUnk5 => EmulatedFunction::call(&jb_unk5, core, &mut ()).await?.write(core, lr),
-        JavaSvcId::JbUnk7 => EmulatedFunction::call(&jb_unk7, core, &mut ()).await?.write(core, lr),
-        JavaSvcId::JbUnk8 => EmulatedFunction::call(&jb_unk8, core, &mut ()).await?.write(core, lr),
+        JavaSvcId::JbUnk7 => EmulatedFunction::call(&jb_monitor_enter, core, jvm).await?.write(core, lr),
+        JavaSvcId::JbUnk8 => EmulatedFunction::call(&jb_monitor_exit, core, jvm).await?.write(core, lr),
         JavaSvcId::RegisterClass => EmulatedFunction::call(&register_class, core, jvm).await?.write(core, lr),
         JavaSvcId::RegisterJavaString => EmulatedFunction::call(&register_java_string, core, jvm).await?.write(core, lr),
         JavaSvcId::CallNative => EmulatedFunction::call(&call_native, core, &mut ()).await?.write(core, lr),
@@ -264,14 +264,39 @@ async fn jb_unk5(_: &mut ArmCore, _: &mut (), a0: u32, a1: u32) -> Result<u32> {
     Ok(0)
 }
 
-async fn jb_unk7(_: &mut ArmCore, _: &mut (), a0: u32) -> Result<u32> {
-    tracing::warn!("stub jb_unk7({a0:#x})");
+// KTF synchronized blocks enter/exit monitors through these bridge functions.
+// Forward them to the JVM monitor so ownership checks in Object.wait/notify and
+// monitorexit line up with what the AOT-compiled ARM code does.
+async fn jb_monitor_enter(core: &mut ArmCore, jvm: &mut Jvm, ptr_object: u32) -> Result<u32> {
+    tracing::trace!("jb_monitor_enter({ptr_object:#x})");
+
+    if ptr_object == 0 {
+        tracing::warn!("jb_monitor_enter on null object");
+        return Ok(0);
+    }
+
+    let instance: Box<dyn ClassInstance> = Box::new(JavaClassInstance::from_raw(ptr_object, core));
+    let result = jvm.monitor_enter(&instance).await;
+    if let Err(x) = result {
+        return Err(JvmSupport::to_wie_err(jvm, x).await);
+    }
 
     Ok(0)
 }
 
-async fn jb_unk8(_: &mut ArmCore, _: &mut (), a0: u32) -> Result<u32> {
-    tracing::warn!("stub jb_unk8({a0:#x})");
+async fn jb_monitor_exit(core: &mut ArmCore, jvm: &mut Jvm, ptr_object: u32) -> Result<u32> {
+    tracing::trace!("jb_monitor_exit({ptr_object:#x})");
+
+    if ptr_object == 0 {
+        return Ok(0);
+    }
+
+    let instance: Box<dyn ClassInstance> = Box::new(JavaClassInstance::from_raw(ptr_object, core));
+    // ARM-side exception unwinding (longjmp) can skip paired exits; tolerate
+    // unbalanced exits instead of throwing IllegalMonitorStateException.
+    if jvm.monitor_exit(&instance).await.is_err() {
+        tracing::warn!("jb_monitor_exit: current thread does not own the monitor of {ptr_object:#x}");
+    }
 
     Ok(0)
 }
