@@ -103,10 +103,15 @@ complete; audio and device control are weak.
 
 - **IMPL**: XFile / FileInputStream / FileOutputStream (file I/O), Vibration,
   MathFP, Graphics2D (`drawImage`, `createMaskableImage`), Toolkit,
-  `WieAudioClip` playback (open/play/loop/stop/close via backend SMAF audio).
+  `WieAudioClip` playback (open/play/loop/stop/close via backend SMAF audio),
+  ByteToCharEUC_KR (undocumented xce EUC-KR decoder; games construct it for
+  Korean text).
 - **STUB**: AudioSystem volume, Device (setColorMode/backlight/keytone/…;
   isKeyToneEnabled exists but returns a constant), BackLight, ProgressBar,
-  XTextField (input/paint), XDisplay (copyLCD/refresh), Graphics2D.captureLCD.
+  XTextField (input/paint), XDisplay (copyLCD/refresh), Graphics2D.captureLCD,
+  XFile.fsavail (reports a constant 10MB free).
+- **MISSING (methods, found empirically)**: XDisplay.drawImageEx
+  (masked-image blit; non-fatal for the games seen so far).
 - **MISSING** (10, in the spec but not implemented): Graphics3D, Object3D
   (3D), SMS, SMSListener, SMSMessage (messaging), Call, PhoneBook, SISImage,
   ResourceAllocException, UserStopException.
@@ -125,6 +130,19 @@ complete; audio and device control are weak.
   RecordStore delete/list, Font face/style rendering (size only).
 - **MISSING / thin**: `media.control`, most of `io` (Generic Connection),
   `pki`; Manager only handles SMAF.
+
+## Platform Runtime Gaps (empirical)
+
+Not API-crate surface, but blockers found while running real games:
+
+- **LGT stdlib imports** — the C library import table is partially identified.
+  Known: sprintf (0x3f7, identified via argument probing), strcpy/strcat/…,
+  memcpy/memset, time/localtime. Unknown: 0x415 (two nearby pointer args,
+  called ~70x at startup; wrong semantics eventually corrupt the app heap —
+  blocks 데몬헌터) and 0x404 (single seed-like call, srand-shaped; stubbed).
+- **LGT WIPI-C SVC id 900** — unmapped category block (100-per-category table:
+  100 kernel / 200 graphics / 400 db / 600 net / 800 time / 1200 media).
+- **KTF loader** — some apps fail init with "wipi init failed 0xffffffff".
 
 ## Carrier Extensions (not implemented)
 
@@ -161,7 +179,7 @@ carrier and collecting `tracing::warn` output from STUB paths shows which
 missing/stubbed APIs are actually called — fill those first rather than
 implementing surface that no game exercises.
 
-Latest 31-game sample (16 KTF / 8 LGT / 7 SKT, 8s headless each): 24 run and
-paint, 6 fail with a reported error, 1 crashes (a pre-existing KTF loader
+Latest 31-game sample (16 KTF / 8 LGT / 7 SKT, 8s headless each): 26 run and
+paint, 4 fail with a reported error, 1 crashes (a pre-existing KTF loader
 failure). Keep this document updated in the same change set as the
 implementation work it describes.
