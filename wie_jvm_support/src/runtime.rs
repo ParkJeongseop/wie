@@ -179,6 +179,11 @@ where
         self.system.current_task_id()
     }
 
+    fn exit(&self, code: i32) {
+        tracing::debug!("Runtime::exit({code})");
+        self.system.platform().exit();
+    }
+
     fn stdin(&self) -> IOResult<FileDescriptorId> {
         Err(IOError::Unsupported)
     }

@@ -20,7 +20,7 @@ use super::{KtfJvmWord, Result, class_definition::JavaClassDefinition, field::Ja
 #[derive(Clone)]
 pub struct JavaClassInstance {
     pub ptr_raw: u32,
-    core: ArmCore,
+    pub(crate) core: ArmCore,
 }
 
 impl JavaClassInstance {
@@ -109,6 +109,15 @@ impl ClassInstance for JavaClassInstance {
         }
 
         Ok(self.ptr_raw == other.unwrap().ptr_raw)
+    }
+
+    fn identity(&self) -> usize {
+        self.ptr_raw as usize
+    }
+
+    fn shallow_clone(&self) -> JvmResult<Box<dyn ClassInstance>> {
+        // KTF instances live in ARM memory; return a handle to the same object.
+        Ok(Box::new(Self::from_raw(self.ptr_raw, &self.core)))
     }
 
     fn get_field(&self, field: &dyn Field) -> JvmResult<JavaValue> {

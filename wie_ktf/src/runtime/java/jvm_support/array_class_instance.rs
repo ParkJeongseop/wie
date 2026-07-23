@@ -94,6 +94,14 @@ impl ArrayClassInstance for JavaArrayClassInstance {
         Ok(self.class_instance.ptr_raw == other.unwrap().class_instance.ptr_raw)
     }
 
+    fn identity(&self) -> usize {
+        self.class_instance.ptr_raw as usize
+    }
+
+    fn shallow_clone(&self) -> JvmResult<Box<dyn ClassInstance>> {
+        Ok(Box::new(Self::from_raw(self.class_instance.ptr_raw, &self.class_instance.core)))
+    }
+
     fn store(&mut self, offset: usize, values: Box<[JavaValue]>) -> JvmResult<()> {
         let element_size = self.element_size().unwrap();
 

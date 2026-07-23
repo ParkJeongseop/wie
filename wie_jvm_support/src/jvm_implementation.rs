@@ -42,8 +42,14 @@ impl JvmImplementation for RustJavaJvmImplementation {
         Box::pin(future::ready(Ok(Box::new(ClassDefinitionImpl::from_class_proto(proto, context)) as _)))
     }
 
-    async fn define_class_java(&self, _jvm: &Jvm, data: &[u8]) -> JvmResult<Box<dyn ClassDefinition>> {
-        ClassDefinitionImpl::from_classfile(data).map(|x| Box::new(x) as Box<_>)
+    async fn define_class_java(&self, jvm: &Jvm, data: &[u8]) -> JvmResult<Box<dyn ClassDefinition>> {
+        match ClassDefinitionImpl::from_classfile(data) {
+            Ok(class) => Ok(Box::new(class) as _),
+            Err(e) => {
+                tracing::debug!("define_class_java: invalid class file: {e:?}");
+                Err(jvm.exception("java/lang/ClassFormatError", "invalid class file").await)
+            }
+        }
     }
 
     async fn define_array_class(&self, _jvm: &Jvm, element_type_name: &str) -> JvmResult<Box<dyn ClassDefinition>> {
