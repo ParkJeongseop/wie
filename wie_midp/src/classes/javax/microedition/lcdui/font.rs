@@ -8,6 +8,11 @@ use jvm::{Array, ClassInstanceRef, JavaChar, Jvm, Result as JvmResult, runtime::
 use wie_backend::canvas;
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
+// Default font point size (SIZE_MEDIUM). WIPI/MIDP feature phones render roughly
+// this size on a 240x320 screen; kept at the previous hardcoded value to avoid
+// regressing games that only ever use the default font.
+const DEFAULT_POINT_SIZE: i32 = 10;
+
 // class javax.microedition.lcdui.Font
 pub struct Font;
 
@@ -49,6 +54,8 @@ impl Font {
                 JavaFieldProto::new("SIZE_SMALL", "I", FieldAccessFlags::STATIC),
                 JavaFieldProto::new("SIZE_MEDIUM", "I", FieldAccessFlags::STATIC),
                 JavaFieldProto::new("SIZE_LARGE", "I", FieldAccessFlags::STATIC),
+                // instance state: resolved point size in points
+                JavaFieldProto::new("pointSize", "I", Default::default()),
             ],
             access_flags: Default::default(),
         }
@@ -72,20 +79,24 @@ impl Font {
         Ok(())
     }
 
-    async fn init(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Font>) -> JvmResult<()> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::<init>({this:?})");
+    async fn init(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Font>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Font::<init>({this:?})");
+
+        jvm.put_field(&mut this, "pointSize", "I", DEFAULT_POINT_SIZE).await?;
 
         Ok(())
     }
 
-    async fn get_height(_: &Jvm, _: &mut WieJvmContext) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::getHeight");
+    async fn get_height(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Font::getHeight({this:?})");
 
-        Ok(12) // TODO: hardcoded
+        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
+
+        Ok((canvas::font_height(point_size as f32) + 0.5) as i32)
     }
 
     async fn get_default_font(jvm: &Jvm, _: &mut WieJvmContext) -> JvmResult<ClassInstanceRef<Self>> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::getDefaultFont");
+        tracing::debug!("javax.microedition.lcdui.Font::getDefaultFont");
 
         let instance = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?;
 
@@ -93,58 +104,72 @@ impl Font {
     }
 
     async fn get_font(jvm: &Jvm, _: &mut WieJvmContext, face: i32, style: i32, size: i32) -> JvmResult<ClassInstanceRef<Font>> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::getFont({face:?}, {style:?}, {size:?})");
+        tracing::debug!("javax.microedition.lcdui.Font::getFont({face}, {style}, {size})");
 
-        let instance = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?;
+        let mut instance: ClassInstanceRef<Font> = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?.into();
+        jvm.put_field(&mut instance, "pointSize", "I", Self::size_to_point(size)).await?;
 
-        Ok(instance.into())
+        Ok(instance)
     }
 
-    async fn string_width(jvm: &Jvm, _: &mut WieJvmContext, _: ClassInstanceRef<Self>, string: ClassInstanceRef<String>) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::stringWidth({string:?})");
+    async fn string_width(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, string: ClassInstanceRef<String>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Font::stringWidth({this:?}, {string:?})");
 
+        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
 
-        Ok(canvas::string_width(&string, 10.0) as _)
+        Ok(canvas::string_width(&string, point_size as f32) as _)
     }
 
     async fn substring_width(
         jvm: &Jvm,
         _: &mut WieJvmContext,
-        _: ClassInstanceRef<Self>,
+        this: ClassInstanceRef<Self>,
         string: ClassInstanceRef<String>,
         offset: i32,
         len: i32,
     ) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::substringWidth({string:?}, {offset:?}, {len:?})");
+        tracing::debug!("javax.microedition.lcdui.Font::substringWidth({this:?}, {string:?}, {offset}, {len})");
 
+        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
         let substring = string.chars().skip(offset as usize).take(len as usize).collect::<RustString>();
 
-        Ok(canvas::string_width(&substring, 10.0) as _)
+        Ok(canvas::string_width(&substring, point_size as f32) as _)
     }
 
-    async fn char_width(_: &Jvm, _: &mut WieJvmContext, _: ClassInstanceRef<Self>, char: JavaChar) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::charWidth({char:?})");
+    async fn char_width(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, char: JavaChar) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Font::charWidth({this:?}, {char})");
 
+        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
         let string = RustString::from_utf16(&[char]).unwrap();
 
-        Ok(canvas::string_width(&string, 10.0) as _)
+        Ok(canvas::string_width(&string, point_size as f32) as _)
     }
 
     async fn chars_width(
         jvm: &Jvm,
         _: &mut WieJvmContext,
-        _: ClassInstanceRef<Self>,
+        this: ClassInstanceRef<Self>,
         chars: ClassInstanceRef<Array<JavaChar>>,
         offset: i32,
         len: i32,
     ) -> JvmResult<i32> {
-        tracing::warn!("stub javax.microedition.lcdui.Font::charsWidth({chars:?}, {offset:?}, {len:?})");
+        tracing::debug!("javax.microedition.lcdui.Font::charsWidth({this:?}, {chars:?}, {offset}, {len})");
 
+        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
         let chars = jvm.load_array(&chars, offset as _, len as _).await?;
         let string = RustString::from_utf16(&chars).unwrap();
 
-        Ok(canvas::string_width(&string, 10.0) as _)
+        Ok(canvas::string_width(&string, point_size as f32) as _)
+    }
+
+    // SIZE_SMALL=8, SIZE_MEDIUM=0, SIZE_LARGE=16 -> resolved point size for neodgm on 240x320.
+    fn size_to_point(size: i32) -> i32 {
+        match size {
+            8 => 8,   // SIZE_SMALL
+            16 => 13, // SIZE_LARGE
+            _ => DEFAULT_POINT_SIZE,
+        }
     }
 }
