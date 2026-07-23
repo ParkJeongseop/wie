@@ -11,6 +11,7 @@ futures = { workspace = true }
 spin = { workspace = true }
 tracing = { workspace = true }
 
+encoding_rs = { version = "^0.8", default-features = false, features = ["alloc"] }
 chrono = { version = "^0.4", default-features = false, features = ["alloc"] }
 elf = { version = "^0.8" }
 

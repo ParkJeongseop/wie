@@ -1,4 +1,4 @@
-mod sprintf;
+pub mod sprintf;
 
 use alloc::{
     boxed::Box,

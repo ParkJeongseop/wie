@@ -27,6 +27,9 @@ pub fn register_stdlib_svc_handler(core: &mut ArmCore, system: &System) -> Resul
             x if x == StdlibSvcId::Time as u32 => EmulatedFunction::call(&time, core, system).await?.write(core, lr),
             x if x == StdlibSvcId::Localtime as u32 => EmulatedFunction::call(&localtime, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Unk3 as u32 => EmulatedFunction::call(&unk3, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Sprintf as u32 => EmulatedFunction::call(&sprintf, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Unk6 as u32 => EmulatedFunction::call(&unk6, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Unk7 as u32 => EmulatedFunction::call(&unk7, core, &mut ()).await?.write(core, lr),
             _ => Err(WieError::FatalError(format!("Unknown lgt stdlib import: {:#x}", id.0))),
         }
     }
@@ -122,6 +125,45 @@ async fn unk2(_core: &mut ArmCore, _: &mut (), a0: u32) -> Result<()> {
     // error exit?
 
     Ok(())
+}
+
+// sprintf(dst, fmt, ...) — variadic args follow AAPCS: r2, r3, then the stack.
+// We fetch a fixed window of candidate words; the format engine consumes only
+// as many as the format string references.
+#[allow(clippy::too_many_arguments)]
+async fn sprintf(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_format: u32, v0: u32, v1: u32, v2: u32, v3: u32, v4: u32, v5: u32) -> Result<u32> {
+    let format_bytes = read_null_terminated_string_bytes(core, ptr_format)?;
+    let format_string = encoding_rs::EUC_KR.decode(&format_bytes).0.into_owned();
+
+    tracing::debug!("sprintf({ptr_dst:#x}, {format_string})");
+
+    let args = [v0, v1, v2, v3, v4, v5];
+    let result = wie_wipi_c::api::kernel::sprintf::format(&format_string, &args, &mut |ptr| {
+        let bytes = read_null_terminated_string_bytes(core, ptr)?;
+
+        Ok(encoding_rs::EUC_KR.decode(&bytes).0.into_owned())
+    })?;
+
+    let encoded = encoding_rs::EUC_KR.encode(&result).0;
+    write_null_terminated_string_bytes(core, ptr_dst, &encoded)?;
+
+    Ok(encoded.len() as u32)
+}
+
+// unknown import; observed once at startup with a seed-like first argument
+// (srand-shaped). Returning 0 lets games proceed.
+async fn unk6(_: &mut ArmCore, _: &mut (), a0: u32, a1: u32) -> Result<u32> {
+    tracing::warn!("stub lgt stdlib unk6({a0:#x}, {a1:#x})");
+
+    Ok(0)
+}
+
+// unknown import; observed with two nearby pointers as arguments
+// (memmove/realloc-shaped). Returning 0 lets games proceed further.
+async fn unk7(_: &mut ArmCore, _: &mut (), a0: u32, a1: u32, a2: u32) -> Result<u32> {
+    tracing::warn!("stub lgt stdlib unk7({a0:#x}, {a1:#x}, {a2:#x})");
+
+    Ok(0)
 }
 
 async fn unk3(core: &mut ArmCore, _: &mut (), a0: u32) -> Result<()> {

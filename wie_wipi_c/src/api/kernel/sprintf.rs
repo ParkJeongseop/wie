@@ -14,7 +14,7 @@ pub fn sprintf(context: &mut dyn WIPICContext, format: &str, args: &[u32]) -> Re
     })
 }
 
-fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Result<String>) -> Result<String> {
+pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Result<String>) -> Result<String> {
     let mut result = String::with_capacity(format.len());
     let mut chars = format.chars();
     let mut arg_iter = args.iter();
