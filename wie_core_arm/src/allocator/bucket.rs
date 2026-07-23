@@ -103,9 +103,15 @@ impl BucketAllocator {
         let mut header = vec![0u8; header_len];
         core.read_bytes(header_address, &mut header)?;
 
-        let offset = (address - header_address - header_len as u32) / slot_size as u32;
+        let offset = address.wrapping_sub(header_address + header_len as u32) / slot_size as u32;
         let index = offset / 8;
         let bit = offset % 8;
+
+        if index as usize >= header.len() {
+            // freeing a pointer that does not belong to this bucket region;
+            // report it as an error instead of panicking on the bad index
+            return Err(WieError::InvalidMemoryAccess(address));
+        }
 
         debug_assert!(header[index as usize] & (1 << bit) == 0);
 

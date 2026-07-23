@@ -74,7 +74,10 @@ impl ListAllocator {
 
         let header: ListAllocationHeader = read_generic(core, base_address)?;
         if !header.in_use() {
-            return Err(WieError::FatalError(format!("Double free at {address:#x}")));
+            // Freeing an already-free block is harmless; buggy apps do this and
+            // ran fine on real handsets, so tolerate it instead of aborting.
+            tracing::warn!("Double free at {address:#x}");
+            return Ok(());
         }
 
         let canary_value: u32 = read_generic(core, base_address + header.size() - CANARY_SIZE)?;
