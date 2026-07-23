@@ -32,6 +32,7 @@ impl Displayable {
                 ),
                 JavaMethodProto::new("getWidth", "()I", Self::get_width, Default::default()),
                 JavaMethodProto::new("getHeight", "()I", Self::get_height, Default::default()),
+                JavaMethodProto::new("isShown", "()Z", Self::is_shown, Default::default()),
                 // wie private methods...
                 JavaMethodProto::new(
                     "setDisplay",
@@ -126,6 +127,16 @@ impl Displayable {
         };
 
         Ok(height)
+    }
+
+    async fn is_shown(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::isShown({this:?})");
+
+        // Display.setCurrent clears currentDisplay on the previous displayable,
+        // so a non-null display means this displayable is the one being shown.
+        let display: ClassInstanceRef<Display> = jvm.get_field(&this, "currentDisplay", "Ljavax/microedition/lcdui/Display;").await?;
+
+        Ok(!display.is_null())
     }
 
     async fn handle_key_event(_jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>, event_type: i32, code: i32) -> JvmResult<()> {
