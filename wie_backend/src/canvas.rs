@@ -52,7 +52,7 @@ pub trait Canvas: Send {
     fn copy_area(&mut self, dx: i32, dy: i32, sx: i32, sy: i32, w: u32, h: u32, clip: Clip);
     fn draw(&mut self, dx: i32, dy: i32, w: u32, h: u32, src: &dyn Image, sx: i32, sy: i32, clip: Clip);
     fn draw_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: Color, clip: Clip);
-    fn draw_text(&mut self, string: &str, x: i32, y: i32, text_alignment: TextAlignment, color: Color, clip: Clip);
+    fn draw_text(&mut self, string: &str, x: i32, y: i32, size: f32, text_alignment: TextAlignment, color: Color, clip: Clip);
     fn draw_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Color, clip: Clip);
     fn draw_arc(&mut self, x: i32, y: i32, w: u32, h: u32, start_angle: i32, arc_angle: i32, color: Color, clip: Clip);
     fn draw_round_rect(&mut self, x: i32, y: i32, w: u32, h: u32, arc_width: u32, arc_height: u32, color: Color, clip: Clip);
@@ -583,8 +583,7 @@ where
         }
     }
 
-    fn draw_text(&mut self, string: &str, x: i32, y: i32, text_alignment: TextAlignment, color: Color, clip: Clip) {
-        let size = 10.0; // TODO
+    fn draw_text(&mut self, string: &str, x: i32, y: i32, size: f32, text_alignment: TextAlignment, color: Color, clip: Clip) {
         let font = FONT.as_scaled(FONT.pt_to_px_scale(size).unwrap());
 
         let total_width = string.chars().map(|c| font.h_advance(font.scaled_glyph(c).id)).sum::<f32>();
@@ -859,6 +858,12 @@ pub fn string_width(string: &str, pt_size: f32) -> f32 {
     let font = FONT.as_scaled(FONT.pt_to_px_scale(pt_size).unwrap());
 
     string.chars().map(|c| font.h_advance(font.scaled_glyph(c).id)).sum::<f32>()
+}
+
+pub fn font_height(pt_size: f32) -> f32 {
+    let font = FONT.as_scaled(FONT.pt_to_px_scale(pt_size).unwrap());
+
+    font.height()
 }
 
 #[cfg(test)]
@@ -1243,11 +1248,11 @@ mod tests {
             height: 0,
         };
         let mut canvas = ImageBufferCanvas::new(VecImageBuffer::<ArgbPixel>::new(30, 20));
-        canvas.draw_text("A", 2, 2, TextAlignment::Left, WHITE, empty_clip);
+        canvas.draw_text("A", 2, 2, 10.0, TextAlignment::Left, WHITE, empty_clip);
         let clipped = canvas.into_inner();
 
         let mut canvas = ImageBufferCanvas::new(VecImageBuffer::<ArgbPixel>::new(30, 20));
-        canvas.draw_text("A", 2, 2, TextAlignment::Left, WHITE, full_clip(30));
+        canvas.draw_text("A", 2, 2, 10.0, TextAlignment::Left, WHITE, full_clip(30));
         let unclipped = canvas.into_inner();
 
         let count_set = |image: &VecImageBuffer<ArgbPixel>| {
