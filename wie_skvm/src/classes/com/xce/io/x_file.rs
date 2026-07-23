@@ -27,6 +27,7 @@ impl XFile {
                 JavaMethodProto::new("exists", "(Ljava/lang/String;)Z", Self::exists, MethodAccessFlags::STATIC),
                 JavaMethodProto::new("filesize", "(Ljava/lang/String;)I", Self::filesize, MethodAccessFlags::STATIC),
                 JavaMethodProto::new("unlink", "(Ljava/lang/String;)I", Self::unlink, MethodAccessFlags::STATIC),
+                JavaMethodProto::new("fsavail", "()I", Self::fsavail, MethodAccessFlags::STATIC),
                 JavaMethodProto::new("available", "()I", Self::available, Default::default()),
                 JavaMethodProto::new("read", "([BII)I", Self::read, Default::default()),
                 JavaMethodProto::new("write", "([BII)I", Self::write, Default::default()),
@@ -84,6 +85,12 @@ impl XFile {
         let exists = jvm.invoke_virtual(&file, "exists", "()Z", ()).await?;
 
         Ok(exists)
+    }
+
+    async fn fsavail(_jvm: &Jvm, _context: &mut WieJvmContext) -> JvmResult<i32> {
+        tracing::warn!("stub com.xce.io.XFile::fsavail()");
+
+        Ok(10 * 1024 * 1024) // report 10MB free
     }
 
     async fn filesize(jvm: &Jvm, _context: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<i32> {
