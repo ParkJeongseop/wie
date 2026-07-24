@@ -158,6 +158,13 @@ Not API-crate surface, but blockers found while running real games:
   startApp itself (루빅스큐브: Invalid memory access; 시네마타이쿤:
   NullPointerException) — some API returns a bad value/null that the game
   then dereferences; needs per-game investigation.
+- **KTF instanceof (java_check_type)** — keep the permissive
+  `unk != 0 => Ok(1)` fallback despite its "is it correct?" TODO. KTF uses
+  a vtable-based custom class hierarchy that jvm.is_instance cannot resolve,
+  so replacing the fallback with a "correct" instanceof regressed most KTF
+  games (28->16 in the sample) — verified and reverted. 루빅스큐브's
+  Invalid memory access in startApp is downstream of this and is NOT
+  fixable by tightening the check.
 - **Thread context class loading** — Class.forName from app threads can fail
   to see app classes ("No such class: i"); blocks some SKT games after boot.
 - **Guest heap pressure** — one LGT app exhausts the guest heap after long
