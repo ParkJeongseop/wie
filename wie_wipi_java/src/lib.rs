@@ -6,7 +6,7 @@ pub mod classes;
 
 use wie_jvm_support::WieJavaClassProto;
 
-pub fn get_protos() -> [WieJavaClassProto; 42] {
+pub fn get_protos() -> [WieJavaClassProto; 44] {
     [
         crate::classes::org::kwis::msf::io::Network::as_proto(),
         crate::classes::org::kwis::msf::io::SchemeNotFoundException::as_proto(),
@@ -16,6 +16,8 @@ pub fn get_protos() -> [WieJavaClassProto; 42] {
         crate::classes::org::kwis::msp::db::DataBaseException::as_proto(),
         crate::classes::org::kwis::msp::db::DataBaseRecordException::as_proto(),
         crate::classes::org::kwis::msp::handset::BackLight::as_proto(),
+        crate::classes::org::kwis::msp::handset::LED::as_proto(),
+        crate::classes::wec::OEMDevice::as_proto(),
         crate::classes::org::kwis::msp::handset::HandsetProperty::as_proto(),
         crate::classes::org::kwis::msp::io::File::as_proto(),
         crate::classes::org::kwis::msp::io::FileSystem::as_proto(),

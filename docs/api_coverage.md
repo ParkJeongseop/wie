@@ -82,17 +82,21 @@ defined at all (measured against WIPI Java API 1.1.1).
 
 ### Missing classes (defined in 1.1.1, absent here)
 
-- **org.kwis.msp.lwc** (19): ActionListener, ButtonComponent, ChangeListener,
+- **org.kwis.msp.lwc** (18): ButtonComponent, ChangeListener,
   CheckboxComponent, CheckboxGroup, Command, CommandBarComponent,
   CommandListener, DateFieldComponent, Decorator, DialogComponent,
   FormComponent, ImageComponent, LabelComponent,
   ListComponent, ListItemComponent, ProgressComponent, ProxyCard,
-  ScrollbarComponent, TickerComponent. (GrabKeyListener is now defined —
-  it is an interface, `boolean grabKeyNotify(int,int,Object)`.)
+  ScrollbarComponent, TickerComponent. (Defined now: GrabKeyListener
+  `boolean grabKeyNotify(int,int,Object)`, ActionListener
+  `void action(Component,Object)`.)
 - **org.kwis.msp.lcdui** (4): DisplayProxy, InputMethodListener,
   JletStateChangeException, SystemEventListener.
-- **org.kwis.msp.handset** (2): Call, LED.
-- **org.kwis.msp.media** (1): MediaUnsupportedException.
+- **org.kwis.msp.handset** (1): Call. (LED defined: static getCount/set/get.)
+- **org.kwis.msp.media** (0): MediaUnsupportedException defined (extends
+  RuntimeException).
+- **wec (KTF)** — OEMDevice defined (static getAddressBook/getSYSTheme,
+  return null = unsupported). AddressBook/SYSTheme still missing.
 - **org.kwis.msp.db** (3): DataComparatorInteger, DataComparatorString,
   DataFilterInteger.
 - **org.kwis.msf.core** (3, whole package): Kernel, ProgramExitException, Shared.
