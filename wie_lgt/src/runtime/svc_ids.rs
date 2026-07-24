@@ -145,6 +145,7 @@ pub enum WIPICSvcId {
     Unk10 = 0x4ce,
     SetMuteState = 0x4d1,
     GetMuteState = 0x4d2,
+    Unk16 = 0x384,
     BackLight = 0x578,
 }
 
@@ -248,6 +249,7 @@ impl TryFrom<SvcId> for WIPICSvcId {
             0x4ce => Self::Unk10,
             0x4d1 => Self::SetMuteState,
             0x4d2 => Self::GetMuteState,
+            0x384 => Self::Unk16,
             0x578 => Self::BackLight,
             _ => return Err(wie_util::WieError::FatalError(alloc::format!("Unknown LGT WIPIC SVC id {}", value.0))),
         })

@@ -142,11 +142,14 @@ Not API-crate surface, but blockers found while running real games:
   memcpy/memset, time/localtime. Unknown: 0x415 (two nearby pointer args,
   called ~70x at startup; wrong semantics eventually corrupt the app heap —
   blocks 데몬헌터) and 0x404 (single seed-like call, srand-shaped; stubbed).
-- **LGT WIPI-C SVC id 900** — unmapped category block (100-per-category table:
-  100 kernel / 200 graphics / 400 db / 600 net / 800 time / 1200 media).
-  id 0xcf in the graphics block was identified as MC_grpGetContext and is
-  now implemented; the KTF media table slot 15 (right after MC_mdaGetVolume)
-  is wired as MC_mdaSetVolume.
+- **LGT WIPI-C SVC ids** — mostly mapped now. id 0xcf (graphics block) =
+  MC_grpGetContext (implemented); KTF media slot 15 = MC_mdaSetVolume. id
+  0x384 (900) is polled ~every 64ms with args (0xffff, 0xff, 0xff, ptr);
+  purpose unidentified, stubbed to return 0 (Unk16) so 2008베이징올림픽
+  boots past it.
+- **LGT text rendering** — 2008베이징올림픽 boots but draws text as tofu
+  boxes (glyphs missing) while other LGT games render Korean fine; the
+  game's own text path differs — needs investigation.
 - **KTF loader** — "wipi init failed 0xffffffff" during init is often a
   missing class the loader tries to resolve (e.g. 멋지다김밥군 needed
   org.kwis.msp.lwc.GrabKeyListener, now added). Other apps crash in

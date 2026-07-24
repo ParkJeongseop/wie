@@ -143,6 +143,7 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::SetMuteState => media::set_mute_state.into_body(),
         WIPICSvcId::GetMuteState => media::get_mute_state.into_body(),
         WIPICSvcId::BackLight => misc::back_light.into_body(),
+        WIPICSvcId::Unk16 => unk16.into_body(),
     };
 
     EmulatedFunction::call(
@@ -240,6 +241,14 @@ async fn unk1(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u3
     tracing::warn!("stub unk1({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
 
     // kernel
+
+    Ok(0)
+}
+
+// SVC 0x384: polled roughly every 64ms with args (0xffff, 0xff, 0xff, ptr).
+// Purpose not identified; returning 0 lets 2008베이징올림픽 boot past it.
+async fn unk16(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
+    tracing::warn!("stub lgt WIPIC unk16({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
 
     Ok(0)
 }
