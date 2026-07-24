@@ -47,11 +47,11 @@ tracing = { version = "^0.1", default-features = false, features = ["attributes"
 
 # RustJava is consumed from our fork (upstream + unmerged fixes), pinned by rev.
 # Currently: upstream 822504b + fix/exception-runtime-classes (PR pending).
-java_class_proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "a3179288" }
-java_constants = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "a3179288" }
-java_runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "a3179288" }
-jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "a3179288" }
-jvm_rust = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "a3179288" }
+java_class_proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "39178e4b" }
+java_constants = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "39178e4b" }
+java_runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "39178e4b" }
+jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "39178e4b" }
+jvm_rust = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "39178e4b" }
 wipi_types = { git = "https://github.com/dlunch/wipi.git" }
 
 wie_backend = { path = "wie_backend" }
