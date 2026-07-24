@@ -14,6 +14,10 @@ use crate::classes::{
     org::kwis::msp::lcdui::{Card, Jlet, JletEventListener},
 };
 
+// wie renders to a 16bpp (RGB565) framebuffer; the display capability
+// queries report against that.
+const SCREEN_BITS_PER_PIXEL: i32 = 16;
+
 // class org.kwis.msp.lcdui.Display
 pub struct Display;
 
@@ -291,15 +295,16 @@ impl Display {
     }
 
     async fn is_color(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Display::isColor({this:?})");
+        tracing::debug!("org.kwis.msp.lcdui.Display::isColor({this:?})");
 
-        Ok(false)
+        // WIPI handsets are color; the framebuffer is 16bpp RGB565.
+        Ok(true)
     }
 
     async fn num_colors(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Display::numColors({this:?})");
+        tracing::debug!("org.kwis.msp.lcdui.Display::numColors({this:?})");
 
-        Ok(0)
+        Ok(1 << SCREEN_BITS_PER_PIXEL) // 65536 colors (16bpp)
     }
 
     async fn has_pointer_events(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
@@ -315,9 +320,10 @@ impl Display {
     }
 
     async fn has_repeat_events(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Display::hasRepeatEvents({this:?})");
+        tracing::debug!("org.kwis.msp.lcdui.Display::hasRepeatEvents({this:?})");
 
-        Ok(false)
+        // the runtime delivers Event::Keyrepeat, so repeat events are supported
+        Ok(true)
     }
 
     async fn get_key_name(_: &Jvm, _: &mut WieJvmContext, key: i32) -> JvmResult<ClassInstanceRef<String>> {
@@ -327,9 +333,9 @@ impl Display {
     }
 
     async fn get_bits_per_pixel(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Display::getBitsPerPixel({this:?})");
+        tracing::debug!("org.kwis.msp.lcdui.Display::getBitsPerPixel({this:?})");
 
-        Ok(0)
+        Ok(SCREEN_BITS_PER_PIXEL)
     }
 
     async fn flush(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {

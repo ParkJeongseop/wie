@@ -64,10 +64,11 @@ defined at all (measured against WIPI Java API 1.1.1).
   `getRGBPixels`, `fillPolygon`, `drawPolygon`, `encodeImage` (partial).
 - **lcdui.Image** — core IMPL; STUB: `loadImage`, `createSubImage`, animation
   (`isAnimated`/`play`/`stop`), `setTransparentColor`.
-- **lcdui.Display** — 11 STUB capability queries: `isColor`, `numColors`,
-  `hasPointerEvents`, `hasPointerMotionEvents`, `hasRepeatEvents`, `getKeyName`,
-  `getBitsPerPixel`, `flush`, `grabKey`/`ungrabKey`, listeners. (Games query
-  these at startup — stubs can cause bad branches.)
+- **lcdui.Display** — capability queries now report against the 16bpp RGB565
+  color framebuffer: `isColor` (true), `numColors` (65536), `getBitsPerPixel`
+  (16), `hasRepeatEvents` (true — the runtime delivers key repeat). Still STUB:
+  `hasPointerEvents`/`hasPointerMotionEvents` (false — no pointer events in the
+  engine yet), `getKeyName`, `flush`, `grabKey`/`ungrabKey`, listeners.
 - **media.Clip** — construction + `getType` IMPL; STUB: `setVolume`,
   `setPosition`, `getPosition`, `setStopTime`, `getStopTime`, `getVolume`,
   `setListener`, `setBuffer`.
@@ -172,8 +173,11 @@ Common gaps ranked by how many games they affect:
    face/style rendering.
 2. ~~**Audio playback (SKVM)**~~ — done: `WieAudioClip` plays through the
    backend SMAF audio. Remaining: volume/mute and pause/resume across crates.
-3. **Display / Device capability queries** — stubbed booleans can push games
-   down wrong code paths at startup.
+3. ~~**Display capability queries**~~ — done for the color/depth/repeat
+   queries (report against the 16bpp color framebuffer). Note: only lightly
+   exercised by the current 31-game sample (getBitsPerPixel by one game), so
+   this was a correctness fix more than a game-unblocker. Device capability
+   stubs remain.
 4. **UI components** — LWC widgets, MIDP Command/Alert/Form, SKVM XTextField.
 5. **Carrier extensions** — KTF `kfc`, LGT `mmpp.media`, SKT missing classes.
    Prioritize empirically (see below).
