@@ -91,9 +91,11 @@ impl Canvas {
     }
 
     async fn service_repaints(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::warn!("stub javax.microedition.lcdui.Canvas::serviceRepaints({this:?})");
+        tracing::debug!("javax.microedition.lcdui.Canvas::serviceRepaints({this:?})");
 
-        jvm.invoke_virtual(&this, "repaint", "(IIII)V", (0, 0, 0, 0)).await
+        // Repaint is already synchronous here, so service pending paints by
+        // forcing a full repaint (the old (0,0,0,0) area painted nothing).
+        jvm.invoke_virtual(&this, "repaint", "()V", ()).await
     }
 
     async fn get_game_action(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, key: i32) -> JvmResult<i32> {
