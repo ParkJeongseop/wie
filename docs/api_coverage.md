@@ -147,9 +147,11 @@ Not API-crate surface, but blockers found while running real games:
   0x384 (900) is polled ~every 64ms with args (0xffff, 0xff, 0xff, ptr);
   purpose unidentified, stubbed to return 0 (Unk16) so 2008베이징올림픽
   boots past it.
-- **LGT text rendering** — 2008베이징올림픽 boots but draws text as tofu
-  boxes (glyphs missing) while other LGT games render Korean fine; the
-  game's own text path differs — needs investigation.
+- ~~**WIPI-C text rendering (tofu)**~~ — fixed: MC_grpDrawString decoded
+  strings as UTF-8, turning EUC-KR Korean into replacement glyphs. Now
+  decoded as EUC-KR like the other WIPI-C string APIs. Affects every game
+  that draws Korean through the native path (2008베이징올림픽 now renders
+  Korean correctly).
 - **KTF loader** — "wipi init failed 0xffffffff" during init is often a
   missing class the loader tries to resolve (e.g. 멋지다김밥군 needed
   org.kwis.msp.lwc.GrabKeyListener, now added). Other apps crash in
