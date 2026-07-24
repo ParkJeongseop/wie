@@ -82,12 +82,13 @@ defined at all (measured against WIPI Java API 1.1.1).
 
 ### Missing classes (defined in 1.1.1, absent here)
 
-- **org.kwis.msp.lwc** (20): ActionListener, ButtonComponent, ChangeListener,
+- **org.kwis.msp.lwc** (19): ActionListener, ButtonComponent, ChangeListener,
   CheckboxComponent, CheckboxGroup, Command, CommandBarComponent,
   CommandListener, DateFieldComponent, Decorator, DialogComponent,
-  FormComponent, GrabKeyListener, ImageComponent, LabelComponent,
+  FormComponent, ImageComponent, LabelComponent,
   ListComponent, ListItemComponent, ProgressComponent, ProxyCard,
-  ScrollbarComponent, TickerComponent.
+  ScrollbarComponent, TickerComponent. (GrabKeyListener is now defined —
+  it is an interface, `boolean grabKeyNotify(int,int,Object)`.)
 - **org.kwis.msp.lcdui** (4): DisplayProxy, InputMethodListener,
   JletStateChangeException, SystemEventListener.
 - **org.kwis.msp.handset** (2): Call, LED.
@@ -146,7 +147,12 @@ Not API-crate surface, but blockers found while running real games:
   id 0xcf in the graphics block was identified as MC_grpGetContext and is
   now implemented; the KTF media table slot 15 (right after MC_mdaGetVolume)
   is wired as MC_mdaSetVolume.
-- **KTF loader** — some apps fail init with "wipi init failed 0xffffffff".
+- **KTF loader** — "wipi init failed 0xffffffff" during init is often a
+  missing class the loader tries to resolve (e.g. 멋지다김밥군 needed
+  org.kwis.msp.lwc.GrabKeyListener, now added). Other apps crash in
+  startApp itself (루빅스큐브: Invalid memory access; 시네마타이쿤:
+  NullPointerException) — some API returns a bad value/null that the game
+  then dereferences; needs per-game investigation.
 - **Thread context class loading** — Class.forName from app threads can fail
   to see app classes ("No such class: i"); blocks some SKT games after boot.
 - **Guest heap pressure** — one LGT app exhausts the guest heap after long
