@@ -4,6 +4,7 @@ use java_class_proto::{JavaFieldProto, JavaMethodProto};
 use java_constants::{FieldAccessFlags, MethodAccessFlags};
 use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 
+use wie_backend::canvas::Clip;
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 use wie_midp::classes::javax::microedition::lcdui::{Graphics, Image};
 
@@ -23,6 +24,12 @@ impl XDisplay {
                     "copyLCD",
                     "(Ljavax/microedition/lcdui/Graphics;Ljavax/microedition/lcdui/Image;IIII)V",
                     Self::copy_lcd,
+                    MethodAccessFlags::STATIC,
+                ),
+                JavaMethodProto::new(
+                    "drawImageEx",
+                    "(Ljavax/microedition/lcdui/Graphics;Ljavax/microedition/lcdui/Image;IILjavax/microedition/lcdui/Image;IIIII)V",
+                    Self::draw_image_ex,
                     MethodAccessFlags::STATIC,
                 ),
             ],
@@ -68,6 +75,84 @@ impl XDisplay {
         height: i32,
     ) -> JvmResult<()> {
         tracing::warn!("stub com.xce.lcdui.XDisplay::copyLCD({graphics:?}, {image:?}, {x}, {y}, {width}, {height})",);
+
+        Ok(())
+    }
+
+    // drawImageEx(g, src, dx, dy, mask, sx, sy, w, h, mode): draws the
+    // (sx, sy, w, h) region of src at (dx, dy), skipping pixels the mask marks
+    // as transparent (mask pixel == black). Used with createMaskableImage.
+    #[allow(clippy::too_many_arguments)]
+    async fn draw_image_ex(
+        jvm: &Jvm,
+        _context: &mut WieJvmContext,
+        graphics: ClassInstanceRef<Graphics>,
+        src: ClassInstanceRef<Image>,
+        dx: i32,
+        dy: i32,
+        mask: ClassInstanceRef<Image>,
+        sx: i32,
+        sy: i32,
+        w: i32,
+        h: i32,
+        mode: i32,
+    ) -> JvmResult<()> {
+        tracing::debug!("com.xce.lcdui.XDisplay::drawImageEx({graphics:?}, {src:?}, {dx}, {dy}, {mask:?}, {sx}, {sy}, {w}, {h}, {mode})");
+
+        if src.is_null() || graphics.is_null() {
+            return Err(jvm.exception("java/lang/NullPointerException", "img is null").await);
+        }
+
+        let src_image = Image::image(jvm, &src).await?;
+
+        let mut graphics = graphics;
+        let dst_image = Graphics::image(jvm, &mut graphics).await?;
+        let mut canvas = Image::canvas(jvm, &dst_image).await?;
+
+        if mask.is_null() {
+            // no mask: plain region draw
+            canvas.draw(
+                dx as _,
+                dy as _,
+                w as _,
+                h as _,
+                &*src_image,
+                sx,
+                sy,
+                Clip {
+                    x: dx,
+                    y: dy,
+                    width: w as _,
+                    height: h as _,
+                },
+            );
+            return Ok(());
+        }
+
+        let mask_image = Image::image(jvm, &mask).await?;
+
+        let dst = canvas.image();
+        let (dst_w, dst_h) = (dst.width() as i32, dst.height() as i32);
+        let (src_w, src_h) = (src_image.width() as i32, src_image.height() as i32);
+        let (mask_w, mask_h) = (mask_image.width() as i32, mask_image.height() as i32);
+
+        for y in 0..h {
+            for x in 0..w {
+                let (px, py) = (sx + x, sy + y);
+                let (qx, qy) = (dx + x, dy + y);
+                if px < 0 || py < 0 || px >= src_w || py >= src_h || qx < 0 || qy < 0 || qx >= dst_w || qy >= dst_h {
+                    continue;
+                }
+                if px < mask_w && py < mask_h {
+                    let m = mask_image.get_pixel(px, py);
+                    if m.r == 0 && m.g == 0 && m.b == 0 {
+                        continue; // masked out
+                    }
+                }
+                let color = src_image.get_pixel(px, py);
+                canvas.put_pixel(qx, qy, color);
+            }
+        }
 
         Ok(())
     }
