@@ -110,8 +110,8 @@ complete; audio and device control are weak.
   isKeyToneEnabled exists but returns a constant), BackLight, ProgressBar,
   XTextField (input/paint), XDisplay (copyLCD/refresh), Graphics2D.captureLCD,
   XFile.fsavail (reports a constant 10MB free).
-- **MISSING (methods, found empirically)**: XDisplay.drawImageEx
-  (masked-image blit; non-fatal for the games seen so far).
+- XDisplay.drawImageEx (masked-image blit) is now IMPL — draws a source
+  region skipping pixels whose mask pixel is black.
 - **MISSING** (10, in the spec but not implemented): Graphics3D, Object3D
   (3D), SMS, SMSListener, SMSMessage (messaging), Call, PhoneBook, SISImage,
   ResourceAllocException, UserStopException.
@@ -142,7 +142,14 @@ Not API-crate surface, but blockers found while running real games:
   blocks 데몬헌터) and 0x404 (single seed-like call, srand-shaped; stubbed).
 - **LGT WIPI-C SVC id 900** — unmapped category block (100-per-category table:
   100 kernel / 200 graphics / 400 db / 600 net / 800 time / 1200 media).
+  id 0xcf in the graphics block was identified as MC_grpGetContext and is
+  now implemented; the KTF media table slot 15 (right after MC_mdaGetVolume)
+  is wired as MC_mdaSetVolume.
 - **KTF loader** — some apps fail init with "wipi init failed 0xffffffff".
+- **Thread context class loading** — Class.forName from app threads can fail
+  to see app classes ("No such class: i"); blocks some SKT games after boot.
+- **Guest heap pressure** — one LGT app exhausts the guest heap after long
+  runs ("Allocation failure"); leak vs. heap size not yet determined.
 
 ## Carrier Extensions (not implemented)
 
