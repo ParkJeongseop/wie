@@ -112,6 +112,26 @@ pub async fn set_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, o
     Ok(())
 }
 
+pub async fn get_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, op: WIPICGraphicsContextIdx) -> Result<WIPICWord> {
+    tracing::debug!("MC_grpGetContext({p_grp_ctx:#x}, {op:?})");
+
+    let grp_ctx: WIPICGraphicsContext = read_generic(context, p_grp_ctx)?;
+    Ok(match op {
+        WIPICGraphicsContextIdx::FgPixelIdx => grp_ctx.fgpxl as _,
+        WIPICGraphicsContextIdx::BgPixelIdx => grp_ctx.bgpxl as _,
+        WIPICGraphicsContextIdx::TransPixelIdx => grp_ctx.transpxl as _,
+        WIPICGraphicsContextIdx::AlphaIdx => grp_ctx.alpha as _,
+        WIPICGraphicsContextIdx::PixelopIdx => grp_ctx.pixel_op_func_ptr,
+        WIPICGraphicsContextIdx::PixelParam1Idx => grp_ctx.param1,
+        WIPICGraphicsContextIdx::FontIdx => grp_ctx.font,
+        WIPICGraphicsContextIdx::StyleIdx => grp_ctx.style,
+        _ => {
+            tracing::warn!("MC_grpGetContext({p_grp_ctx:#x}, {op:?}): unsupported op");
+            0
+        }
+    })
+}
+
 pub async fn put_pixel(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr, x: i32, y: i32, p_gctx: WIPICWord) -> Result<()> {
     tracing::debug!("MC_grpPutPixel({:#x}, {x}, {y}, {p_gctx:?})", dst_fb.0);
 
