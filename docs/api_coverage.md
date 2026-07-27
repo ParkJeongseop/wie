@@ -199,8 +199,10 @@ Not API-crate surface, but blockers found while running real games:
 None of the carrier-specific Java namespaces are implemented. Platform crates
 `wie_ktf` / `wie_lgt` contain only boot/ARM/JVM glue.
 
-- **KTF** — `com.ktf.kfc` (~32 GUI widgets: GButton, GList, GMenuBar, GTextField,
-  GForm, GMsgBox, …), `wec` (~25 hardware: Camera, GPS, AddressBook, SubLCD,
+- **KTF** — `com.ktf.kfc` (~32 GUI widgets). Started: GForm, GFormBase,
+  GMenubarForm (constructor-only, ShellComponent-based — enough for
+  미니게임패밀리 to boot to its game-select screen). Remaining: GButton,
+  GList, GMenuBar, GTextField, GMsgBox, …, `wec` (~25 hardware: Camera, GPS, AddressBook, SubLCD,
   WakeupTimer, …), `com.ktf.ext.am`.
 - **LGT** — `mmpp.media` (BackLight, Beep, LED, MediaPlayer, Vibration),
   `mmpp.media.phrase` (ringtone), `mmpp.phone`, `mmpp.microedition.lcdui`
