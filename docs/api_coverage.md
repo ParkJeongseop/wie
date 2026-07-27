@@ -151,7 +151,16 @@ Not API-crate surface, but blockers found while running real games:
   MC_grpGetContext (implemented); KTF media slot 15 = MC_mdaSetVolume. id
   0x384 (900) is polled ~every 64ms with args (0xffff, 0xff, 0xff, ptr);
   purpose unidentified, stubbed to return 0 (Unk16) so 2008베이징올림픽
-  boots past it.
+  boots past it. id 0x19c (database block) stubbed to return 0 (Unk17) so
+  슈퍼액션히어로3 boots past it.
+- **Phone-number DRM** — some games gate on getSystemProperty("PHONENUMBER"
+  / "MIN"). wie returns an empty PHONENUMBER, which *passes* the check on
+  games that compare the phone number against a value (empty makes the
+  comparison void). Verified with 슈퍼액션히어로3: it requires naming the
+  handset to a specific number (010-5514-5031) on real hardware, but on the
+  emulator the empty phone number sails through to the game (the real boot
+  blocker was the unmapped SVC 0x19c above, not the DRM). Putting a real-
+  looking value here instead would make such games fail authentication.
 - ~~**WIPI-C text rendering (tofu)**~~ — fixed: MC_grpDrawString decoded
   strings as UTF-8, turning EUC-KR Korean into replacement glyphs. Now
   decoded as EUC-KR like the other WIPI-C string APIs. Affects every game

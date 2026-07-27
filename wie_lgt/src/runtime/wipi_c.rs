@@ -122,6 +122,7 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::ListRecord => database::list_record.into_body(),
         WIPICSvcId::UpdateRecord => database::update_record.into_body(),
         WIPICSvcId::SelectRecord => database::select_record.into_body(),
+        WIPICSvcId::Unk17 => unk17.into_body(),
         WIPICSvcId::Unk8 => database::exists_database.into_body(),
         WIPICSvcId::Connect => net::connect.into_body(),
         WIPICSvcId::Close => net::close.into_body(),
@@ -406,6 +407,15 @@ async fn unk15(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u
     tracing::warn!("stub unk15({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
 
     // media
+
+    Ok(0)
+}
+
+// SVC 0x19c: database-block call (between SelectRecord and exists_database),
+// observed with (handle-like, small int, ptr, ptr) args during boot of
+// 슈퍼액션히어로3. Purpose unidentified; returning 0 lets the game boot past it.
+async fn unk17(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
+    tracing::warn!("stub lgt WIPIC unk17/0x19c({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
 
     Ok(0)
 }
