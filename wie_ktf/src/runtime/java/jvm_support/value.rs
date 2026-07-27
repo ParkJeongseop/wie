@@ -26,11 +26,21 @@ impl JavaValueExt for JavaValue {
             JavaType::Class(_) => {
                 if raw != 0 {
                     let instance = JavaClassInstance::from_raw(raw, core);
-                    if instance.class().unwrap().name().unwrap().starts_with('[') {
-                        let instance = JavaArrayClassInstance::from_raw(raw, core);
-                        JavaValue::Object(Some(Box::new(instance)))
-                    } else {
-                        JavaValue::Object(Some(Box::new(instance)))
+                    // Apps sometimes pass garbage as an object argument; treat
+                    // an unreadable instance as null instead of aborting.
+                    match instance.class().and_then(|x| x.name()) {
+                        Ok(name) => {
+                            if name.starts_with('[') {
+                                let instance = JavaArrayClassInstance::from_raw(raw, core);
+                                JavaValue::Object(Some(Box::new(instance)))
+                            } else {
+                                JavaValue::Object(Some(Box::new(instance)))
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("invalid object pointer {raw:#x} passed as java value: {e:?}");
+                            JavaValue::Object(None)
+                        }
                     }
                 } else {
                     JavaValue::Object(None)
