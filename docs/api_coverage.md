@@ -234,7 +234,12 @@ carrier and collecting `tracing::warn` output from STUB paths shows which
 missing/stubbed APIs are actually called — fill those first rather than
 implementing surface that no game exercises.
 
-Latest full run (313 games, headless, ~6s each with a 12s wall-clock timeout): 207 run and paint (66%), 83 report an error, 21 crash, 2 hang (kbo프로야구_2009 etc). Most crashes are missing classes the KTF loader tries to resolve (add them like the ones above) and a KTF class_instance unwrap (class_instance.rs:86, 5 games). Keep this document updated in the same change set as the implementation work.
+Latest full run (313 games, headless, ~6s each with a 12s wall-clock
+timeout): 221 run and paint (70%), 86 report an error, 3 crash, 3 hang.
+The remaining crashes/hangs are flaky — timing-dependent games (놈3,
+로스트아일랜드, 추억의달고나, kbo프로야구, …) flip between runs; no
+deterministic crash remains in the sample. Keep this document updated in
+the same change set as the implementation work.
 paint, 4 fail with a reported error, 1 crashes (a pre-existing KTF loader
 failure). Keep this document updated in the same change set as the
 implementation work it describes.
