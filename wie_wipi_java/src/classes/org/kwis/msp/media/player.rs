@@ -64,6 +64,9 @@ impl Player {
     async fn play_clip(jvm: &Jvm, _context: &mut WieJvmContext, clip: ClassInstanceRef<Clip>, repeat: bool) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.media.Player::play({clip:?}, {repeat})");
 
+        if clip.is_null() {
+            return Ok(false);
+        }
         let player = Clip::player(jvm, &clip).await?;
 
         if !player.is_null() {
@@ -78,6 +81,9 @@ impl Player {
     async fn stop_clip(jvm: &Jvm, _: &mut WieJvmContext, clip: ClassInstanceRef<Clip>) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.media.Player::stop({clip:?})");
 
+        if clip.is_null() {
+            return Ok(false);
+        }
         let player = Clip::player(jvm, &clip).await?;
 
         if !player.is_null() {
