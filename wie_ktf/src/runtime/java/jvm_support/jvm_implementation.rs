@@ -57,8 +57,17 @@ impl JvmImplementation for KtfJvmImplementation {
         })
     }
 
-    async fn define_class_java(&self, _jvm: &Jvm, _data: &[u8]) -> JvmResult<Box<dyn ClassDefinition>> {
-        unreachable!()
+    async fn define_class_java(&self, jvm: &Jvm, _data: &[u8]) -> JvmResult<Box<dyn ClassDefinition>> {
+        // Some KTF apps define classes from raw .class bytes (custom loaders),
+        // but KTF classes live as ARM structures; an interpreter-defined class
+        // produces instances that cannot cross into ARM code (the value
+        // conversion needs an ARM object pointer). Report an error the app can
+        // catch instead of aborting the emulator.
+        tracing::warn!("define_class_java is not supported on KTF (no interpreter/ARM instance interop)");
+
+        Err(jvm
+            .exception("java/lang/ClassFormatError", "dynamic class loading is not supported")
+            .await)
     }
 
     async fn define_array_class(&self, jvm: &Jvm, element_type_name: &str) -> JvmResult<Box<dyn ClassDefinition>> {

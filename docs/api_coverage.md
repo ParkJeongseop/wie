@@ -172,6 +172,12 @@ Not API-crate surface, but blockers found while running real games:
   startApp itself (루빅스큐브: Invalid memory access; 시네마타이쿤:
   NullPointerException) — some API returns a bad value/null that the game
   then dereferences; needs per-game investigation.
+- **KTF bytecode-only apps** — some KTF jars ship a Java-bytecode main
+  class instead of ARM AOT code (셔터-영혼의울림, 헬싱). KTF classes live as
+  ARM structures and interpreter instances cannot cross the value boundary
+  (wie_ktf value.rs as_raw needs an ARM pointer), so these apps cannot run
+  yet; define_class_java and the boot path now report a clean error instead
+  of panicking. Full support needs interpreter/ARM instance interop.
 - **KTF instanceof (java_check_type)** — keep the permissive
   `unk != 0 => Ok(1)` fallback despite its "is it correct?" TODO. KTF uses
   a vtable-based custom class hierarchy that jvm.is_instance cannot resolve,

@@ -109,15 +109,20 @@ impl KtfEmulator {
         let main_class_name = main_class_name.replace('.', "/");
 
         let main_class_name_java = JavaLangString::from_rust_string(&jvm, &main_class_name).await.unwrap();
-        let _main_class: Box<dyn ClassInstance> = jvm
+        // Report a load failure (e.g. a bytecode-only main class, which KTF
+        // cannot run yet) as an error instead of aborting the emulator.
+        let main_class = jvm
             .invoke_virtual(
                 &class_loader,
                 "loadClass",
                 "(Ljava/lang/String;)Ljava/lang/Class;",
                 (main_class_name_java.clone(),),
             )
-            .await
-            .unwrap();
+            .await;
+        let _main_class: Box<dyn ClassInstance> = match main_class {
+            Ok(x) => x,
+            Err(x) => return Err(JvmSupport::to_wie_err(&jvm, x).await),
+        };
 
         let mut args_array = jvm.instantiate_array("Ljava/lang/String;", 1).await.unwrap();
         jvm.store_array(&mut args_array, 0, vec![main_class_name_java]).await.unwrap();
