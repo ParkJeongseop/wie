@@ -65,7 +65,13 @@ impl JavaArrayClassInstance {
     fn element_type(&self) -> Result<JavaType> {
         let array_class = JavaArrayClassDefinition::from_raw(self.class_instance.class()?.ptr_raw, &self.core);
 
-        Ok(JavaType::parse(&array_class.element_type_descriptor()?))
+        let descriptor = array_class.element_type_descriptor()?;
+        // Same tolerance as element_size: a non-array object handed to array
+        // code yields a garbage descriptor; assume object elements.
+        Ok(JavaType::try_parse(&descriptor).unwrap_or_else(|| {
+            tracing::warn!("invalid array element descriptor {descriptor:?}; assuming object elements");
+            JavaType::Class("java/lang/Object".into())
+        }))
     }
 
     fn base_address(&self) -> Result<u32> {

@@ -93,7 +93,14 @@ impl JavaArrayClassDefinition {
     }
 
     pub fn element_size(&self) -> Result<usize> {
-        let r#type = JavaType::parse(&self.element_type_descriptor()?);
+        let descriptor = self.element_type_descriptor()?;
+        // Apps sometimes hand us a non-array object where an array is expected;
+        // the "descriptor" is then garbage. Fall back to pointer size with a
+        // warning instead of aborting on the parse.
+        let Some(r#type) = JavaType::try_parse(&descriptor) else {
+            tracing::warn!("invalid array element descriptor {descriptor:?}; assuming pointer-sized elements");
+            return Ok(4);
+        };
         Ok(match r#type {
             JavaType::Boolean => 1,
             JavaType::Byte => 1,
