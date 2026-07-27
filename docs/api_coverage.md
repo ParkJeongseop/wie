@@ -178,6 +178,10 @@ Not API-crate surface, but blockers found while running real games:
   (wie_ktf value.rs as_raw needs an ARM pointer), so these apps cannot run
   yet; define_class_java and the boot path now report a clean error instead
   of panicking. Full support needs interpreter/ARM instance interop.
+- **DRM-encrypted dumps** — some dumps contain an OMA DRM DCF container
+  instead of a real jar (inner file starts with `odcf`; 정통맞고2007).
+  These cannot run without the decryption key, on any emulator. The jar
+  open failure is now reported as a clean ZipException instead of a panic.
 - **KTF instanceof (java_check_type)** — keep the permissive
   `unk != 0 => Ok(1)` fallback despite its "is it correct?" TODO. KTF uses
   a vtable-based custom class hierarchy that jvm.is_instance cannot resolve,

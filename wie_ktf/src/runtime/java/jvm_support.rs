@@ -102,10 +102,12 @@ impl KtfJvmSupport {
 
         // find client.bin
         let jar_name_java = JavaLangString::from_rust_string(&jvm, jar_name.unwrap()).await.unwrap();
-        let jar_file = jvm
-            .new_class("java/util/jar/JarFile", "(Ljava/lang/String;)V", (jar_name_java,))
-            .await
-            .unwrap();
+        // Report an unreadable jar (e.g. an archive variant our jar parser
+        // cannot handle) as an error instead of aborting the emulator.
+        let jar_file = match jvm.new_class("java/util/jar/JarFile", "(Ljava/lang/String;)V", (jar_name_java,)).await {
+            Ok(x) => x,
+            Err(x) => return Err(JvmSupport::to_wie_err(&jvm, x).await),
+        };
         let entries: ClassInstanceRef<Enumeration> = jvm.invoke_virtual(&jar_file, "entries", "()Ljava/util/Enumeration;", []).await.unwrap();
 
         let binary_name = loop {
