@@ -82,16 +82,17 @@ defined at all (measured against WIPI Java API 1.1.1).
 
 ### Missing classes (defined in 1.1.1, absent here)
 
-- **org.kwis.msp.lwc** (18): ButtonComponent, ChangeListener,
+- **org.kwis.msp.lwc** (16): ButtonComponent, ChangeListener,
   CheckboxComponent, CheckboxGroup, Command, CommandBarComponent,
   CommandListener, DateFieldComponent, Decorator, DialogComponent,
-  FormComponent, ImageComponent, LabelComponent,
-  ListComponent, ListItemComponent, ProgressComponent, ProxyCard,
-  ScrollbarComponent, TickerComponent. (Defined now: GrabKeyListener
-  `boolean grabKeyNotify(int,int,Object)`, ActionListener
-  `void action(Component,Object)`.)
-- **org.kwis.msp.lcdui** (4): DisplayProxy, InputMethodListener,
-  JletStateChangeException, SystemEventListener.
+  ImageComponent, ListComponent, ListItemComponent, ProgressComponent,
+  ProxyCard, ScrollbarComponent, TickerComponent. (Defined now:
+  GrabKeyListener, ActionListener, FormComponent (extends
+  ContainerComponent), LabelComponent (extends Component) — the last two
+  unblocked KTF boot crashes.)
+- **org.kwis.msp.lcdui** (3): DisplayProxy, JletStateChangeException,
+  SystemEventListener. (InputMethodListener defined — interface
+  `void notifyTextChanged(char[],int,int)`; unblocked KTF boot crashes.)
 - **org.kwis.msp.handset** (1): Call. (LED defined: static getCount/set/get.)
 - **org.kwis.msp.media** (0): MediaUnsupportedException defined (extends
   RuntimeException).
@@ -212,7 +213,7 @@ carrier and collecting `tracing::warn` output from STUB paths shows which
 missing/stubbed APIs are actually called — fill those first rather than
 implementing surface that no game exercises.
 
-Latest 31-game sample (16 KTF / 8 LGT / 7 SKT, 8s headless each): 26 run and
+Latest full run (313 games, headless, ~6s each with a 12s wall-clock timeout): 207 run and paint (66%), 83 report an error, 21 crash, 2 hang (kbo프로야구_2009 etc). Most crashes are missing classes the KTF loader tries to resolve (add them like the ones above) and a KTF class_instance unwrap (class_instance.rs:86, 5 games). Keep this document updated in the same change set as the implementation work.
 paint, 4 fail with a reported error, 1 crashes (a pre-existing KTF loader
 failure). Keep this document updated in the same change set as the
 implementation work it describes.
