@@ -114,7 +114,12 @@ impl Image {
         let name = JavaLangString::to_rust_string(jvm, &name).await?;
 
         let class_loader = jvm.current_class_loader().await?;
-        let stream = JavaLangClassLoader::get_resource_as_stream(jvm, &class_loader, &name).await?.unwrap();
+        // a missing resource throws IOException per the MIDP spec, rather than
+        // panicking on the missing stream
+        let stream = match JavaLangClassLoader::get_resource_as_stream(jvm, &class_loader, &name).await? {
+            Some(x) => x,
+            None => return Err(jvm.exception("java/io/IOException", &name).await),
+        };
 
         let image_data = JavaIoInputStream::read_until_end(jvm, &stream).await?;
         let image_data_len = image_data.len() as i32;
