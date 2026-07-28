@@ -103,7 +103,11 @@ impl WieAudioClip {
 
         let audio_handle: i32 = jvm.get_field(&this, "audioHandle", "I").await?;
         if audio_handle != 0 {
-            context.system().audio().close(audio_handle as u32).unwrap();
+            // Apps close clips twice (or after the backend dropped the handle);
+            // tolerate instead of crashing the whole emulator.
+            if let Err(e) = context.system().audio().close(audio_handle as u32) {
+                tracing::warn!("WieAudioClip::close({audio_handle}) failed: {e:?}");
+            }
         }
 
         Ok(())

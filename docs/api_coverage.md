@@ -234,12 +234,48 @@ carrier and collecting `tracing::warn` output from STUB paths shows which
 missing/stubbed APIs are actually called — fill those first rather than
 implementing surface that no game exercises.
 
-Latest full run (313 games, headless, ~6s each with a 12s wall-clock
+Latest full boot run (313 games, headless, ~6s each with a 12s wall-clock
 timeout): 221 run and paint (70%), 86 report an error, 3 crash, 3 hang.
-The remaining crashes/hangs are flaky — timing-dependent games (놈3,
-로스트아일랜드, 추억의달고나, kbo프로야구, …) flip between runs; no
-deterministic crash remains in the sample. Keep this document updated in
-the same change set as the implementation work.
-paint, 4 fail with a reported error, 1 crashes (a pre-existing KTF loader
-failure). Keep this document updated in the same change set as the
-implementation work it describes.
+
+### Flakiness root cause (2026-07-28)
+
+The run-to-run flips (exit 0 ↔ panic) were traced to the real-time clock:
+`Executor::tick` budgets stepping by wall-clock (8ms) and sleep wakeups use
+`Platform::now()`, so scheduling interleaves differently every run and
+machine-load-dependent init races (paint before resources load, JVM entry
+before thread registration, class reads during init) surface probabilistically.
+Verified with a **virtual clock** (app-repo headless `WIE_VCLOCK=1`: `now()`
+advances 1ms per call): previously-flaky 로스트아일랜드/서울타이쿤2/심시티/
+추억의달고나 all became 10/10 clean with bit-identical frames. Reclassified
+under the virtual clock:
+
+- 놈3 — *deterministic* crash, not flaky: a thrown Java exception is followed
+  by `new String(char[],int,int)` receiving a String instead of a char[]
+  (RustJava `value.rs` char-conversion panic). Needs a RustJava-side fix.
+- kbo프로야구/탁재훈신맞고/2010밴쿠버올림픽 — *deterministic* hangs
+  (CPU-bound before the first paint), not timing races.
+- 크로스워드 — still nondeterministic even under the virtual clock with a
+  clean data dir (boot NPE ~50%); a second-order source remains (host hash-map
+  iteration order is per-process seeded). Follow-up.
+
+### Progression tiers (T2/T3 re-measurement, 2026-07-28)
+
+All 221 boot-ok games, 16s standard key scenario (OK@4 OK@6 DOWN@8 OK@10
+5@12), virtual clock, contact-sheet visual classification:
+
+- **T3 (menu navigation or beyond): 122** — of which 23 visibly reach
+  gameplay/in-game scenes within 16s.
+- **T2 (responds but stuck at logo/title/popup): 48**
+- **T0 (no input response): 33** • **blank screen: 17** • boot-NPE flaky: 1
+  (크로스워드)
+
+Carrier skew: KTF 106/157 T3, but LGT only 5/45 T3 — most LGT titles stall at
+carrier notice/logo screens, worth a dedicated investigation. Notable
+input-triggered failures: 일지매_영웅전기/현영맞고_2006 panic after menu
+entry; 에픽크로니클2/창세기전_크로우2/리듬페스티발/메이플_도적편 error out
+mid-scenario. SKVM `WieAudioClip.close` double-close panic (노리타이쿤,
+더팜1, 드래곤나이트EX) fixed in this change set — all three now run the full
+scenario (노리타이쿤/드래곤나이트EX reach T3).
+
+Keep this document updated in the same change set as the implementation work
+it describes.
