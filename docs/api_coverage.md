@@ -295,11 +295,17 @@ that alone reclassified 33 games upward. Final:
 
 Remaining non-T3 buckets (from the 30s sheets):
 
-- **Gamevil network-auth cluster** (제노니아1/2, 하이브리드2, 놈ZERO): each
-  makes 13 `MC_net*` calls (auth attempt), then shows dialogs with frames
-  and buttons but *no text/sprite content* — the games render UI content via
-  their own bitmap fonts (.ft2)/sprites and skip drawing after the network
-  handshake fails. Needs engine-level reverse engineering.
+- **Gamevil network-auth cluster** (제노니아1/2, 하이브리드2, 놈ZERO):
+  root-caused 2026-07-28. These games draw *everything* (including the
+  in-dialog text) with `MC_grpDrawLine`/`FillRect` — no DrawString/DrawImage.
+  The "empty dialog" is the game redrawing a bare dialog frame every frame
+  (~465 identical frames) while blocked on `MC_netConnect`, which our stub
+  answers with M_E_ERROR. Forcing the connect callback to succeed does NOT
+  unblock rendering — the game then jumps to a **Gamevil-proprietary SVC in
+  the 2000+ range** ("Unknown LGT WIPIC SVC id 2000") that we don't
+  implement. So the real blocker is Gamevil's custom engine (network +
+  2000-series extension syscalls), not our text/sprite path. Unblocking the
+  cluster means reverse-engineering that SVC range — a large, dedicated task.
 - **Integrity/re-download notices** (2008베이징올림픽, 레이카르나, …): the
   game itself decides it is corrupted and parks on a "download again" screen.
 - **Network-consent popups** (리듬스타2, 이터널사가3, …): stuck on a

@@ -34,6 +34,7 @@ pub async fn get_system_property(context: &mut dyn WIPICContext, ptr_id: WIPICWo
 
     let id_bytes = read_null_terminated_string_bytes(context, ptr_id)?;
     let id = encoding_rs::EUC_KR.decode(&id_bytes).0;
+    tracing::debug!("  GetSystemProperty id={id:?}");
 
     let value = match id.as_ref() {
         "RSSILEVEL" => "30",
@@ -66,8 +67,16 @@ pub async fn get_system_property(context: &mut dyn WIPICContext, ptr_id: WIPICWo
     Ok(0)
 }
 
-pub async fn set_system_property(_context: &mut dyn WIPICContext, ptr_id: WIPICWord, ptr_value: WIPICWord) -> Result<()> {
-    tracing::warn!("stub MC_knlSetSystemProperty({ptr_id:#x}, {ptr_value:#x})");
+pub async fn set_system_property(context: &mut dyn WIPICContext, ptr_id: WIPICWord, ptr_value: WIPICWord) -> Result<()> {
+    let id = encoding_rs::EUC_KR
+        .decode(&read_null_terminated_string_bytes(context, ptr_id)?)
+        .0
+        .into_owned();
+    let value = encoding_rs::EUC_KR
+        .decode(&read_null_terminated_string_bytes(context, ptr_value)?)
+        .0
+        .into_owned();
+    tracing::warn!("stub MC_knlSetSystemProperty({id:?} = {value:?})");
 
     Ok(())
 }
