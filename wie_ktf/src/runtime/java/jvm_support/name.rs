@@ -14,6 +14,20 @@ pub struct JavaFullName {
 }
 
 impl JavaFullName {
+    /// KTF의 메서드/필드 이름 구조는 1바이트 tag를 갖는다: "descriptor+name" 문자열의
+    /// Java 문자열 해시(h*31+c) 하위 바이트. client.bin이 테이블 스캔 시 이 tag로
+    /// 메서드를 찾으므로 0으로 쓰면 이름 조회 없는 디스패치가 엉뚱한 오버로드에
+    /// 도달한다 (놈3: <init>(Ljava/lang/String;)V 대신 <init>([CII)V로 점프).
+    pub fn new(name: String, descriptor: String) -> Self {
+        let tag = descriptor
+            .bytes()
+            .chain([b'+'])
+            .chain(name.bytes())
+            .fold(0u32, |h, c| h.wrapping_mul(31).wrapping_add(c as u32)) as u8;
+
+        Self { tag, name, descriptor }
+    }
+
     pub fn from_ptr(core: &ArmCore, ptr: u32) -> Result<Self> {
         let tag = read_generic(core, ptr)?;
 

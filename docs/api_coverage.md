@@ -249,9 +249,20 @@ advances 1ms per call): previously-flaky 로스트아일랜드/서울타이쿤2/
 추억의달고나 all became 10/10 clean with bit-identical frames. Reclassified
 under the virtual clock:
 
-- 놈3 — *deterministic* crash, not flaky: a thrown Java exception is followed
-  by `new String(char[],int,int)` receiving a String instead of a char[]
-  (RustJava `value.rs` char-conversion panic). Needs a RustJava-side fix.
+- 놈3 — *deterministic* crash, not flaky. Root-caused (2026-07-28, this
+  change set): ① its bundled save probe `/nom` failed because lowercase
+  `p/` archive entries were not mounted (only `P/` was trimmed) — fixed, 19
+  games bundle lowercase `p/` files; ② the game then calls a String
+  constructor through an index-free ARM dispatch that lands on
+  `<init>([CII)V` while clearly intending `<init>(Ljava/lang/String;)V`
+  (arg0 is a String, the two ints are stale pointers). Passing a non-array
+  where an array is declared is no longer wrapped as an array, so this now
+  raises a catchable IllegalArgumentException instead of a Rust panic — the
+  crash class is gone, but the game still parks on a black screen; the
+  mis-dispatch itself is still open. Discovered along the way: the KTF
+  method/field name struct's leading byte is not a constant 0 but the low
+  byte of the Java string hash of `"descriptor+name"` (verified 17/17
+  against real game lookups) — we now write it correctly.
 - kbo프로야구/탁재훈신맞고/2010밴쿠버올림픽 — *deterministic* hangs
   (CPU-bound before the first paint), not timing races.
 - 크로스워드 — still nondeterministic even under the virtual clock with a

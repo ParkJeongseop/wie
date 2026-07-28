@@ -3,7 +3,7 @@ use alloc::vec;
 use java_class_proto::JavaMethodProto;
 use java_constants::MethodAccessFlags;
 use java_runtime::classes::java::{io::File as JavaFile, lang::String, util::Vector};
-use jvm::{Array, ClassInstanceRef, Jvm, Result as JvmResult};
+use jvm::{Array, ClassInstanceRef, Jvm, Result as JvmResult, runtime::JavaLangString};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
@@ -82,10 +82,11 @@ impl FileSystem {
     }
 
     async fn is_file(jvm: &Jvm, _: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<bool> {
-        tracing::debug!("org.kwis.msp.io.FileSystem::is_file({name:?})");
+        let name_str = JavaLangString::to_rust_string(jvm, &name).await?;
 
         let file = jvm.new_class("java/io/File", "(Ljava/lang/String;)V", (name,)).await?;
-        let is_file = jvm.invoke_virtual(&file, "isFile", "()Z", ()).await?;
+        let is_file: bool = jvm.invoke_virtual(&file, "isFile", "()Z", ()).await?;
+        tracing::debug!("org.kwis.msp.io.FileSystem::is_file({name_str}) -> {is_file}");
 
         Ok(is_file)
     }

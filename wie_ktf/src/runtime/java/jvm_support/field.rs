@@ -25,11 +25,7 @@ impl JavaField {
     }
 
     pub fn new(core: &mut ArmCore, ptr_class: u32, proto: JavaFieldProto, offset_or_value: u32) -> Result<Self> {
-        let full_name = JavaFullName {
-            tag: 0,
-            name: proto.name,
-            descriptor: proto.descriptor,
-        };
+        let full_name = JavaFullName::new(proto.name, proto.descriptor);
         let full_name_bytes = full_name.as_bytes();
         let ptr_name = Allocator::alloc(core, full_name_bytes.len() as u32)?;
         core.write_bytes(ptr_name, &full_name_bytes)?;

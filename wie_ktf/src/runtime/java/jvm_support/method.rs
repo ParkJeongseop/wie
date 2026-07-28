@@ -53,11 +53,7 @@ impl JavaMethod {
         C: ?Sized + 'static + Send,
         Context: Deref<Target = C> + DerefMut + Clone + 'static + Sync + Send,
     {
-        let full_name = JavaFullName {
-            tag: 0,
-            name: proto.name.clone(),
-            descriptor: proto.descriptor.clone(),
-        };
+        let full_name = JavaFullName::new(proto.name.clone(), proto.descriptor.clone());
         let full_name_bytes = full_name.as_bytes();
 
         let ptr_name = Allocator::alloc(core, full_name_bytes.len() as u32)?;
@@ -90,7 +86,11 @@ impl JavaMethod {
             },
         )?;
 
-        tracing::trace!("Wrote method {} at {ptr_raw:#x}", full_name.name);
+        tracing::trace!(
+            "Wrote method {}{} at {ptr_raw:#x} (body {fn_method:#x})",
+            full_name.name,
+            full_name.descriptor
+        );
 
         Ok(Self::from_raw(ptr_raw, core))
     }
@@ -219,7 +219,8 @@ impl JavaMethod {
     }
 
     pub async fn handle_exception(core: &mut ArmCore, jvm: &Jvm, exception: Box<dyn ClassInstance>) -> Result<JavaMethodResult> {
-        tracing::warn!("Java exception thrown: {exception:?}");
+        let exception_class = exception.class_definition().name();
+        tracing::warn!("Java exception thrown: {exception:?} ({exception_class})");
 
         let current_java_exception_handler = KtfJvmSupport::current_java_exception_handler(core)?;
 
@@ -389,6 +390,28 @@ where
                 JavaValue::from_raw(arg, param, core)
             };
             args.push(value);
+        }
+
+        // 디버깅 계측: 배열 파라미터 자리에 비배열 객체가 오면 (게임의 인자 오염 —
+        // 놈3 등에서 관찰) 어느 메서드에 어떤 인자들이 왔는지 남긴다.
+        for (param, value) in self.parameter_types.iter().zip(args.iter()) {
+            if matches!(param, JavaType::Array(_)) {
+                if let JavaValue::Object(Some(obj)) = value {
+                    if let Some(instance) = obj.as_any().downcast_ref::<JavaClassInstance>() {
+                        if let Ok(name) = instance.class().and_then(|x| x.name()) {
+                            if !name.starts_with('[') {
+                                let (pc, lr) = core.read_pc_lr().unwrap_or((0, 0));
+                                tracing::warn!(
+                                    "{}{}: array parameter got non-array {:#x} ({name}); all args: {args:?} (pc={pc:#x}, lr={lr:#x})",
+                                    self.proto.name,
+                                    self.proto.descriptor,
+                                    instance.ptr_raw
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         let mut context = self.context.clone();

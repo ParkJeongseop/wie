@@ -48,9 +48,26 @@ impl JavaValueExt for JavaValue {
             }
             JavaType::Array(_) => {
                 if raw != 0 {
-                    let instance = JavaArrayClassInstance::from_raw(raw, core);
-
-                    JavaValue::Object(Some(Box::new(instance)))
+                    // Apps sometimes pass a non-array object where an array is
+                    // declared (e.g. a String to String.<init>([CII)V in a
+                    // rarely-taken error path). Wrapping it as an array made
+                    // downstream element loads fabricate values and panic; wrap it
+                    // as a plain instance instead so the JVM throws a catchable
+                    // IllegalArgumentException ("Not an array") like real bytecode
+                    // misuse would surface on hardware.
+                    let instance = JavaClassInstance::from_raw(raw, core);
+                    match instance.class().and_then(|x| x.name()) {
+                        Ok(name) if !name.starts_with('[') => {
+                            let (pc, lr) = core.read_pc_lr().unwrap_or((0, 0));
+                            tracing::warn!("non-array object {raw:#x} of class {name} passed as array argument (pc={pc:#x}, lr={lr:#x})");
+                            JavaValue::Object(Some(Box::new(instance)))
+                        }
+                        Ok(_) => JavaValue::Object(Some(Box::new(JavaArrayClassInstance::from_raw(raw, core)))),
+                        Err(e) => {
+                            tracing::warn!("invalid object pointer {raw:#x} passed as array java value: {e:?}");
+                            JavaValue::Object(None)
+                        }
+                    }
                 } else {
                     JavaValue::Object(None)
                 }

@@ -81,7 +81,8 @@ impl KtfEmulator {
         let system = System::new(platform, pid, aid, KtfTaskRunner { core: core.clone() });
 
         for (path, data) in files {
-            let path = path.trim_start_matches("P/");
+            // Bundled app files live under "P/" — some archives use lowercase "p/" (놈3).
+            let path = path.trim_start_matches("P/").trim_start_matches("p/");
             system.filesystem().add_virtual(path, data.clone());
         }
 
