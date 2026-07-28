@@ -234,8 +234,14 @@ carrier and collecting `tracing::warn` output from STUB paths shows which
 missing/stubbed APIs are actually called — fill those first rather than
 implementing surface that no game exercises.
 
-Latest full boot run (313 games, headless, ~6s each with a 12s wall-clock
-timeout): 221 run and paint (70%), 86 report an error, 3 crash, 3 hang.
+Latest full boot run (2026-07-28, 313 games, headless, virtual clock, 8s):
+**226 run and paint (72%)** — up from 221 after this change set (놈3/
+로스트아일랜드/서울타이쿤2/심시티/추억의달고나 boot deterministically now;
+거상(벚꽃단의음모) newly boots; 만귀토벌전 regressed to a reported error
+because the p/ fix lets it run further into a null access). Note the
+virtual clock undercounts CPU-heavy games against a wall-clock cap: 귀혼무사편
+and 어스토니시아 ep1-3 need a larger cap (or real-time mode) to finish
+booting and are counted as booting above.
 
 ### Flakiness root cause (2026-07-28)
 
@@ -277,11 +283,15 @@ Initial pass used a 16s key scenario; non-T3 games were re-measured with a
 16s window undershoots slow boot sequences (carrier notices + logo chains) —
 that alone reclassified 33 games upward. Final:
 
-- **T3 (menu navigation or beyond): 153 (69%)** — 30 visibly reach
-  gameplay/in-game scenes.
-- **T2 (responds but stuck): 23** • **T0 (no input response): 27** •
-  **blank screen: 17** • boot-NPE flaky: 1 (크로스워드)
-- By carrier: KTF 122/157 T3, LGT 18/45, SKT 13/19.
+- **T3 (menu navigation or beyond): 159** — 34 visibly reach gameplay
+  (updated after the p/-mount/name-tag/non-array change set: 거상, 로스트
+  아일랜드, 서울타이쿤2, 심시티, 추억의달고나, 크로스워드 joined T3; 심시티/
+  달고나/크로스워드 reach gameplay).
+- **T2 (responds but stuck): 23** • **T0 (no input response): 26** •
+  **blank screen: 18** • boot error: 1 (만귀토벌전)
+- 크로스워드 still boots only ~50% of the time (host hash-order dependent,
+  open) but plays the puzzle when it does.
+- By carrier: KTF 128/158 T3, LGT 18/45, SKT 13/19.
 
 Remaining non-T3 buckets (from the 30s sheets):
 
