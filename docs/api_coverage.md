@@ -260,22 +260,36 @@ under the virtual clock:
 
 ### Progression tiers (T2/T3 re-measurement, 2026-07-28)
 
-All 221 boot-ok games, 16s standard key scenario (OK@4 OK@6 DOWN@8 OK@10
-5@12), virtual clock, contact-sheet visual classification:
+All 221 boot-ok games, virtual clock, contact-sheet visual classification.
+Initial pass used a 16s key scenario; non-T3 games were re-measured with a
+30s scenario (OK×5 spread 4–16s, DOWN@19 OK@22 5@25) after discovering the
+16s window undershoots slow boot sequences (carrier notices + logo chains) —
+that alone reclassified 33 games upward. Final:
 
-- **T3 (menu navigation or beyond): 122** — of which 23 visibly reach
-  gameplay/in-game scenes within 16s.
-- **T2 (responds but stuck at logo/title/popup): 48**
-- **T0 (no input response): 33** • **blank screen: 17** • boot-NPE flaky: 1
-  (크로스워드)
+- **T3 (menu navigation or beyond): 153 (69%)** — 30 visibly reach
+  gameplay/in-game scenes.
+- **T2 (responds but stuck): 23** • **T0 (no input response): 27** •
+  **blank screen: 17** • boot-NPE flaky: 1 (크로스워드)
+- By carrier: KTF 122/157 T3, LGT 18/45, SKT 13/19.
 
-Carrier skew: KTF 106/157 T3, but LGT only 5/45 T3 — most LGT titles stall at
-carrier notice/logo screens, worth a dedicated investigation. Notable
-input-triggered failures: 일지매_영웅전기/현영맞고_2006 panic after menu
-entry; 에픽크로니클2/창세기전_크로우2/리듬페스티발/메이플_도적편 error out
-mid-scenario. SKVM `WieAudioClip.close` double-close panic (노리타이쿤,
-더팜1, 드래곤나이트EX) fixed in this change set — all three now run the full
-scenario (노리타이쿤/드래곤나이트EX reach T3).
+Remaining non-T3 buckets (from the 30s sheets):
+
+- **Gamevil network-auth cluster** (제노니아1/2, 하이브리드2, 놈ZERO): each
+  makes 13 `MC_net*` calls (auth attempt), then shows dialogs with frames
+  and buttons but *no text/sprite content* — the games render UI content via
+  their own bitmap fonts (.ft2)/sprites and skip drawing after the network
+  handshake fails. Needs engine-level reverse engineering.
+- **Integrity/re-download notices** (2008베이징올림픽, 레이카르나, …): the
+  game itself decides it is corrupted and parks on a "download again" screen.
+- **Network-consent popups** (리듬스타2, 이터널사가3, …): stuck on a
+  connect-confirmation dialog the standard scenario cannot answer.
+- **Key-ignoring notice screens** (에바스토 etc.): keys verified delivered to
+  the clet (`CletWrapperCard.keyNotify`), game still waits on something else.
+- Input-triggered crashes: 일지매_영웅전기/현영맞고_2006 panic after menu
+  entry; LGT_KBO프로야구2009 corrupts the allocator on first keypress
+  ("Invalid allocation header"). SKVM `WieAudioClip.close` double-close panic
+  (노리타이쿤, 더팜1, 드래곤나이트EX) fixed in this change set — 노리타이쿤/
+  드래곤나이트EX now reach T3.
 
 Keep this document updated in the same change set as the implementation work
 it describes.
