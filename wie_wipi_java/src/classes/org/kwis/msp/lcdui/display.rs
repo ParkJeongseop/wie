@@ -283,13 +283,24 @@ impl Display {
     }
 
     async fn call_serially_with_timeout(
-        _: &Jvm,
+        jvm: &Jvm,
         _: &mut WieJvmContext,
         this: ClassInstanceRef<Self>,
         runnable: ClassInstanceRef<Runnable>,
         timeout: i32,
     ) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Display::callSerially({this:?}, {runnable:?}, {timeout})");
+        tracing::debug!("org.kwis.msp.lcdui.Display::callSerially({this:?}, {runnable:?}, {timeout})");
+
+        // Several games bootstrap their whole game loop with a single
+        // callSerially(runnable, delay); dropping the runnable froze them on
+        // the first painted frame (T0). We don't have a delayed scheduler here,
+        // so enqueue it on the event loop like the no-timeout overload — it
+        // runs on the next pump instead of after `timeout` ms, which is close
+        // enough for loops that re-schedule themselves each frame.
+        let midp_display: ClassInstanceRef<MidpDisplay> = jvm.get_field(&this, "midpDisplay", "Ljavax/microedition/lcdui/Display;").await?;
+        let _: () = jvm
+            .invoke_virtual(&midp_display, "callSerially", "(Ljava/lang/Runnable;)V", (runnable,))
+            .await?;
 
         Ok(())
     }

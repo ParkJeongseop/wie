@@ -329,6 +329,20 @@ Remaining non-T3 buckets (from the 30s sheets):
   connect-confirmation dialog the standard scenario cannot answer.
 - **Key-ignoring notice screens** (에바스토 etc.): keys verified delivered to
   the clet (`CletWrapperCard.keyNotify`), game still waits on something else.
+
+### callSerially(Runnable, delay) frozen-loop fix (2026-08-01)
+
+Sweeping the T0 ("no input response") and BLACK buckets found a shared cause:
+`org.kwis.msp.lcdui.Display.callSerially(Runnable, int)` was a no-op stub that
+dropped the runnable. Several games bootstrap their entire game loop with a
+single `callSerially(runnable, delay)` call, so dropping it froze them on the
+first painted frame (looked like T0) or before first paint (BLACK). Fixed by
+enqueuing the runnable on the event loop like the no-timeout overload (the
+delay is ignored — we have no delayed scheduler here — which is fine for loops
+that re-schedule each frame). All 6 games that hit the stub now advance:
+광수의똥/데빌헌터/푸시푸시삼국지/피자타이쿤 reach full menu navigation (T3,
+피자타이쿤 was BLACK), 리얼사커2007 reaches its title/loading, 슈렉3 gets to
+its logo then hits a separate null-access. 31-game regression unchanged.
 - Input-triggered crashes: 일지매_영웅전기/현영맞고_2006 panic after menu
   entry; LGT_KBO프로야구2009 corrupts the allocator on first keypress
   ("Invalid allocation header"). SKVM `WieAudioClip.close` double-close panic
