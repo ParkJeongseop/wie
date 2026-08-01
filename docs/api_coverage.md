@@ -295,17 +295,34 @@ that alone reclassified 33 games upward. Final:
 
 Remaining non-T3 buckets (from the 30s sheets):
 
-- **Gamevil network-auth cluster** (제노니아1/2, 하이브리드2, 놈ZERO):
-  root-caused 2026-07-28. These games draw *everything* (including the
-  in-dialog text) with `MC_grpDrawLine`/`FillRect` — no DrawString/DrawImage.
-  The "empty dialog" is the game redrawing a bare dialog frame every frame
-  (~465 identical frames) while blocked on `MC_netConnect`, which our stub
-  answers with M_E_ERROR. Forcing the connect callback to succeed does NOT
-  unblock rendering — the game then jumps to a **Gamevil-proprietary SVC in
-  the 2000+ range** ("Unknown LGT WIPIC SVC id 2000") that we don't
-  implement. So the real blocker is Gamevil's custom engine (network +
-  2000-series extension syscalls), not our text/sprite path. Unblocking the
-  cluster means reverse-engineering that SVC range — a large, dedicated task.
+- **Gamevil "empty dialog" cluster** (제노니아1/2, 하이브리드2, 놈ZERO):
+  native WIPI-C (Clet) games behind LGT's thin `CletWrapperCard` Java shim.
+  Re-investigated 2026-07-29; earlier "proprietary SVC 2000 / network-gated"
+  notes were both **wrong** and are retracted:
+  - No unknown SVC in normal runs. The "SVC 2000" only appeared after an
+    experiment that faked `MC_netConnect` success, sending the game down a
+    path with an uninitialized socket handle; the garbage r12 (SVC id is read
+    from IP) surfaced as a bogus number — an experiment artifact.
+  - **Not network-gated.** With no injected input the game makes *zero* net
+    calls; `MC_netConnect` only fires as a reaction to pressing OK on the
+    dialog. So the resting state is reached without any networking.
+  Actual observed state: resources load cleanly (fonts .ft2, particles .ptc,
+  UI .mpl/.pzx — no NOENT), the main loop runs (setTimer ~470/run), and every
+  frame the game redraws one dialog: a light-gray panel (`FillRect` 0xdefb),
+  white/gray beveled border, an **empty** dark inner box (`FillRect` 0x3186,
+  uniform — verified by inverting the fill: zero content pixels), and an
+  **unlabeled** orange button (`FillRect` 0xf580 + bevel lines). Crucially
+  there are **no glyph draws anywhere** — the game renders all chrome via
+  DrawLine/FillRect but never emits the dialog's message text or button label.
+  So the text content is simply absent from the game's own state, not lost in
+  our text path. Dead ends ruled out (2026-08-01): the game probes for
+  `com/MainUI.mpl`/`GameUI.mpl`/`Title.mpl` which the jar ships only as `.gui`
+  (different magic — `.gui` `01..`, `.mpl` `30061a..`, `.pzx` `PZX`), gets
+  NOENT, and continues fine — this is normal optional-resource probing, not
+  the cause (a `.mpl`→`.gui` fallback served nothing and changed nothing). The
+  dialog chrome is drawn procedurally, not from a UI template. Pinning why the
+  game emits no glyphs needs ARM/bytecode stepping of its draw path — a large
+  dedicated task; do not re-chase the missing-`.mpl` lead.
 - **Integrity/re-download notices** (2008베이징올림픽, 레이카르나, …): the
   game itself decides it is corrupted and parks on a "download again" screen.
 - **Network-consent popups** (리듬스타2, 이터널사가3, …): stuck on a
