@@ -23,6 +23,11 @@ impl Component {
                 JavaMethodProto::new("configure", "(IIIII)V", Self::configure, Default::default()),
                 JavaMethodProto::new("setFocus", "()V", Self::set_focus, Default::default()),
                 JavaMethodProto::new("getHeight", "()I", Self::get_height, Default::default()),
+                JavaMethodProto::new("getWidth", "()I", Self::get_width, Default::default()),
+                JavaMethodProto::new("getX", "()I", Self::get_x, Default::default()),
+                JavaMethodProto::new("getY", "()I", Self::get_y, Default::default()),
+                JavaMethodProto::new("repaint", "()V", Self::repaint, Default::default()),
+                JavaMethodProto::new("repaint", "(IIII)V", Self::repaint_with_area, Default::default()),
             ],
             fields: vec![],
             access_flags: Default::default(),
@@ -71,5 +76,39 @@ impl Component {
         tracing::warn!("stub org.kwis.msp.lwc.Component::getHeight({this:?})");
 
         Ok(0)
+    }
+
+    async fn get_width(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::warn!("stub org.kwis.msp.lwc.Component::getWidth({this:?})");
+
+        Ok(0)
+    }
+
+    async fn get_x(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::warn!("stub org.kwis.msp.lwc.Component::getX({this:?})");
+
+        Ok(0)
+    }
+
+    async fn get_y(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::warn!("stub org.kwis.msp.lwc.Component::getY({this:?})");
+
+        Ok(0)
+    }
+
+    // LWC widget painting isn't wired to the framebuffer yet, so repaint has
+    // nothing to flush — but leaving it unimplemented aborted whole apps with
+    // "method not found". Accept it as a no-op so the app keeps running (and
+    // draws through whatever other path it uses).
+    async fn repaint(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::warn!("stub org.kwis.msp.lwc.Component::repaint({this:?})");
+
+        Ok(())
+    }
+
+    async fn repaint_with_area(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, x: i32, y: i32, w: i32, h: i32) -> JvmResult<()> {
+        tracing::warn!("stub org.kwis.msp.lwc.Component::repaint({this:?}, {x}, {y}, {w}, {h})");
+
+        Ok(())
     }
 }

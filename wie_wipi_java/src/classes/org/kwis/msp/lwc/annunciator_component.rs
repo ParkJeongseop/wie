@@ -17,6 +17,7 @@ impl AnnunciatorComponent {
             methods: vec![
                 JavaMethodProto::new("<init>", "(Z)V", Self::init, Default::default()),
                 JavaMethodProto::new("show", "()V", Self::show, Default::default()),
+                JavaMethodProto::new("layout", "()V", Self::layout, Default::default()),
             ],
             fields: vec![],
             access_flags: Default::default(),
@@ -33,6 +34,12 @@ impl AnnunciatorComponent {
 
     async fn show(_: &Jvm, _: &mut WieJvmContext) -> JvmResult<()> {
         tracing::warn!("stub org.kwis.msp.lwc.AnnunciatorComponent::show()");
+
+        Ok(())
+    }
+
+    async fn layout(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<AnnunciatorComponent>) -> JvmResult<()> {
+        tracing::warn!("stub org.kwis.msp.lwc.AnnunciatorComponent::layout({this:?})");
 
         Ok(())
     }

@@ -19,6 +19,7 @@ impl BaseClip {
             methods: vec![
                 JavaMethodProto::new("<init>", "()V", Self::init, Default::default()),
                 JavaMethodProto::new("putData", "([BII)I", Self::put_data, Default::default()),
+                JavaMethodProto::new("setBuffer", "([BI)Z", Self::set_buffer, Default::default()),
                 JavaMethodProto::new("clearData", "()V", Self::clear_data, Default::default()),
                 JavaMethodProto::new("availableDataSize", "()I", Self::available_data_size, Default::default()),
             ],
@@ -66,6 +67,41 @@ impl BaseClip {
         jvm.put_field(&mut this, "player", "Ljavax/microedition/media/Player;", player).await?;
 
         Ok(length)
+    }
+
+    // setBuffer([BI)Z — feeds the whole buffer as the clip's sound data (the
+    // int is the format tag; we sniff SMAF like putData does). Not in the
+    // reference but some apps call it in place of putData; leaving it missing
+    // aborted the whole app with "method not found".
+    async fn set_buffer(
+        jvm: &Jvm,
+        _: &mut WieJvmContext,
+        mut this: ClassInstanceRef<Self>,
+        buffer: ClassInstanceRef<Array<i8>>,
+        r#type: i32,
+    ) -> JvmResult<bool> {
+        tracing::debug!("org.kwis.msp.media.BaseClip::setBuffer({this:?}, {buffer:?}, {type})");
+
+        if buffer.is_null() {
+            return Ok(false);
+        }
+
+        let length = jvm.array_length(&buffer).await? as i32;
+        let input_stream = jvm.new_class("java/io/ByteArrayInputStream", "([BII)V", (buffer, 0, length)).await?;
+        let mime = JavaLangString::from_rust_string(jvm, "application/vnd.smaf").await?;
+
+        let player: ClassInstanceRef<Player> = jvm
+            .invoke_static(
+                "javax/microedition/media/Manager",
+                "createPlayer",
+                "(Ljava/io/InputStream;Ljava/lang/String;)Ljavax/microedition/media/Player;",
+                (input_stream, mime),
+            )
+            .await?;
+
+        jvm.put_field(&mut this, "player", "Ljavax/microedition/media/Player;", player).await?;
+
+        Ok(true)
     }
 
     async fn clear_data(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {

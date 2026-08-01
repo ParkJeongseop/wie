@@ -25,6 +25,7 @@ impl Player {
                 JavaMethodProto::new("record", "(Lorg/kwis/msp/media/BaseClip;)Z", Self::record, MethodAccessFlags::STATIC),
                 JavaMethodProto::new("play", "(Lorg/kwis/msp/media/Clip;Z)Z", Self::play_clip, MethodAccessFlags::STATIC),
                 JavaMethodProto::new("stop", "(Lorg/kwis/msp/media/Clip;)Z", Self::stop_clip, MethodAccessFlags::STATIC),
+                JavaMethodProto::new("resume", "(Lorg/kwis/msp/media/Clip;)Z", Self::resume_clip, MethodAccessFlags::STATIC),
             ],
             fields: vec![],
             access_flags: Default::default(),
@@ -88,6 +89,23 @@ impl Player {
 
         if !player.is_null() {
             let _: () = jvm.invoke_virtual(&player, "stop", "()V", ()).await?;
+
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    async fn resume_clip(jvm: &Jvm, _: &mut WieJvmContext, clip: ClassInstanceRef<Clip>) -> JvmResult<bool> {
+        tracing::debug!("org.kwis.msp.media.Player::resume({clip:?})");
+
+        if clip.is_null() {
+            return Ok(false);
+        }
+        let player = Clip::player(jvm, &clip).await?;
+
+        if !player.is_null() {
+            let _: () = jvm.invoke_virtual(&player, "start", "(Z)V", (false,)).await?;
 
             return Ok(true);
         }

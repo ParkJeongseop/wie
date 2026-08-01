@@ -343,6 +343,24 @@ that re-schedule each frame). All 6 games that hit the stub now advance:
 광수의똥/데빌헌터/푸시푸시삼국지/피자타이쿤 reach full menu navigation (T3,
 피자타이쿤 was BLACK), 리얼사커2007 reaches its title/loading, 슈렉3 gets to
 its logo then hits a separate null-access. 31-game regression unchanged.
+
+### Missing method fills (2026-08-01)
+
+Aggregating "Method X not found" fatals across the boot batch showed each is
+one game, but several are standard classes we simply hadn't registered.
+Filled them (safe/minimal bodies; missing them aborted the whole app):
+- `org.kwis.msp.media.BaseClip.setBuffer([BI)Z` — feed the buffer as the
+  clip's SMAF data like putData. 미궁미술관살인사건 BLACK → T3 (in-game story).
+- `org.kwis.msp.lwc.Component.repaint()V`/`(IIII)V`, `getX/getY/getWidth()I`;
+  `ContainerComponent.validate()V`; `AnnunciatorComponent.layout()V` — LWC
+  widget geometry/paint isn't wired to the framebuffer, so these are no-ops
+  /zeros, but registering them lets LWC apps run. 질풍노도17대1 BLACK → T3
+  (story), 뮤_흑기사편 boot-error → T3 (story). 해적왕2007 gets past the LWC
+  cascade but then hits "jump native address is null" (same open bucket as
+  주타이쿤2). LWC is still non-rendering; these just stop the aborts.
+- `org.kwis.msp.media.Player.resume(Clip)Z` — mirror the existing Clip
+  play/stop overloads (start the clip's player). Clears the crash in
+  미니게임파티. 31-game regression unchanged; clippy clean.
 - Input-triggered crashes: 일지매_영웅전기/현영맞고_2006 panic after menu
   entry; LGT_KBO프로야구2009 corrupts the allocator on first keypress
   ("Invalid allocation header"). SKVM `WieAudioClip.close` double-close panic

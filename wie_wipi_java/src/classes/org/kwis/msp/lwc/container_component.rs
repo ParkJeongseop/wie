@@ -27,6 +27,7 @@ impl ContainerComponent {
                     Self::remove_component,
                     Default::default(),
                 ),
+                JavaMethodProto::new("validate", "()V", Self::validate, Default::default()),
             ],
             fields: vec![],
             access_flags: Default::default(),
@@ -55,6 +56,14 @@ impl ContainerComponent {
 
     async fn remove_component(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, component: ClassInstanceRef<Component>) -> JvmResult<()> {
         tracing::warn!("stub org.kwis.msp.lwc.Component::removeComponent({this:?}, {component:?})");
+
+        Ok(())
+    }
+
+    // Re-layout the container's children. LWC layout isn't wired to real
+    // geometry yet, so accept it as a no-op instead of aborting the app.
+    async fn validate(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::warn!("stub org.kwis.msp.lwc.ContainerComponent::validate({this:?})");
 
         Ok(())
     }
