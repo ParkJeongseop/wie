@@ -361,6 +361,23 @@ Filled them (safe/minimal bodies; missing them aborted the whole app):
 - `org.kwis.msp.media.Player.resume(Clip)Z` — mirror the existing Clip
   play/stop overloads (start the clip's player). Clears the crash in
   미니게임파티. 31-game regression unchanged; clippy clean.
+
+### "jump native address is null" cluster — tolerance rejected (2026-08-04)
+
+~6-7 games (다크슬레이어2, 삼국장군전, 마스터오브소드2, 맞고삼국대전,
+미니러비, 주타이쿤2, 해적왕2007) abort in `interface.rs` when a
+`java_jump_*`/`call_native` trampoline gets `address == 0` — the game
+dispatches to a method whose native body pointer resolved to 0. This is a
+shared *symptom*, not one cause: the triggers differ (a `DataBaseRecordException`
+recovery path after a missing save in 주타이쿤2; `Class.forName`/
+`ClassLoader.loadClass` reflection in 다크슬레이어2/삼국장군전/마스터오브소드2;
+`Object.wait` in 미니러비; a bare `<init>` in 맞고삼국대전). Making the null
+jump a no-op returning 0 was tried and **reverted** — it is load-bearing:
+주타이쿤2 froze static, 미니러비 started panicking, and the reflection games
+just moved to NPE/`Invalid memory access; address: 0`. The real fix needs
+KTF-dispatch RE (why `get_java_method`/vtable resolves a method whose
+`fn_body` is 0 on these paths — likely related to the 놈3 index-dispatch
+mystery). Do not re-try the tolerance approach.
 - Input-triggered crashes: 일지매_영웅전기/현영맞고_2006 panic after menu
   entry; LGT_KBO프로야구2009 corrupts the allocator on first keypress
   ("Invalid allocation header"). SKVM `WieAudioClip.close` double-close panic
