@@ -28,6 +28,12 @@ impl Jlet {
                     MethodAccessFlags::STATIC,
                 ),
                 JavaMethodProto::new(
+                    "getCurrentJlet",
+                    "()Lorg/kwis/msp/lcdui/Jlet;",
+                    Self::get_active_jlet,
+                    MethodAccessFlags::STATIC,
+                ),
+                JavaMethodProto::new(
                     "getEventQueue",
                     "()Lorg/kwis/msp/lcdui/EventQueue;",
                     Self::get_event_queue,

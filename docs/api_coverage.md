@@ -392,6 +392,27 @@ just moved to NPE/`Invalid memory access; address: 0`. The real fix needs
 KTF-dispatch RE (why `get_java_method`/vtable resolves a method whose
 `fn_body` is 0 on these paths — likely related to the 놈3 index-dispatch
 mystery). Do not re-try the tolerance approach.
+
+### In-play crash sweep (2026-08-04)
+
+Aggregating crashes during the 30s input scenario:
+- **`org.kwis.msp.lcdui.Jlet.getCurrentJlet()`** was missing (only `getActiveJlet`
+  existed) — added as the same impl (returns the `currentJlet` static). Clears
+  대박투어타이쿤's crash; it now runs the full scenario.
+- **`Allocation failure at net/wie/EventQueue.getNextEvent`** (리듬페스티발,
+  메이플스토리_도적편, and any game that plays long enough): the 256 MB guest
+  heap fills mid-play. wie's GC (`jvm.collect_garbage`) only runs on an explicit
+  `System.gc()`, so a periodic-GC experiment was tried — but **rejected**: GC
+  collected 1526 objects once at startup, then **0 on every later pass**, i.e.
+  the accumulating objects are all still *reachable*. This is a real
+  reference-retention leak (game- or emulation-held refs that keep growing), not
+  reclaimable garbage, so GC-on-OOM cannot help. Needs object-graph RE to find
+  what holds the growing references. Don't re-try periodic/on-OOM GC.
+- Still-open buckets hit here: `address 0` family (보글보글, 화장빨인생, 놈ZERO,
+  하이브리드 — see the jump-native cluster above), `Invalid allocation header`
+  (LGT_KBO프로야구2009), an ambiguous high `LGT WIPIC SVC id 901` (슈퍼액션히어로3,
+  likely a garbage dispatch like the 2000 case — not mapped), and
+  `java.util.TimerTask.cancel()Z` missing (미니게임씨네마 — RustJava-side).
 - Input-triggered crashes: 일지매_영웅전기/현영맞고_2006 panic after menu
   entry; LGT_KBO프로야구2009 corrupts the allocator on first keypress
   ("Invalid allocation header"). SKVM `WieAudioClip.close` double-close panic
