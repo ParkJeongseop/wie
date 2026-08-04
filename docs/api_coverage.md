@@ -293,6 +293,20 @@ that alone reclassified 33 games upward. Final:
   open) but plays the puzzle when it does.
 - By carrier: KTF 128/158 T3, LGT 18/45, SKT 13/19.
 
+Re-measured 2026-08-04 after the callSerially-delay and LWC/media-method
+fixes (full boot batch + 30s re-scan of the non-T3 games, no demotions):
+
+- **T3: 172 (+13)** • **T2: 24** • **T0: 17** • **blank: 13**. By carrier:
+  KTF 137/164, LGT 22/45, SKT 13/19.
+- Beyond the games fixed by name earlier this session, the re-scan caught
+  side-effect unblocks (callSerially/LWC reached loops we hadn't retried):
+  아르덴전기, 화장빨인생, 던파귀검사편, 리듬스타2, 메이플스토리_도적편,
+  아니마 all T2 → T3.
+- Boot count is ~flat: 뮤_흑기사편 newly boots; 슈렉3 now progresses to its
+  logo (callSerially) then crashes on the `address 0` bucket instead of
+  freezing; the CPU-heavy games (귀혼무사편, 어스토니시아 ep1-3) and 크로스워드
+  are virtual-clock wall-cap / boot-flaky artifacts, not regressions.
+
 Remaining non-T3 buckets (from the 30s sheets):
 
 - **Gamevil "empty dialog" cluster** (제노니아1/2, 하이브리드2, 놈ZERO):
