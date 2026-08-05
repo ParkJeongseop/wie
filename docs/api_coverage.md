@@ -413,13 +413,23 @@ Aggregating crashes during the 30s input scenario:
     lands mid-word, reads garbage (`0x7bfffdff`, in_use=true, ~2 GB) as the next
     header, and can no longer reach the free space past it — every later alloc
     that needs the list region fails.
-  - So a **graphics/guest write of a 16-bit `0xffff` overflows a buffer into an
-    adjacent heap header.** It is NOT `FrameBuffer::write` (instrumented its
-    write-back: 0 oversize writes), so the overflowing store is elsewhere —
-    most likely the game's own ARM store past a buffer end (possibly one we
-    under-sized), or another WIPI-C blit path. Pinning it needs a write-watch on
-    the corrupted header address; that's the next step. Do NOT re-try GC — the
-    objects aren't garbage.
+  - Fully pinned with a guest-store watchpoint (2026-08-05, all reverted): the
+    corrupting store is the **game's own blit at `pc=0x1aee2`** (deterministic
+    under the virtual clock) doing 32-bit stores of RGB565 pixels
+    (0xce9f…0xffff) that run **4 bytes past the end of a 31417-byte buffer**
+    (user 0x4014b244, block ends at 0x40152d04) into the next block's header.
+    The buffer is odd-sized → a game `MC_knlAlloc`, not one of our (always
+    even) image/framebuffer buffers. So this is the **game overflowing its own
+    heap buffer**; it ran on real handsets because their allocator left slack
+    after the block, whereas our `ListAllocator` packs a header+canary
+    immediately after. NOT `FrameBuffer::write` (0 oversize write-backs).
+  - A trailing-guard-slack experiment (256 B after every block) was **rejected**:
+    it removed the Allocation-failure but shifted the whole heap layout, so the
+    game corrupted a different header and crashed at startup with "Invalid
+    allocation header" instead. A clean fix would need to replicate the LGT
+    handset allocator's block layout/rounding (unknown), or make the heap walk
+    resilient to a corrupt header (risky) — both large. Do NOT re-try GC or
+    naive guard padding.
 - Still-open buckets hit here: `address 0` family (보글보글, 화장빨인생, 놈ZERO,
   하이브리드 — see the jump-native cluster above), `Invalid allocation header`
   (LGT_KBO프로야구2009), an ambiguous high `LGT WIPIC SVC id 901` (슈퍼액션히어로3,
