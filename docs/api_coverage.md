@@ -426,15 +426,31 @@ Aggregating crashes during the 30s input scenario:
   - A trailing-guard-slack experiment (256 B after every block) was **rejected**:
     it removed the Allocation-failure but shifted the whole heap layout, so the
     game corrupted a different header and crashed at startup with "Invalid
-    allocation header" instead. A clean fix would need to replicate the LGT
-    handset allocator's block layout/rounding (unknown), or make the heap walk
-    resilient to a corrupt header (risky) — both large. Do NOT re-try GC or
-    naive guard padding.
+    allocation header" instead. Do NOT re-try GC or naive guard padding.
+  - **Fixed 2026-08-05 with a corruption-resilient heap walk** (`ListAllocator::
+    find_address`): every well-formed block size is a multiple of 4, non-zero,
+    and in-bounds, so a header that fails `is_plausible_size` has been scribbled
+    over (its size and in-use bit are both just pixel bytes — the in-use bit is
+    whatever colour the pixel was, so it can't be trusted either). Such a header
+    is rebuilt as a *free* block spanning up to the next in-use block — located
+    by a canary-validated forward scan (`find_next_inuse_boundary`) — or the heap
+    end, and the repaired header is written back so later walks stay in sync. The
+    canary scan preserves any genuine in-use block after the corruption; the
+    block at the corrupt header is unrecoverable anyway (the old walk crashed on
+    it), so reclaiming it as free is strictly more resilient. Verified: 리듬페스티발
+    now runs the full 60 s scenario (9 header repairs, 0 Allocation-failure)
+    instead of crashing ~10 s in; unit tests cover the free-tail, in-use-bit, and
+    stop-at-in-use cases. The repair is a one-time cost per corruption (the header
+    is rewritten valid), and in practice the scan finds a nearby in-use block so
+    it stays cheap.
 - Still-open buckets hit here: `address 0` family (보글보글, 화장빨인생, 놈ZERO,
   하이브리드 — see the jump-native cluster above), `Invalid allocation header`
   (LGT_KBO프로야구2009), an ambiguous high `LGT WIPIC SVC id 901` (슈퍼액션히어로3,
-  likely a garbage dispatch like the 2000 case — not mapped), and
-  `java.util.TimerTask.cancel()Z` missing (미니게임씨네마 — RustJava-side).
+  likely a garbage dispatch like the 2000 case — not mapped). 미니게임씨네마's
+  missing timer method (recorded here earlier as `TimerTask.cancel()Z`) was
+  actually `java.util.Timer.cancel()V`; both it and `TimerTask.cancel()Z` are now
+  implemented RustJava-side (Timer.cancel terminates the timer thread + clears
+  pending tasks), so 미니게임씨네마 runs the full scenario.
 - Input-triggered crashes: 일지매_영웅전기/현영맞고_2006 panic after menu
   entry; LGT_KBO프로야구2009 corrupts the allocator on first keypress
   ("Invalid allocation header"). SKVM `WieAudioClip.close` double-close panic

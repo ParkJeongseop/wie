@@ -1,9 +1,9 @@
-use alloc::format;
+use alloc::{format, vec};
 use core::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
 
-use wie_util::{Result, WieError, read_generic, write_generic};
+use wie_util::{ByteRead, Result, WieError, read_generic, write_generic};
 
 use crate::core::ArmCore;
 
@@ -31,6 +31,15 @@ impl ListAllocationHeader {
 
 const CANARY_SIZE: u32 = 4;
 const CANARY_VALUE: u32 = 0xDEADBEEF;
+
+const HEADER_SIZE: u32 = size_of::<ListAllocationHeader>() as u32;
+
+// Every well-formed block size is a multiple of 4 (a 4-byte header plus 4-aligned
+// payload plus a 4-byte canary), non-zero, and stays within the heap. A header that
+// violates this has been scribbled over by a guest buffer overflow.
+fn is_plausible_size(cursor: u32, size: u32, end: u32) -> bool {
+    size >= HEADER_SIZE && size.is_multiple_of(4) && cursor.checked_add(size).is_some_and(|block_end| block_end <= end)
+}
 
 pub struct ListAllocator;
 
@@ -98,8 +107,29 @@ impl ListAllocator {
         let mut cursor = base_address;
         loop {
             let mut header: ListAllocationHeader = read_generic(core, cursor)?;
-            if header.size() == 0 {
-                return Err(WieError::FatalError(format!("Invalid allocation header at {cursor:#x}")));
+
+            if !is_plausible_size(cursor, header.size(), end) {
+                // A guest buffer overflow has scribbled over this block header: a game blit
+                // running a few bytes past its own buffer clobbers the following block's
+                // header with raw RGB565 pixels. The pixel bytes land in both the size and
+                // the in-use bit, so neither field can be trusted here — the in-use bit is
+                // just whatever the pixel colour happened to be. We rebuild the block as
+                // free: its true extent is the span up to the next in-use block (found by a
+                // canary-validated scan) or the heap end, so reconstruct that, repair the
+                // header, and let the walk resynchronize instead of derailing on a bogus
+                // size. The canary scan preserves any genuine in-use block after the
+                // corruption; the block *at* the corrupt header is unrecoverable either way
+                // (the old walk would have crashed on it), so treating it as free space is
+                // strictly more resilient.
+                let boundary = Self::find_next_inuse_boundary(core, cursor + HEADER_SIZE, end)?;
+                let repaired = ListAllocationHeader::new(boundary - cursor, false);
+                write_generic(core, cursor, repaired)?;
+                tracing::warn!(
+                    "Repaired corrupt block header at {cursor:#x} (was {:#x}); reclaimed {:#x} bytes up to {boundary:#x}",
+                    header.data,
+                    boundary - cursor
+                );
+                header = repaired;
             }
 
             if !header.in_use() {
@@ -109,7 +139,7 @@ impl ListAllocator {
                         break;
                     }
                     let next_header: ListAllocationHeader = read_generic(core, next)?;
-                    if next_header.in_use() || next_header.size() == 0 {
+                    if next_header.in_use() || !is_plausible_size(next, next_header.size(), end) {
                         break;
                     }
                     header = ListAllocationHeader::new(header.size() + next_header.size(), false);
@@ -127,6 +157,47 @@ impl ListAllocator {
         }
 
         Err(WieError::AllocationFailure)
+    }
+
+    // Scan forward from `start` for the first structurally valid in-use block header,
+    // returning its address, or `end` if none is found. Used to recover the true right
+    // edge of a free block whose header a guest overflow corrupted. A block is accepted
+    // only when its in-use bit is set, its size is well-formed, and its trailing canary
+    // matches — the 32-bit canary makes false positives astronomically unlikely, and a
+    // false positive would only shrink the reclaimed span (safe), never grow it.
+    fn find_next_inuse_boundary(core: &mut ArmCore, start: u32, end: u32) -> Result<u32> {
+        const CHUNK: usize = 64 * 1024;
+
+        let mut buf = vec![0u8; CHUNK];
+        let mut base = start & !3;
+        while base + HEADER_SIZE <= end {
+            let want = ((end - base) as usize).min(CHUNK);
+            let read = core.read_bytes(base, &mut buf[..want])?;
+            let scanned = read & !3;
+            if scanned == 0 {
+                break;
+            }
+
+            let mut off = 0;
+            while off + 4 <= scanned {
+                let data = u32::from_le_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
+                if data & 0x80000000 != 0 {
+                    let size = data & 0x7FFFFFFF;
+                    let p = base + off as u32;
+                    if size >= HEADER_SIZE + CANARY_SIZE && is_plausible_size(p, size, end) {
+                        let canary: u32 = read_generic(core, p + size - CANARY_SIZE)?;
+                        if canary == CANARY_VALUE {
+                            return Ok(p);
+                        }
+                    }
+                }
+                off += 4;
+            }
+
+            base += scanned as u32;
+        }
+
+        Ok(end)
     }
 }
 
@@ -171,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn test_double_free_returns_error() -> Result<()> {
+    fn test_double_free_is_tolerated() -> Result<()> {
         let mut core = ArmCore::new(false, None).unwrap();
         core.map(0x40000000, 0x1000)?;
 
@@ -179,9 +250,82 @@ mod tests {
         let address = ListAllocator::alloc(&mut core, 0x40000000, 0x1000, 4)?;
 
         ListAllocator::free(&mut core, address)?;
+        // Buggy apps double-free and ran fine on real handsets, so this is tolerated
+        // rather than fatal (see ListAllocator::free).
         let result = ListAllocator::free(&mut core, address);
 
-        assert!(matches!(result, Err(WieError::FatalError(_))));
+        assert!(result.is_ok());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reconstruct_corrupt_free_tail() -> Result<()> {
+        let mut core = ArmCore::new(false, None).unwrap();
+        core.map(0x40000000, 0x100000)?;
+
+        let base = 0x40000000;
+        let region = 0x100000;
+        ListAllocator::init(&mut core, base, region)?;
+
+        // one live block, then the free-tail remainder header directly behind it
+        let a = ListAllocator::alloc(&mut core, base, region, 0x1000)?;
+        let tail = (a - 4) + 0x1008; // block a occupies size_to_alloc(0x1000) = 0x1008 bytes
+
+        // guest RGB565 overflow scribbles a white pixel over the tail header:
+        // 0x0000ffff -> in_use=0, size=0xffff which is 4-misaligned
+        write_generic(&mut core, tail, 0x0000ffffu32)?;
+
+        // a large allocation must still succeed by reconstructing the tail
+        let big = ListAllocator::alloc(&mut core, base, region, 0x8000)?;
+        assert_eq!(big, tail + 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reconstruct_corrupt_header_with_in_use_bit() -> Result<()> {
+        let mut core = ArmCore::new(false, None).unwrap();
+        core.map(0x40000000, 0x100000)?;
+
+        let base = 0x40000000;
+        let region = 0x100000;
+        ListAllocator::init(&mut core, base, region)?;
+
+        let a = ListAllocator::alloc(&mut core, base, region, 0x1000)?;
+        let tail = (a - 4) + 0x1008;
+
+        // a magenta RGB565 pixel (0xf81f) scribbled over the tail header: size 0xf81ff81f is
+        // 4-misaligned AND its top bit is set, so it must NOT be mistaken for a live block.
+        write_generic(&mut core, tail, 0xf81ff81fu32)?;
+
+        let big = ListAllocator::alloc(&mut core, base, region, 0x8000)?;
+        assert_eq!(big, tail + 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reconstruct_stops_at_inuse_block() -> Result<()> {
+        let mut core = ArmCore::new(false, None).unwrap();
+        core.map(0x40000000, 0x100000)?;
+
+        let base = 0x40000000;
+        let region = 0x100000;
+        ListAllocator::init(&mut core, base, region)?;
+
+        let a = ListAllocator::alloc(&mut core, base, region, 0x1000)?;
+        let b = ListAllocator::alloc(&mut core, base, region, 0x1000)?;
+        ListAllocator::free(&mut core, a)?;
+
+        // corrupt the now-free hole where `a` used to be
+        write_generic(&mut core, a - 4, 0x0000ffffu32)?;
+
+        // a request larger than the hole must reconstruct only up to the in-use block `b`,
+        // never handing out `b`'s live memory: the allocation lands past `b` in the tail
+        let big = ListAllocator::alloc(&mut core, base, region, 0x8000)?;
+        let b_end = (b - 4) + 0x1008;
+        assert!(big - 4 >= b_end, "allocation overlapped the in-use block b");
 
         Ok(())
     }
