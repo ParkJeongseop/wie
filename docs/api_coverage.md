@@ -400,14 +400,26 @@ Aggregating crashes during the 30s input scenario:
   existed) — added as the same impl (returns the `currentJlet` static). Clears
   대박투어타이쿤's crash; it now runs the full scenario.
 - **`Allocation failure at net/wie/EventQueue.getNextEvent`** (리듬페스티발,
-  메이플스토리_도적편, and any game that plays long enough): the 256 MB guest
-  heap fills mid-play. wie's GC (`jvm.collect_garbage`) only runs on an explicit
-  `System.gc()`, so a periodic-GC experiment was tried — but **rejected**: GC
-  collected 1526 objects once at startup, then **0 on every later pass**, i.e.
-  the accumulating objects are all still *reachable*. This is a real
-  reference-retention leak (game- or emulation-held refs that keep growing), not
-  reclaimable garbage, so GC-on-OOM cannot help. Needs object-graph RE to find
-  what holds the growing references. Don't re-try periodic/on-OOM GC.
+  메이플스토리_도적편, and any game that plays long enough): root-caused
+  2026-08-05 with allocator/heap instrumentation (all reverted). It is **not a
+  leak** — it is **heap-header corruption**:
+  - Not a Java-object leak: with a periodic GC the live-object set is bounded
+    (~229 objects) yet the OOM still fires.
+  - Not a raw-alloc leak: instrumenting `Allocator::alloc/free` showed only
+    ~1.5 MB net-allocated at the failure.
+  - Walking the `ListAllocator` heap at the failure found a block whose header
+    word had been overwritten with `0x0000ffff` (a white RGB565 pixel): its
+    `size()` becomes `0xffff` (65535, not 4-aligned), so the free-list walk
+    lands mid-word, reads garbage (`0x7bfffdff`, in_use=true, ~2 GB) as the next
+    header, and can no longer reach the free space past it — every later alloc
+    that needs the list region fails.
+  - So a **graphics/guest write of a 16-bit `0xffff` overflows a buffer into an
+    adjacent heap header.** It is NOT `FrameBuffer::write` (instrumented its
+    write-back: 0 oversize writes), so the overflowing store is elsewhere —
+    most likely the game's own ARM store past a buffer end (possibly one we
+    under-sized), or another WIPI-C blit path. Pinning it needs a write-watch on
+    the corrupted header address; that's the next step. Do NOT re-try GC — the
+    objects aren't garbage.
 - Still-open buckets hit here: `address 0` family (보글보글, 화장빨인생, 놈ZERO,
   하이브리드 — see the jump-native cluster above), `Invalid allocation header`
   (LGT_KBO프로야구2009), an ambiguous high `LGT WIPIC SVC id 901` (슈퍼액션히어로3,
