@@ -337,6 +337,30 @@ Remaining non-T3 buckets (from the 30s sheets):
   dialog chrome is drawn procedurally, not from a UI template. Pinning why the
   game emits no glyphs needs ARM/bytecode stepping of its draw path — a large
   dedicated task; do not re-chase the missing-`.mpl` lead.
+  - **[2026-08-06] Strong lead to re-check after the GetFramebufferBpp fix
+    below.** 리듬페스티발 (also an LGT Clet) showed the identical "chrome via
+    FillRect, no visible glyphs" symptom, and its cause turned out to be the
+    game's own sprite/glyph blit taking a 32-bit render path (because
+    `MC_grpGetFrameBufferBpp` returned 0) and writing garbage into the 16-bit
+    framebuffer — the "glyphs" were being drawn, just via a custom blit the
+    draw-call instrumentation didn't count, and coming out invisible/garbled.
+    The bpp fix made 리듬페스티발 render its text correctly. The Gamevil cluster
+    may be the same bug; re-render these with the fix and read the frames before
+    concluding "no glyphs." (The earlier "zero content pixels" was measured from
+    FillRect fills only, so it would miss a broken custom blit.)
+- **`MC_grpGetFrameBufferBpp` returning 0 for a stale handle** (fixed 2026-08-06,
+  리듬페스티발): the API read the passed framebuffer handle and returned its `bpp`
+  verbatim. Some Clets pass a stale argument register here (real handsets treat
+  pixel depth as a fixed screen property independent of the argument), so the
+  handle resolves to zeroes and the API returned 0. A game then compares the
+  screen depth against 16, picks a **32-bit** render path, and blits 32-bit
+  pixels into our 16-bit framebuffer — garbling every sprite/glyph *and*
+  overflowing the draw buffer into the adjacent heap (this is the actual source
+  of the `getNextEvent` "Allocation failure" for these games, upstream of the
+  corruption-resilient heap walk that only contained it). Fix: fall back to the
+  framebuffer depth (16) when the handle doesn't resolve to a real framebuffer.
+  리듬페스티발 now renders text/sprites and its heap self-overflow disappears
+  (header repairs drop from firing every frame to zero).
 - **Integrity/re-download notices** (2008베이징올림픽, 레이카르나, …): the
   game itself decides it is corrupted and parks on a "download again" screen.
 - **Network-consent popups** (리듬스타2, 이터널사가3, …): stuck on a
