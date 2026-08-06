@@ -807,7 +807,17 @@ pub async fn get_framebuffer_bpl(context: &mut dyn WIPICContext, framebuffer: WI
 pub async fn get_framebuffer_bpp(context: &mut dyn WIPICContext, framebuffer: WIPICIndirectPtr) -> Result<i32> {
     tracing::debug!("MC_GRP_GET_FRAME_BUFFER_BPP({:#x})", framebuffer.0);
 
-    let framebuffer: WIPICFramebuffer = read_generic(context, context.data_ptr(framebuffer)?)?;
+    // The pixel depth is a fixed screen property on real handsets, so a call here
+    // always yields the display depth. Some games rely on that and pass a stale
+    // register (e.g. a previous call's return value) as the framebuffer handle. If
+    // the handle doesn't resolve to a real framebuffer we must still report the
+    // display depth rather than 0 — a 0 makes such a game pick a 32-bit render path
+    // and blit 32-bit pixels into our 16-bit framebuffer, corrupting both the image
+    // (garbled sprites) and the adjacent heap.
+    let bpp = match context.data_ptr(framebuffer) {
+        Ok(ptr) => read_generic::<WIPICFramebuffer, _>(context, ptr).map(|fb| fb.bpp).unwrap_or(0),
+        Err(_) => 0,
+    };
 
-    Ok(framebuffer.bpp as _)
+    Ok(if bpp != 0 { bpp as i32 } else { FRAMEBUFFER_DEPTH as i32 })
 }
