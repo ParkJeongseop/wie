@@ -337,17 +337,25 @@ Remaining non-T3 buckets (from the 30s sheets):
   dialog chrome is drawn procedurally, not from a UI template. Pinning why the
   game emits no glyphs needs ARM/bytecode stepping of its draw path — a large
   dedicated task; do not re-chase the missing-`.mpl` lead.
-  - **[2026-08-06] Strong lead to re-check after the GetFramebufferBpp fix
-    below.** 리듬페스티발 (also an LGT Clet) showed the identical "chrome via
-    FillRect, no visible glyphs" symptom, and its cause turned out to be the
-    game's own sprite/glyph blit taking a 32-bit render path (because
-    `MC_grpGetFrameBufferBpp` returned 0) and writing garbage into the 16-bit
-    framebuffer — the "glyphs" were being drawn, just via a custom blit the
-    draw-call instrumentation didn't count, and coming out invisible/garbled.
-    The bpp fix made 리듬페스티발 render its text correctly. The Gamevil cluster
-    may be the same bug; re-render these with the fix and read the frames before
-    concluding "no glyphs." (The earlier "zero content pixels" was measured from
-    FillRect fills only, so it would miss a broken custom blit.)
+  - **[2026-08-11] CONFIRMED — the "no glyphs" symptom was the GetFramebufferBpp
+    render-path bug (fixed below), NOT a missing text path.** The earlier
+    conclusion ("the game emits no glyphs") was wrong: the glyphs *were* being
+    drawn via the game's own custom 32-bit blit, which the draw-call
+    instrumentation didn't count and which wrote garbage into our 16-bit
+    framebuffer. With the bpp fix, **제노니아1, 놈ZERO, and 하이브리드2 all now
+    render their full Korean text** (the "이용안내 … 아무키나 누르세요" standalone-game
+    notice) instead of an empty/garbled dialog. So the whole cluster's rendering
+    is resolved by one 6-line fix. The remaining blocker is a different one: these
+    are network-featured games (ranking/mail/item-gift over `MC_netConnect`) but
+    are **단독형 (standalone) — playable offline**; pressing a key past the notice
+    reaches a real main menu (이어하기/새게임), and 새게임 → "해당 슬롯에 데이터가
+    없습니다, 새로 시작하시겠습니까 [예/아니오]". Confirming 새 게임 then crashes in the
+    save-data-init path: an accessor object's `this+0x8` field holds a wild pointer
+    (`0xfffe0808`) — set at game pc `0x35fcc` from the return of game fn `0xa590`,
+    which returns a stale/corrupt entry from a per-index accessor table
+    (`this+0x10`, 8-byte stride) rather than a fresh alloc. Root cause not yet
+    pinned (a level deeper than the bpp fix); this is the next lead for the cluster.
+    Do NOT re-chase the missing-`.mpl`/no-glyphs leads.
 - **`MC_grpGetFrameBufferBpp` returning 0 for a stale handle** (fixed 2026-08-06,
   리듬페스티발): the API read the passed framebuffer handle and returned its `bpp`
   verbatim. Some Clets pass a stale argument register here (real handsets treat
