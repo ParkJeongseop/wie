@@ -356,6 +356,18 @@ Remaining non-T3 buckets (from the 30s sheets):
     (`this+0x10`, 8-byte stride) rather than a fresh alloc. Root cause not yet
     pinned (a level deeper than the bpp fix); this is the next lead for the cluster.
     Do NOT re-chase the missing-`.mpl`/no-glyphs leads.
+- **Online-server-required games** (테일즈위버 막시민편, LGT Clet — investigated
+  2026-08-24): renders perfectly (intro notice, title "press any key", main menu,
+  the 바이오리듬 offline feature all work — no render/emu bug). The user's reported
+  "408 오류" is the game's own **"서버 접속에 실패했습니다. 재접속 또는 문의처로
+  연락주세요"** dialog: menu item "게임시작" requires a live game server (this is the
+  mobile client of the 테일즈위버 MMO, service long dead), and our `MC_netConnect`
+  callback returns `M_E_ERROR`, so the game shows the connect-failure dialog. Faking
+  a success callback (`M_E_ERROR` → 0) only pushes the game one step deeper into the
+  socket protocol, then it dies with `Unknown LGT WIPIC SVC id 2000` (uninitialized
+  socket-handle path — the exact artifact documented for 제노니아 above). So this is
+  **not fixable without a real/emulated game server**; the offline menu paths already
+  work. Not an emulator bug.
 - **`MC_grpGetFrameBufferBpp` returning 0 for a stale handle** (fixed 2026-08-06,
   리듬페스티발): the API read the passed framebuffer handle and returned its `bpp`
   verbatim. Some Clets pass a stale argument register here (real handsets treat
