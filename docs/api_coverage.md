@@ -491,8 +491,19 @@ Aggregating crashes during the 30s input scenario:
     stop-at-in-use cases. The repair is a one-time cost per corruption (the header
     is rewritten valid), and in practice the scan finds a nearby in-use block so
     it stays cheap.
+- **KTF DB record-info + GetContext filled in** (2026-08-26, user report): an app
+  user's screenshot showed 데몬헌터 dying at startup with
+  `Unimplemented: 10: MC_dbGetNumberOfRecords`. Implemented
+  `MC_dbGetNumberOfRecords` / `MC_dbGetRecordSize` for KTF's single-record
+  stream-handle model (count = mirror non-empty ? 1 : 0; size = mirror length —
+  games call these right after open to tell "is there a save?"), and wired KTF's
+  `MC_grpGetContext` slot to the existing `graphics::get_context` impl (it was a
+  stub; LGT already used the real one — this was also 에픽크로니클2's crash). A
+  KTF-wide 8s sweep found 데몬헌터 as the only boot-time caller. 데몬헌터 now boots
+  past both layers and renders its notice dialog, then hits the known `address 0`
+  bucket below (separate deep issue).
 - Still-open buckets hit here: `address 0` family (보글보글, 화장빨인생, 놈ZERO,
-  하이브리드 — see the jump-native cluster above), `Invalid allocation header`
+  하이브리드, 데몬헌터 — see the jump-native cluster above), `Invalid allocation header`
   (LGT_KBO프로야구2009), an ambiguous high `LGT WIPIC SVC id 901` (슈퍼액션히어로3,
   likely a garbage dispatch like the 2000 case — not mapped). 미니게임씨네마's
   missing timer method (recorded here earlier as `TimerTask.cancel()Z`) was

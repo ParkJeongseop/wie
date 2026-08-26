@@ -170,6 +170,30 @@ pub async fn list_record(context: &mut dyn WIPICContext, db_id: i32, buf_ptr: WI
     Ok(ids.len() as _)
 }
 
+pub async fn get_number_of_records_ktf(context: &mut dyn WIPICContext, db_id: i32) -> Result<i32> {
+    tracing::debug!("MC_dbGetNumberOfRecords({db_id:#x})");
+
+    let Some(handle) = load_handle(context, db_id)? else {
+        return Ok(-25); // M_E_INVALIDHANDLE
+    };
+
+    // KTF's stream-style handle mirrors a single backing record (id 1); games call
+    // this right after open to tell "is there a save?" apart from an empty database.
+    Ok(if handle.buffer_len > 0 { 1 } else { 0 })
+}
+
+pub async fn get_record_size_ktf(context: &mut dyn WIPICContext, db_id: i32, rec_id: i32) -> Result<i32> {
+    tracing::debug!("MC_dbGetRecordSize({db_id:#x}, {rec_id})");
+
+    let Some(handle) = load_handle(context, db_id)? else {
+        return Ok(-25); // M_E_INVALIDHANDLE
+    };
+
+    // Single-record stream model: the mirror's length is the record size
+    // regardless of the requested id.
+    Ok(handle.buffer_len as i32)
+}
+
 pub async fn seek_record_single(context: &mut dyn WIPICContext, db_id: i32, offset: i32, origin: i32) -> Result<i32> {
     tracing::debug!("MC_dbSeekRecordSingle({db_id:#x}, {offset}, {origin})");
 
