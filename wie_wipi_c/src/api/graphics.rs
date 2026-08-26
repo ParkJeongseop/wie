@@ -112,7 +112,7 @@ pub async fn set_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, o
     Ok(())
 }
 
-pub async fn get_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, op: WIPICGraphicsContextIdx) -> Result<WIPICWord> {
+pub async fn get_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, op: WIPICGraphicsContextIdx, pv: WIPICWord) -> Result<WIPICWord> {
     tracing::debug!("MC_grpGetContext({p_grp_ctx:#x}, {op:?})");
 
     let grp_ctx: WIPICGraphicsContext = read_generic(context, p_grp_ctx)?;
@@ -125,6 +125,17 @@ pub async fn get_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, o
         WIPICGraphicsContextIdx::PixelParam1Idx => grp_ctx.param1,
         WIPICGraphicsContextIdx::FontIdx => grp_ctx.font,
         WIPICGraphicsContextIdx::StyleIdx => grp_ctx.style,
+        // Struct-valued attributes mirror set_context: the extra argument is an
+        // out pointer the caller reads the struct back through (데몬헌터 polls
+        // the clip every frame during stage loading).
+        WIPICGraphicsContextIdx::ClipIdx if pv >= 0x1000 => {
+            write_generic(context, pv, grp_ctx.clip)?;
+            0
+        }
+        WIPICGraphicsContextIdx::OffsetIdx if pv >= 0x1000 => {
+            write_generic(context, pv, grp_ctx.offset)?;
+            0
+        }
         _ => {
             tracing::warn!("MC_grpGetContext({p_grp_ctx:#x}, {op:?}): unsupported op");
             0

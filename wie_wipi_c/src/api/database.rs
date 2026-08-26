@@ -49,6 +49,19 @@ const DATABASE_HANDLE_MAGIC: u32 = 0x4D434442;
 const MAX_NAME_LEN: usize = 31; // leave a byte for null terminator inside the 32-byte field
 
 pub async fn open_database(context: &mut dyn WIPICContext, ptr_name: WIPICWord, mode: i32, r#type: i32) -> Result<i32> {
+    open_database_impl(context, ptr_name, mode, r#type, false).await
+}
+
+/// KTF's `MC_dbOpenDataBase` opens a missing database as an empty one even in
+/// read mode: 데몬헌터 checks `MC_dbExists` (gets "missing"), still calls
+/// open(mode 1), and uses the returned handle without checking for an error —
+/// so on real handsets that call must have succeeded. Keep the strict NOENT
+/// behaviour for LGT (제노니아-family games probe with open and handle the -12).
+pub async fn open_database_ktf(context: &mut dyn WIPICContext, ptr_name: WIPICWord, mode: i32, r#type: i32) -> Result<i32> {
+    open_database_impl(context, ptr_name, mode, r#type, true).await
+}
+
+async fn open_database_impl(context: &mut dyn WIPICContext, ptr_name: WIPICWord, mode: i32, r#type: i32, open_missing: bool) -> Result<i32> {
     tracing::debug!("MC_dbOpenDataBase({ptr_name:#x}, {mode}, {type})");
 
     // Guest-provided C string — invalid UTF-8 must not bring down the
@@ -74,7 +87,7 @@ pub async fn open_database(context: &mut dyn WIPICContext, ptr_name: WIPICWord, 
     let pid = system.pid().to_owned();
     let exists = system.platform().database_repository().exists(&name, &pid).await;
 
-    if !exists && packaged.is_none() && mode == 1 {
+    if !exists && packaged.is_none() && mode == 1 && !open_missing {
         return Ok(-12); // M_E_NOENT
     }
 
@@ -170,16 +183,43 @@ pub async fn list_record(context: &mut dyn WIPICContext, db_id: i32, buf_ptr: WI
     Ok(ids.len() as _)
 }
 
-pub async fn get_number_of_records_ktf(context: &mut dyn WIPICContext, db_id: i32) -> Result<i32> {
-    tracing::debug!("MC_dbGetNumberOfRecords({db_id:#x})");
+pub async fn get_number_of_records_ktf(context: &mut dyn WIPICContext, arg: i32) -> Result<i32> {
+    tracing::debug!("MC_dbGetNumberOfRecords({arg:#x})");
 
-    let Some(handle) = load_handle(context, db_id)? else {
-        return Ok(-25); // M_E_INVALIDHANDLE
+    // KTF passes a database *name* here (데몬헌터 asks about "Patch"), not an
+    // open handle; sniff the handle magic first so both shapes work.
+    if let Ok(Some(handle)) = load_handle(context, arg) {
+        return Ok(if handle.buffer_len > 0 { 1 } else { 0 });
+    }
+
+    let Ok(name) = String::from_utf8(read_null_terminated_string_bytes(context, arg as u32)?) else {
+        return Ok(-22);
     };
 
-    // KTF's stream-style handle mirrors a single backing record (id 1); games call
-    // this right after open to tell "is there a save?" apart from an empty database.
-    Ok(if handle.buffer_len > 0 { 1 } else { 0 })
+    let count = {
+        let system = context.system();
+        let pid = system.pid().to_owned();
+        if system.platform().database_repository().exists(&name, &pid).await {
+            let db = system.platform().database_repository().open(&name, &pid).await;
+            Some(db.get_record_ids().await.len() as i32)
+        } else {
+            None
+        }
+    };
+    let count = match count {
+        Some(count) => count,
+        // A database only packaged in the archive holds its single record.
+        None => {
+            if read_packaged_database(context, &name).await?.is_some() {
+                1
+            } else {
+                0
+            }
+        }
+    };
+
+    tracing::debug!("MC_dbGetNumberOfRecords({name:?}) -> {count}");
+    Ok(count)
 }
 
 pub async fn get_record_size_ktf(context: &mut dyn WIPICContext, db_id: i32, rec_id: i32) -> Result<i32> {
@@ -542,18 +582,29 @@ pub async fn stat_by_name_ktf(context: &mut dyn WIPICContext, name_ptr: WIPICWor
         Err(_) => return Ok(-22),
     };
 
-    let system = context.system();
-    let pid = system.pid().to_owned();
-    let exists = system.platform().database_repository().exists(&name, &pid).await;
-    if !exists {
-        tracing::debug!("db.stat_by_name({name:?}, mode={mode}) -> -22 (not found)");
-        return Ok(-22);
-    }
-
-    // Pull record 1's size as the "valid save" indicator the game checks
-    // against 0xC7 in v2[2].
-    let db = system.platform().database_repository().open(&name, &pid).await;
-    let record_size = db.get(1).await.map(|x| x.len() as u32).unwrap_or(0);
+    let record_size = {
+        let system = context.system();
+        let pid = system.pid().to_owned();
+        if system.platform().database_repository().exists(&name, &pid).await {
+            // Pull record 1's size as the "valid save" indicator the game checks
+            // against 0xC7 in v2[2].
+            let db = system.platform().database_repository().open(&name, &pid).await;
+            Some(db.get(1).await.map(|x| x.len() as u32).unwrap_or(0))
+        } else {
+            None
+        }
+    };
+    let record_size = match record_size {
+        Some(size) => size,
+        None => match read_packaged_database(context, &name).await? {
+            // A database only packaged in the archive (P/<name>) also exists.
+            Some(data) => data.len() as u32,
+            None => {
+                tracing::debug!("db.stat_by_name({name:?}, mode={mode}) -> -22 (not found)");
+                return Ok(-22);
+            }
+        },
+    };
 
     if out_buf != 0 {
         write_generic(context, out_buf, 0u32)?;
@@ -571,7 +622,7 @@ pub async fn stat_by_name_ktf(context: &mut dyn WIPICContext, name_ptr: WIPICWor
 /// path. Returning 1 unconditionally makes them try to load nonexistent
 /// state on first run and trip later, so we read the C string at `a0` and
 /// answer based on the real persisted state.
-pub async fn exists_database_ktf(context: &mut dyn WIPICContext, name_ptr: WIPICWord, _arg1: i32, _arg2: i32) -> Result<i32> {
+pub async fn exists_database_ktf(context: &mut dyn WIPICContext, name_ptr: WIPICWord, out_ptr: WIPICWord, _arg2: i32) -> Result<i32> {
     let name = match read_null_terminated_string_bytes(context, name_ptr) {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(s) => s,
@@ -586,12 +637,46 @@ pub async fn exists_database_ktf(context: &mut dyn WIPICContext, name_ptr: WIPIC
         }
     };
 
-    let system = context.system();
-    let pid = system.pid().to_owned();
-    let exists = system.platform().database_repository().exists(&name, &pid).await;
+    let size = {
+        let system = context.system();
+        let pid = system.pid().to_owned();
+        if system.platform().database_repository().exists(&name, &pid).await {
+            let db = system.platform().database_repository().open(&name, &pid).await;
+            Some(db.get(1).await.map(|x| x.len() as u32).unwrap_or(0))
+        } else {
+            None
+        }
+    };
+    let size = match size {
+        Some(size) => Some(size),
+        // A database only packaged in the archive (P/<name>) also "exists".
+        None => read_packaged_database(context, &name).await?.map(|data| data.len() as u32),
+    };
 
-    let result = if exists { 1 } else { 0 };
-    tracing::debug!("MC_dbExists({name:?}) -> {result}");
+    // 데몬헌터 passes an out pointer here and reads word 2 back as the record
+    // size (it allocates a buffer of that size without checking our return
+    // value), matching the stat_by_name layout below. Not every call site
+    // passes a pointer though — boot-time callers put small flag values in this
+    // argument — so only fill it when it plausibly points at guest memory, and
+    // treat a failed write as "not an out pointer" rather than an error.
+    if let Some(size) = size
+        && out_ptr >= 0x1000
+        && out_ptr.is_multiple_of(4)
+    {
+        let filled = write_generic(context, out_ptr, 0u32)
+            .and_then(|()| write_generic(context, out_ptr + 4, 0u32))
+            .and_then(|()| write_generic(context, out_ptr + 8, size));
+        if filled.is_err() {
+            tracing::debug!("MC_dbExists: out arg {out_ptr:#x} not writable; skipping info fill");
+        }
+    }
+
+    // KTF returns the WIPI-standard success/error here (0 = exists, -12 =
+    // missing), not a boolean: 데몬헌터 compares against 0 to decide whether its
+    // FirstRun marker exists, and the old 1-for-exists guess made it loop on
+    // the "restart the app" screen forever.
+    let result = if size.is_some() { 0 } else { -12 };
+    tracing::debug!("MC_dbExists({name:?}) -> {result} (size={size:?})");
     Ok(result)
 }
 
@@ -629,11 +714,33 @@ async fn get_database_from_db_id(context: &mut dyn WIPICContext, db_id: i32) -> 
 }
 
 async fn read_packaged_database(context: &mut dyn WIPICContext, name: &str) -> Result<Option<Vec<u8>>> {
-    if context.get_resource_size(name).await?.is_none() {
-        return Ok(None);
+    if context.get_resource_size(name).await?.is_some() {
+        return Ok(Some(context.read_resource(name).await?));
     }
 
-    Ok(Some(context.read_resource(name).await?))
+    // KTF archives ship preloaded databases as P/<name> files, mounted on the
+    // virtual filesystem (with the P/ prefix trimmed) rather than on the jar
+    // classpath — 데몬헌터 stats and opens its bundled Config.dat this way.
+    let filesystem = context.system().filesystem();
+    if filesystem.exists(name).await {
+        let mut data = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let Some(read) = filesystem.read(name, data.len(), buf.len(), &mut buf).await else {
+                break;
+            };
+            if read == 0 {
+                break;
+            }
+            data.extend_from_slice(&buf[..read]);
+            if read < buf.len() {
+                break;
+            }
+        }
+        return Ok(Some(data));
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]

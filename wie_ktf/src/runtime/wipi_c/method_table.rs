@@ -508,7 +508,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             }
         }
         WIPICTableId::Database => match WIPICDatabaseMethodId::try_from(function_id).ok()? {
-            WIPICDatabaseMethodId::OpenDatabase => Some(database::open_database.into_body()),
+            WIPICDatabaseMethodId::OpenDatabase => Some(database::open_database_ktf.into_body()),
             WIPICDatabaseMethodId::StreamRead => Some(database::stream_read.into_body()),
             WIPICDatabaseMethodId::StreamWrite => Some(database::stream_write.into_body()),
             WIPICDatabaseMethodId::CloseDatabase => Some(database::close_database.into_body()),

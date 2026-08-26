@@ -502,8 +502,36 @@ Aggregating crashes during the 30s input scenario:
   KTF-wide 8s sweep found 데몬헌터 as the only boot-time caller. 데몬헌터 now boots
   past both layers and renders its notice dialog, then hits the known `address 0`
   bucket below (separate deep issue).
+- **데몬헌터 fully playable** (2026-08-26, follow-up to the record-info fix): four
+  more layers, each pinned by disassembling client.bin (loaded at IMAGE_BASE
+  0x100000) against runtime traces:
+  - The input-triggered `address 0` crash was the game dereferencing the result
+    of `MC_dbOpenDataBase("Config.dat", mode 1)` without checking for -12. KTF's
+    open treats a missing DB as an openable empty one: added
+    `open_database_ktf` (mode-1 open of a missing DB returns an empty handle
+    instead of M_E_NOENT; LGT keeps the strict behaviour — 제노니아 probes with
+    open and handles the -12).
+  - `read_packaged_database` only looked at jar classpath resources, but KTF
+    archives ship preloaded DBs as top-level `P/<name>` files mounted on the
+    virtual filesystem — added a filesystem fallback so Config.dat/Save0.dat
+    etc. are visible as packaged databases.
+  - `MC_dbExists` (KTF slot 16) actually returns the WIPI-standard 0/-12, not a
+    1/0 boolean (the old guess made 데몬헌터 loop on its "restart the app"
+    screen forever), takes an out pointer it fills with `{0, 0, record size}`
+    (word 2 feeds the game's buffer allocation directly — guarded to only write
+    when the argument plausibly points at memory, since boot-time call sites
+    pass small flags there), and considers packaged databases.
+  - `MC_dbGetNumberOfRecords` takes a database *name*, not a handle (데몬헌터
+    asks about "Patch"); reimplemented name-based with a handle-magic sniff.
+  - `MC_grpGetContext` struct-valued attributes (ClipIdx/OffsetIdx) mirror
+    set_context: the third argument is an out pointer for the struct. The game
+    polls the clip every frame during stage loading and never finished while
+    the op was unsupported.
+  Result: boots → title ("PRESS 이어하기 KEY") → stage load ("루베르전초기지") →
+  in-game play with HP/MP HUD and a moving player character. 31-game
+  regression unchanged.
 - Still-open buckets hit here: `address 0` family (보글보글, 화장빨인생, 놈ZERO,
-  하이브리드, 데몬헌터 — see the jump-native cluster above), `Invalid allocation header`
+  하이브리드 — see the jump-native cluster above), `Invalid allocation header`
   (LGT_KBO프로야구2009), an ambiguous high `LGT WIPIC SVC id 901` (슈퍼액션히어로3,
   likely a garbage dispatch like the 2000 case — not mapped). 미니게임씨네마's
   missing timer method (recorded here earlier as `TimerTask.cancel()Z`) was
