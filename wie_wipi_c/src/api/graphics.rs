@@ -494,10 +494,16 @@ pub async fn get_font(_: &mut dyn WIPICContext, face: i32, size: i32, style: i32
     Ok(0)
 }
 
-pub async fn get_font_height(_: &mut dyn WIPICContext, font: i32) -> Result<i32> {
-    tracing::warn!("stub MC_grpGetFontHeight({font})");
+/// WIPI's default font is 12px tall. `MC_grpGetFontHeight` reports that number and
+/// games lay out text lines with it, so we must render at the same height: ab_glyph
+/// scales a point size to `pt * 96 / 72` pixels, making 9pt exactly 12px.
+const FONT_SIZE: f32 = 9.0;
+const FONT_HEIGHT: i32 = 12;
 
-    Ok(12)
+pub async fn get_font_height(_: &mut dyn WIPICContext, font: i32) -> Result<i32> {
+    tracing::debug!("MC_grpGetFontHeight({font})");
+
+    Ok(FONT_HEIGHT)
 }
 
 pub async fn get_font_ascent(_: &mut dyn WIPICContext, font: i32) -> Result<i32> {
@@ -522,7 +528,7 @@ pub async fn get_string_width(context: &mut dyn WIPICContext, font: i32, ptr_str
     // WIPI-C strings are EUC-KR; UTF-8 decoding miscounts multi-byte Korean.
     let s = encoding_rs::EUC_KR.decode(&bytes).0;
 
-    Ok(string_width(&s, 10.0) as i32)
+    Ok(string_width(&s, FONT_SIZE) as i32)
 }
 
 pub async fn draw_string(
@@ -557,7 +563,7 @@ pub async fn draw_string(
 
     let mut canvas = framebuffer.canvas(context)?;
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    canvas.draw_text(&string, x, y, 10.0, TextAlignment::Left, color, clip);
+    canvas.draw_text(&string, x, y, FONT_SIZE, TextAlignment::Left, color, clip);
     canvas.flush()?;
 
     Ok(())
