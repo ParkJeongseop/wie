@@ -829,6 +829,45 @@ impl Clip {
     }
 }
 
+/// BMP has no alpha channel, so WIPI packages flag transparency in the file header:
+/// `bfReserved1 == 1` marks the image as keyed and `biClrImportant` holds the palette
+/// index of the key color. Returns the key as RGB, or `None` when the image is opaque.
+fn bmp_color_key(data: &[u8]) -> Option<[u8; 3]> {
+    const FILE_HEADER_SIZE: usize = 14;
+
+    if data.len() < FILE_HEADER_SIZE + 40 || data[0] != b'B' || data[1] != b'M' {
+        return None;
+    }
+
+    let u16_at = |offset: usize| u16::from_le_bytes([data[offset], data[offset + 1]]);
+    let u32_at = |offset: usize| u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]) as usize;
+
+    if u16_at(6) != 1 {
+        return None;
+    }
+
+    let info_header_size = u32_at(FILE_HEADER_SIZE);
+    let bit_count = u16_at(FILE_HEADER_SIZE + 14);
+    let key_index = u32_at(FILE_HEADER_SIZE + 36);
+    if bit_count > 8 {
+        return None; // key index only addresses a palette
+    }
+
+    let palette_start = FILE_HEADER_SIZE + info_header_size;
+    let palette_end = u32_at(10);
+    let palette_len = palette_end.checked_sub(palette_start)? / 4;
+    if key_index >= palette_len {
+        return None;
+    }
+
+    let entry = palette_start + key_index * 4;
+    if entry + 3 > data.len() {
+        return None;
+    }
+
+    Some([data[entry + 2], data[entry + 1], data[entry]]) // stored BGRA
+}
+
 pub fn decode_image(data: &[u8]) -> Result<Box<dyn Image>> {
     extern crate std; // XXX
 
@@ -838,6 +877,8 @@ pub fn decode_image(data: &[u8]) -> Result<Box<dyn Image>> {
         return decode_lbmp(data);
     }
 
+    let color_key = bmp_color_key(data);
+
     let image = ImageReader::new(Cursor::new(&data))
         .with_guessed_format()
         .map_err(|x| WieError::FatalError(x.to_string()))?
@@ -845,7 +886,13 @@ pub fn decode_image(data: &[u8]) -> Result<Box<dyn Image>> {
         .map_err(|x| WieError::FatalError(x.to_string()))?;
     let rgba = image.into_rgba8();
 
-    let data = rgba.pixels().flat_map(|x| [x.0[2], x.0[1], x.0[0], x.0[3]]).collect::<Vec<_>>();
+    let data = rgba
+        .pixels()
+        .flat_map(|x| {
+            let alpha = if color_key == Some([x.0[0], x.0[1], x.0[2]]) { 0 } else { x.0[3] };
+            [x.0[2], x.0[1], x.0[0], alpha]
+        })
+        .collect::<Vec<_>>();
 
     Ok(Box::new(VecImageBuffer::<ArgbPixel>::from_raw(
         rgba.width(),
