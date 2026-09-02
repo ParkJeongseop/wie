@@ -586,6 +586,15 @@ where
     fn draw_text(&mut self, string: &str, x: i32, y: i32, size: f32, text_alignment: TextAlignment, color: Color, clip: Clip) {
         let font = FONT.as_scaled(FONT.pt_to_px_scale(size).unwrap());
 
+        // Games position text expecting ink to start at `y`, like the original WIPI
+        // bitmap fonts whose glyphs fill their cell. Our TTF leaves a gap between the
+        // cell top and the tallest ink (e.g. Korean syllables), so anchor the baseline
+        // to a reference glyph's ink top instead of the em box.
+        let ink_ascent = FONT
+            .outline_glyph(font.scaled_glyph('가'))
+            .map(|g| -g.px_bounds().min.y)
+            .unwrap_or_else(|| font.ascent());
+
         let total_width = string.chars().map(|c| font.h_advance(font.scaled_glyph(c).id)).sum::<f32>();
         let x = match text_alignment {
             TextAlignment::Left => x,
@@ -606,7 +615,7 @@ where
                 outlined_glyph.draw(|glyph_x: u32, glyph_y, c| {
                     let bounds = outlined_glyph.px_bounds();
                     let px = x + (glyph_x as f32 + bounds.min.x + position) as i32;
-                    let py = y + (glyph_y as f32 + bounds.min.y + size) as i32;
+                    let py = y + (glyph_y as f32 + bounds.min.y + ink_ascent) as i32;
                     if px < clip.x || px >= clip.x + clip.width as i32 || py < clip.y || py >= clip.y + clip.height as i32 {
                         return;
                     }

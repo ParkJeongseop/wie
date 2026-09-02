@@ -499,6 +499,7 @@ pub async fn get_font(_: &mut dyn WIPICContext, face: i32, size: i32, style: i32
 /// scales a point size to `pt * 96 / 72` pixels, making 9pt exactly 12px.
 const FONT_SIZE: f32 = 9.0;
 const FONT_HEIGHT: i32 = 12;
+const FONT_ASCENT: i32 = 9;
 
 pub async fn get_font_height(_: &mut dyn WIPICContext, font: i32) -> Result<i32> {
     tracing::debug!("MC_grpGetFontHeight({font})");
@@ -507,15 +508,15 @@ pub async fn get_font_height(_: &mut dyn WIPICContext, font: i32) -> Result<i32>
 }
 
 pub async fn get_font_ascent(_: &mut dyn WIPICContext, font: i32) -> Result<i32> {
-    tracing::warn!("stub MC_grpGetFontAscent({font})");
+    tracing::debug!("MC_grpGetFontAscent({font})");
 
-    Ok(10)
+    Ok(FONT_ASCENT)
 }
 
 pub async fn get_font_descent(_: &mut dyn WIPICContext, font: i32) -> Result<i32> {
-    tracing::warn!("stub MC_grpGetFontDescent({font})");
+    tracing::debug!("MC_grpGetFontDescent({font})");
 
-    Ok(2)
+    Ok(FONT_HEIGHT - FONT_ASCENT)
 }
 
 pub async fn get_string_width(context: &mut dyn WIPICContext, font: i32, ptr_string: WIPICWord, length: i32) -> Result<i32> {
