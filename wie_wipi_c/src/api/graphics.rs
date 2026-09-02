@@ -564,7 +564,11 @@ pub async fn draw_string(
 
     let mut canvas = framebuffer.canvas(context)?;
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    canvas.draw_text(&string, x, y, FONT_SIZE, TextAlignment::Left, color, clip);
+    // `y` is the text baseline, not the top: 메이플스토리 도적편 hardcodes its dialogue
+    // at y=293/307 inside a box spanning 273..316 and its speaker name at y=268 on a
+    // plate spanning 255..268 — both only fit when glyph ink occupies y-11..y, matching
+    // the original full-cell 12px bitmap fonts whose ink ends at the baseline.
+    canvas.draw_text(&string, x, y + 1 - FONT_HEIGHT, FONT_SIZE, TextAlignment::Left, color, clip);
     canvas.flush()?;
 
     Ok(())
