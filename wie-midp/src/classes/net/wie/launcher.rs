@@ -1,9 +1,9 @@
 use alloc::{boxed::Box, vec};
 
-use jvm::{ClassInstanceRef, JavaError, JavaValue, Jvm, Result as JvmResult, runtime::JavaLangString};
+use jvm::{ClassInstanceRef, JavaError, JavaValue, Jvm, Result as JvmResult};
 use jvm_class_proto::{JavaMethodProto, MethodBody};
 use jvm_types::{ClassAccessFlags, MethodAccessFlags};
-use rustjava_runtime::classes::java::lang::String;
+use rustjava_runtime::classes::java::lang::{Class as JavaLangClass, String};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
@@ -40,9 +40,24 @@ impl Launcher {
     async fn start(jvm: &Jvm, _context: &mut WieJvmContext, main_class: ClassInstanceRef<String>) -> JvmResult<()> {
         tracing::debug!("net.wie.Launcher::start({main_class:?})");
 
-        // create main class
-        let main_class = JavaLangString::to_rust_string(jvm, &main_class).await?;
-        let main_class = jvm.new_class(&main_class, "()V", ()).await?;
+        // Load the MIDlet through the system class loader: `jvm.new_class` resolves via
+        // the *current* class's loader, and net/wie itself lives in the runtime rustjar
+        // loader whose chain cannot see the application jar on the class path.
+        let class_loader = jvm
+            .invoke_static("java/lang/ClassLoader", "getSystemClassLoader", "()Ljava/lang/ClassLoader;", ())
+            .await?;
+        let clazz: ClassInstanceRef<JavaLangClass> = jvm
+            .invoke_virtual(
+                &class_loader,
+                "java/lang/ClassLoader",
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                (main_class,),
+            )
+            .await?;
+        let main_class: Box<dyn jvm::ClassInstance> = jvm
+            .invoke_virtual(&clazz, "java/lang/Class", "newInstance", "()Ljava/lang/Object;", ())
+            .await?;
 
         jvm.invoke_static("net/wie/Launcher", "startMIDlet", "(Ljavax/microedition/midlet/MIDlet;)V", (main_class,))
             .await
