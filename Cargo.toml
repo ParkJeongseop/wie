@@ -2,23 +2,24 @@
 resolver = "2"
 
 members = [
-    "wie_backend",
-    "wie_cli",
-    "wie_util",
-    "wie_core_arm",
-    "wie_jvm_support",
-    "wie_wipi_java",
-    "wie_wipi_c",
-    "wie_j2me",
-    "wie_ktf",
-    "wie_ktf_dump",
-    "wie_lgt",
-    "wie_skt",
+    "wie-app",
+    "wie-backend",
+    "wie-util",
+    "wie-core-arm",
+    "wie-jvm-support",
+    "wie-wipi-java",
+    "wie-wipi-c",
+    "wie-j2me",
+    "wie-ktf",
+    "wie-ktf-dump",
+    "wie-lgt",
+    "wie-skt",
+    "wie-web",
 ]
 
-default-members = ["wie_cli"]
+default-members = ["."]
 
-[profile.dev.package.wie_core_arm]
+[profile.dev.package.wie-core-arm]
 opt-level = 1
 
 [profile.dev.package.arm32_cpu]
@@ -28,9 +29,11 @@ opt-level = 1
 lto = true
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "WIPI and J2ME emulator components"
+repository = "https://github.com/dlunch/wie"
 
 [workspace.dependencies]
 anyhow = { version = "^1.0" }
@@ -40,30 +43,78 @@ bitflags = { version = "^2.13", default-features = false }
 bytemuck = { version = "^1.25", default-features = false, features = ["derive"] }
 clap = { version = "^4.6", features = ["derive"] }
 dyn-clone = { version = "^1.0", default-features = false }
+encoding_rs = { version = "^0.8", default-features = false, features = ["alloc"] }
 futures = { version = "^0.3", default-features = false, features = ["alloc"] }
+jvm = { version = "^0.1.1" }
+jvm-bytecode = { version = "^0.1.1" }
+jvm-class-proto = { version = "^0.1.1" }
+jvm-types = { version = "^0.1.1" }
+lazy_static = { version = "^1.5", default-features = false }
 md5 = { version = "^0.8", default-features = false }
+rustjava-runtime = { version = "^0.1.1" }
+serde = { version = "^1", default-features = false, features = ["derive", "alloc"] }
 spin = { version = "^0.12", features = ["spin_mutex", "rwlock"], default-features = false }
+toml = { version = "^1", default-features = false, features = ["parse", "serde"] }
 tracing = { version = "^0.1", default-features = false, features = ["attributes"] }
+wipi-types = { version = "^0.0.1" }
 
-# RustJava is consumed from our fork (upstream + unmerged fixes), pinned by rev.
-# Currently: upstream 822504b + fix/exception-runtime-classes (PR pending).
-java_class_proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "3b3b8945" }
-java_constants = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "3b3b8945" }
-java_runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "3b3b8945" }
-jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "3b3b8945" }
-jvm_rust = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "3b3b8945" }
-wipi_types = { git = "https://github.com/dlunch/wipi.git" }
-
-wie_backend = { path = "wie_backend" }
-wie_midp = { path = "wie_midp" }
-wie_util = { path = "wie_util" }
-wie_core_arm = { path = "wie_core_arm" }
-wie_jvm_support = { path = "wie_jvm_support" }
-wie_skvm = { path = "wie_skvm" }
-wie_wipi_c = { path = "wie_wipi_c" }
-wie_wipi_java = { path = "wie_wipi_java" }
+wie-backend = { version = "0.1.0", path = "wie-backend" }
+wie-j2me = { version = "0.1.0", path = "wie-j2me" }
+wie-ktf = { version = "0.1.0", path = "wie-ktf" }
+wie-lgt = { version = "0.1.0", path = "wie-lgt" }
+wie-midp = { version = "0.1.0", path = "wie-midp" }
+wie-skt = { version = "0.1.0", path = "wie-skt" }
+wie-util = { version = "0.1.0", path = "wie-util" }
+wie-core-arm = { version = "0.1.0", path = "wie-core-arm" }
+wie-jvm-support = { version = "0.1.0", path = "wie-jvm-support" }
+wie-skvm = { version = "0.1.0", path = "wie-skvm" }
+wie-wipi-c = { version = "0.1.0", path = "wie-wipi-c" }
+wie-wipi-java = { version = "0.1.0", path = "wie-wipi-java" }
 
 # dev-dependencies
 futures-test = { version = "^0.3" }
 
-test_utils = { path = "test_utils" }
+test-utils = { path = "test-utils" }
+
+[package]
+name = "wie"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WIPI and J2ME emulator"
+repository.workspace = true
+exclude = ["docs"]
+
+[dependencies]
+async-trait = { workspace = true }
+tracing = { workspace = true }
+
+anyhow = { workspace = true, features = ["backtrace"] }
+clap = { workspace = true }
+directories = { version = "^6.0" }
+fast_image_resize = "6.0.0"
+midir = { version = "^0.11" }
+rodio = { version = "^0.22", features = ["playback"] }
+softbuffer = { version = "^0.4" }
+tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
+winit = { version = "^0.30", features = ["x11", "wayland"] }
+
+wie-backend = { workspace = true }
+wie-j2me = { workspace = true }
+wie-ktf = { workspace = true }
+wie-lgt = { workspace = true }
+wie-skt = { workspace = true }
+wie-util = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "^0.4", features = ["wasm_js"] } # not direct dependency, but broken without it in wasm build
+web-sys = { version = "=0.3.85" }                        # We need 0.3.85 to not break midir wasm build
+
+# RustJava is consumed from crates.io upstream; our fork carries only the
+# unmerged delta (currently: quieter String.valueOf logging), applied as a patch.
+[patch.crates-io]
+jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
+jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
+jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
+jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
+rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }

@@ -1,0 +1,31 @@
+use alloc::vec;
+
+use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
+use jvm_class_proto::JavaMethodProto;
+use jvm_types::{ClassAccessFlags, MethodAccessFlags};
+
+use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
+
+// class javax.microedition.lcdui.Item
+pub struct Item;
+
+impl Item {
+    pub fn as_proto() -> WieJavaClassProto {
+        WieJavaClassProto {
+            name: "javax/microedition/lcdui/Item",
+            parent_class: Some("java/lang/Object"),
+            interfaces: vec![],
+            methods: vec![JavaMethodProto::new("<init>", "()V", Self::init, MethodAccessFlags::PROTECTED)],
+            fields: vec![],
+            access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::ABSTRACT,
+        }
+    }
+
+    async fn init(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Item::<init>({this:?})");
+
+        let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
+
+        Ok(())
+    }
+}
