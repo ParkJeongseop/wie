@@ -25,9 +25,9 @@ impl NativeJavaValueCodec for JavaValueCodec {
         // String.<init>([CII)V in a rarely-taken error path). Reading its metadata
         // then fabricates array elements and panics; fall back to a plain instance
         // so the JVM surfaces a catchable error like real hardware would.
-        match instance.class().and_then(|x| x.name()) {
-            Ok(name) if name.starts_with('[') => Box::new(JavaArrayClassInstance::from_raw(raw, &self.core)),
-            Ok(_) => Box::new(instance),
+        match instance.class().and_then(|x| x.is_array()) {
+            Ok(true) => Box::new(JavaArrayClassInstance::from_raw(raw, &self.core)),
+            Ok(false) => Box::new(instance),
             Err(e) => {
                 tracing::warn!("invalid object pointer {raw:#x} passed as java value: {e:?}");
                 Box::new(instance)

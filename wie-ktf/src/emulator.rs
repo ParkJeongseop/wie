@@ -102,7 +102,7 @@ impl KtfEmulator {
     }
 
     pub fn archive_id(files: &BTreeMap<String, Vec<u8>>) -> Option<String> {
-        let id = KtfAdf::parse(files.get("__adf__")?).aid;
+        let id = KtfAdf::parse(files.get("__adf__")?).pid;
         (!id.is_empty()).then_some(id)
     }
 
@@ -171,6 +171,8 @@ impl KtfEmulator {
             Ok(x) => x,
             Err(x) => return Err(JvmSupport::to_wie_err(&jvm, x).await),
         };
+
+        KtfJvmSupport::register_static_classes(core, &jvm, class_loader, &main_class_name).await?;
 
         let mut args_array = jvm.instantiate_array("Ljava/lang/String;", 1).await.unwrap();
         jvm.store_array(&mut args_array, 0, vec![main_class_name_java]).await.unwrap();

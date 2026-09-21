@@ -221,6 +221,11 @@ svg {
 
 .library-pages.draggable {
   cursor: grab;
+  padding-right: 36px;
+}
+
+.library-pages.draggable .library-page {
+  padding-right: 18px;
 }
 
 .library-pages.dragging {
@@ -663,6 +668,11 @@ svg {
 
 .help-dialog td:first-child {
   white-space: nowrap;
+}
+
+.help-dialog .dialog-actions {
+  align-items: center;
+  justify-content: space-between;
 }
 
 kbd {

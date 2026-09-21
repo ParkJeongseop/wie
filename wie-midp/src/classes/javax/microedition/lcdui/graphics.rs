@@ -167,6 +167,10 @@ impl Graphics {
         jvm.put_field(&mut this, "translateY", "I", 0).await?;
         jvm.put_field(&mut this, "color", "I", 0).await?;
         jvm.put_field(&mut this, "xorMode", "Z", false).await?;
+        let font: ClassInstanceRef<Font> = jvm
+            .invoke_static("javax/microedition/lcdui/Font", "getDefaultFont", "()Ljavax/microedition/lcdui/Font;", ())
+            .await?;
+        jvm.put_field(&mut this, "font", "Ljavax/microedition/lcdui/Font;", font).await?;
 
         let default_font: ClassInstanceRef<Font> = jvm
             .invoke_static("javax/microedition/lcdui/Font", "getDefaultFont", "()Ljavax/microedition/lcdui/Font;", ())
@@ -179,9 +183,7 @@ impl Graphics {
     async fn get_font(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Graphics>) -> JvmResult<ClassInstanceRef<Font>> {
         tracing::debug!("javax.microedition.lcdui.Graphics::getFont({this:?})");
 
-        let font: ClassInstanceRef<Font> = jvm.get_field(&this, "font", "Ljavax/microedition/lcdui/Font;").await?;
-
-        Ok(font)
+        jvm.get_field(&this, "font", "Ljavax/microedition/lcdui/Font;").await
     }
 
     async fn current_font_size(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<f32> {
@@ -220,9 +222,13 @@ impl Graphics {
     async fn set_font(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Graphics>, font: ClassInstanceRef<Font>) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::setFont({this:?}, {font:?})");
 
-        jvm.put_field(&mut this, "font", "Ljavax/microedition/lcdui/Font;", font).await?;
-
-        Ok(())
+        let font = if font.is_null() {
+            jvm.invoke_static("javax/microedition/lcdui/Font", "getDefaultFont", "()Ljavax/microedition/lcdui/Font;", ())
+                .await?
+        } else {
+            font
+        };
+        jvm.put_field(&mut this, "font", "Ljavax/microedition/lcdui/Font;", font).await
     }
 
     async fn set_clip(
@@ -420,7 +426,7 @@ impl Graphics {
 
     async fn draw_char(
         jvm: &Jvm,
-        _: &mut WieJvmContext,
+        context: &mut WieJvmContext,
         mut this: ClassInstanceRef<Self>,
         ch: JavaChar,
         x: i32,
@@ -442,6 +448,7 @@ impl Graphics {
         let text_size = Self::current_font_size(jvm, &this).await?;
 
         canvas.draw_text(
+            context.system().platform().font(),
             &string,
             (translate_x + x) as _,
             (translate_y + y) as _,
@@ -456,7 +463,7 @@ impl Graphics {
 
     async fn draw_chars(
         jvm: &Jvm,
-        _: &mut WieJvmContext,
+        context: &mut WieJvmContext,
         mut this: ClassInstanceRef<Self>,
         chars: ClassInstanceRef<Array<JavaChar>>,
         offset: i32,
@@ -481,6 +488,7 @@ impl Graphics {
         let text_size = Self::current_font_size(jvm, &this).await?;
 
         canvas.draw_text(
+            context.system().platform().font(),
             &string,
             (translate_x + x) as _,
             (translate_y + y) as _,
@@ -495,7 +503,7 @@ impl Graphics {
 
     async fn draw_string(
         jvm: &Jvm,
-        _: &mut WieJvmContext,
+        context: &mut WieJvmContext,
         mut this: ClassInstanceRef<Self>,
         string: ClassInstanceRef<String>,
         x: i32,
@@ -520,6 +528,7 @@ impl Graphics {
         let text_size = Self::current_font_size(jvm, &this).await?;
 
         canvas.draw_text(
+            context.system().platform().font(),
             &string,
             (translate_x + x) as _,
             (translate_y + y) as _,
@@ -533,7 +542,7 @@ impl Graphics {
     }
     async fn draw_substring(
         jvm: &Jvm,
-        _: &mut WieJvmContext,
+        context: &mut WieJvmContext,
         mut this: ClassInstanceRef<Self>,
         string: ClassInstanceRef<String>,
         offset: i32,
@@ -558,6 +567,7 @@ impl Graphics {
         let text_size = Self::current_font_size(jvm, &this).await?;
 
         canvas.draw_text(
+            context.system().platform().font(),
             &substring,
             (translate_x + x) as _,
             (translate_y + y) as _,

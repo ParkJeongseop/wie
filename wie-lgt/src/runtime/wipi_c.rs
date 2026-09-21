@@ -13,7 +13,7 @@ use wie_jvm_support::JvmSupport;
 use wie_util::{Result, read_generic, write_generic, write_null_terminated_string_bytes};
 use wie_wipi_c::{
     MethodImpl, WIPICContext, WIPICMethodBody, WIPICResult,
-    api::{database, graphics as shared_graphics, kernel, media, misc, net},
+    api::{database, graphics as shared_graphics, im, kernel, media, misc, net},
 };
 
 use context::LgtWIPICContext;
@@ -111,6 +111,7 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::Unk4 => unk4.into_body(),
         WIPICSvcId::Unk7 => unk7.into_body(),
         WIPICSvcId::Unk6 => unk6.into_body(),
+        WIPICSvcId::HandleInput => im::handle_input.into_body(),
         WIPICSvcId::TimeNow => time_now.into_body(),
         WIPICSvcId::TimeComponent => time_component.into_body(),
         WIPICSvcId::TimeConvert => time_convert.into_body(),
@@ -126,7 +127,7 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::ListRecord => database::list_record.into_body(),
         WIPICSvcId::UpdateRecord => database::update_record.into_body(),
         WIPICSvcId::SelectRecord => database::select_record.into_body(),
-        WIPICSvcId::Unk17 => unk17.into_body(),
+        WIPICSvcId::ListDatabases => database::list_databases.into_body(),
         WIPICSvcId::Unk8 => database::exists_database.into_body(),
         WIPICSvcId::Connect => net::connect.into_body(),
         WIPICSvcId::Close => net::close.into_body(),
@@ -247,14 +248,6 @@ async fn unk1(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u3
     tracing::warn!("stub unk1({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
 
     // kernel
-
-    Ok(0)
-}
-
-// SVC 0x384: polled roughly every 64ms with args (0xffff, 0xff, 0xff, ptr).
-// Purpose not identified; returning 0 lets 2008베이징올림픽 boot past it.
-async fn unk18(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub lgt WIPIC unk18/0x384({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
 
     Ok(0)
 }
@@ -424,11 +417,9 @@ async fn unk16(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u
     Ok(0)
 }
 
-// SVC 0x19c: database-block call (between SelectRecord and exists_database),
-// observed with (handle-like, small int, ptr, ptr) args during boot of
-// 슈퍼액션히어로3. Purpose unidentified; returning 0 lets the game boot past it.
-async fn unk17(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub lgt WIPIC unk17/0x19c({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
+// SVC 0x384: polled roughly every 64ms with args (0xffff, 0xff, 0xff, ptr).
+// Purpose not identified; returning 0 lets 2008베이징올림픽 boot past it.
+async fn unk18(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
+    tracing::warn!("stub lgt WIPIC unk18/0x384({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
     Ok(0)
 }

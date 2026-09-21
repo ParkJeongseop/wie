@@ -177,12 +177,10 @@ pub async fn get_volume(_context: &mut dyn WIPICContext) -> Result<WIPICWord> {
     Ok(0)
 }
 
-// media table slot right after MC_mdaGetVolume; accepting and ignoring the
-// volume keeps apps alive that set the master volume on startup or keypress.
-pub async fn set_volume(_context: &mut dyn WIPICContext, volume: WIPICWord) -> Result<WIPICWord> {
+pub async fn set_volume(_context: &mut dyn WIPICContext, volume: i32) -> Result<()> {
     tracing::warn!("stub MC_mdaSetVolume({volume})");
 
-    Ok(0)
+    Ok(())
 }
 
 pub async fn play(context: &mut dyn WIPICContext, ptr_clip: WIPICWord, repeat: WIPICWord) -> Result<i32> {

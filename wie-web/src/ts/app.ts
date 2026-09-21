@@ -22,6 +22,8 @@ const KEY_MAP: Record<string, string> = {
   ArrowLeft: "LEFT",
   ArrowRight: "RIGHT",
   ArrowDown: "DOWN",
+  Enter: "OK",
+  NumpadEnter: "OK",
   Space: "OK",
 };
 const icons = {
@@ -32,15 +34,17 @@ const icons = {
   Settings,
 };
 
-export const runApp = (app: AppMetadata, archive: Uint8Array, settings: SettingsController, exit: (error?: unknown) => void) => {
+export const runApp = (app: AppMetadata, archive: Uint8Array, fontData: Uint8Array, settings: SettingsController, exit: (error?: unknown) => void) => {
   const playerView = document.getElementById("player-view") as HTMLElement;
   const playerTitle = document.getElementById("player-title") as HTMLElement;
   const canvas = document.getElementById("canvas") as HTMLCanvasElement;
   const backToLibrary = document.getElementById("back-to-library") as HTMLButtonElement;
   const appSettings = document.getElementById("app-settings") as HTMLButtonElement;
 
+  canvas.width = 240;
+  canvas.height = 320;
   const abortController = new AbortController();
-  const wieWeb = new WieWeb(app.filename, archive, canvas);
+  const wieWeb = new WieWeb(app.filename, archive, canvas, fontData);
   const unsubscribePcmVolume = settings.onPcmVolumeChange((volume) => wieWeb.set_pcm_volume(volume));
   let running = true;
 

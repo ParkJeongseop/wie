@@ -6,6 +6,7 @@ import { SettingsController } from "./settings";
 
 const APPS_PER_PAGE = 12;
 const WELCOME_STORAGE_KEY = "wie_welcome_seen";
+const HELP_STORAGE_KEY = "wie_help_dismissed";
 const icons = {
   Check,
   CircleHelp,
@@ -39,8 +40,11 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
   const deleteAppTitle = document.getElementById("delete-app-title") as HTMLElement;
   const confirmDelete = document.getElementById("confirm-delete") as HTMLButtonElement;
   const helpDialog = document.getElementById("help-dialog") as HTMLDialogElement;
+  const hideHelp = document.getElementById("hide-help") as HTMLInputElement;
   const welcomeDialog = document.getElementById("welcome-dialog") as HTMLDialogElement;
   const dismissWelcome = document.getElementById("dismiss-welcome") as HTMLButtonElement;
+
+  hideHelp.checked = localStorage.getItem(HELP_STORAGE_KEY) === "true";
 
   let apps = await store.list();
   let manageMode = false;
@@ -173,6 +177,10 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
             if (!archive) {
               throw new Error("저장된 앱 파일을 찾을 수 없습니다.");
             }
+            if (!hideHelp.checked) {
+              helpDialog.showModal();
+              await new Promise<void>(resolve => helpDialog.addEventListener("close", () => resolve(), { once: true }));
+            }
             await launchApp(app, archive);
           } catch (error) {
             window.alert(String(error));
@@ -208,13 +216,13 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
       indicator.setAttribute("aria-label", `${pageIndex + 1} 페이지로 이동`);
       indicator.classList.toggle("active", pageIndex === currentPageIndex);
       indicator.addEventListener("click", () => {
-        libraryPages.scrollTo({ left: pageIndex * libraryPages.clientWidth, behavior: "smooth" });
+        libraryPages.scrollTo({ left: pageIndex * libraryPages.firstElementChild!.clientWidth, behavior: "smooth" });
       });
       pageIndicators.appendChild(indicator);
     }
 
     pageIndicators.hidden = pageCount < 2;
-    libraryPages.scrollLeft = currentPageIndex * libraryPages.clientWidth;
+    libraryPages.scrollLeft = currentPageIndex * libraryPages.firstElementChild!.clientWidth;
     createIcons({ icons, root: libraryView });
     createIcons({ icons, root: importDialog });
     createIcons({ icons, root: deleteDialog });
@@ -223,7 +231,7 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
   };
 
   libraryPages.addEventListener("scroll", () => {
-    currentPageIndex = Math.round(libraryPages.scrollLeft / libraryPages.clientWidth);
+    currentPageIndex = Math.round(libraryPages.scrollLeft / libraryPages.firstElementChild!.clientWidth);
     for (const [index, indicator] of Array.from(pageIndicators.children).entries()) {
       indicator.classList.toggle("active", index === currentPageIndex);
     }
@@ -270,8 +278,9 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
     if (dragging) {
       dragging = false;
       suppressClick = true;
-      const pageIndex = Math.round(libraryPages.scrollLeft / libraryPages.clientWidth);
-      libraryPages.scrollTo({ left: pageIndex * libraryPages.clientWidth, behavior: "smooth" });
+      const pageWidth = libraryPages.firstElementChild!.clientWidth;
+      const pageIndex = Math.round(libraryPages.scrollLeft / pageWidth);
+      libraryPages.scrollTo({ left: pageIndex * pageWidth, behavior: "smooth" });
       window.setTimeout(() => {
         suppressClick = false;
       });
@@ -314,6 +323,9 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
   menuHelp.addEventListener("click", () => {
     closeMenu();
     helpDialog.showModal();
+  });
+  helpDialog.addEventListener("close", () => {
+    localStorage.setItem(HELP_STORAGE_KEY, String(hideHelp.checked));
   });
 
   const importFiles = async (files: File[]) => {

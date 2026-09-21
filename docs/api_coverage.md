@@ -150,9 +150,9 @@ Not API-crate surface, but blockers found while running real games:
 - **LGT WIPI-C SVC ids** — mostly mapped now. id 0xcf (graphics block) =
   MC_grpGetContext (implemented); KTF media slot 15 = MC_mdaSetVolume. id
   0x384 (900) is polled ~every 64ms with args (0xffff, 0xff, 0xff, ptr);
-  purpose unidentified, stubbed to return 0 (Unk16) so 2008베이징올림픽
-  boots past it. id 0x19c (database block) stubbed to return 0 (Unk17) so
-  슈퍼액션히어로3 boots past it.
+  purpose unidentified, stubbed to return 0 (Unk18) so 2008베이징올림픽
+  boots past it. id 0x19c is MC_dbListDatabases (upstream, 2026-09 sync;
+  formerly our return-0 stub) — 슈퍼액션히어로3 boots past it either way.
 - **Phone-number DRM** — some games gate on getSystemProperty("PHONENUMBER"
   / "MIN"). wie returns an empty PHONENUMBER, which *passes* the check on
   games that compare the phone number against a value (empty makes the
@@ -523,10 +523,11 @@ Aggregating crashes during the 30s input scenario:
     pass small flags there), and considers packaged databases.
   - `MC_dbGetNumberOfRecords` takes a database *name*, not a handle (데몬헌터
     asks about "Patch"); reimplemented name-based with a handle-magic sniff.
-  - `MC_grpGetContext` struct-valued attributes (ClipIdx/OffsetIdx) mirror
-    set_context: the third argument is an out pointer for the struct. The game
-    polls the clip every frame during stage loading and never finished while
-    the op was unsupported.
+  - `MC_grpGetContext`: the third argument is an out pointer — struct-valued
+    attributes (ClipIdx/OffsetIdx) write the struct through it. The game polls
+    the clip every frame during stage loading and never finished while the op
+    was unsupported. (Superseded by upstream's implementation in the 2026-09
+    sync, which writes every attribute through the out pointer.)
   Result: boots → title ("PRESS 이어하기 KEY") → stage load ("루베르전초기지") →
   in-game play with HP/MP HUD and a moving player character. 31-game
   regression unchanged.

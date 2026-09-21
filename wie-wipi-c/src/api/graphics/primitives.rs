@@ -165,9 +165,19 @@ pub fn draw_text(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, stri
     // speaker name at y=268 on a plate spanning 255..268 — both only fit when glyph
     // ink occupies y-11..y, matching the original full-cell 12px bitmap fonts whose
     // ink ends at the baseline. Canvas::draw_text anchors at the ink top, so shift.
+    let font = context.system().platform().font().clone();
     let top = y + 1 - super::FONT_HEIGHT;
     write_canvas(context, framebuffer, |canvas| {
-        canvas.draw_text(string, x, top, super::FONT_SIZE, wie_backend::canvas::TextAlignment::Left, color, clip)
+        canvas.draw_text(
+            &font,
+            string,
+            x,
+            top,
+            super::FONT_SIZE,
+            wie_backend::canvas::TextAlignment::Left,
+            color,
+            clip,
+        )
     })
 }
 

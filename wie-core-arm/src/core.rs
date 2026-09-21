@@ -9,21 +9,17 @@ use wie_util::{ByteRead, ByteWrite, Result, WieError, read_generic};
 use crate::{
     EmulatedFunction, ResultWriter, ThreadId,
     context::ArmCoreContext,
-    engine::{Arm32CpuEngine, ArmEngine, ArmRegister, EngineRunResult, MemoryPermission},
+    engine::{Arm32CpuEngine, ArmEngine, ArmRegister, DebugInner, DebuggedArm32CpuEngine, EngineStopReason, MemoryPermission},
     function::{RegisteredFunction, RegisteredFunctionHolder},
     thread::ThreadState,
     thread_wrapper::ArmCoreThreadWrapper,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::{
-    engine::{DebugInner, DebuggedArm32CpuEngine},
-    gdb::GdbTarget,
 };
 
 const GLOBAL_DATA_BASE: u32 = 0x7fff0000;
 const FUNCTIONS_BASE: u32 = 0x71000000;
 const FUNCTIONS_SIZE: usize = 0x10000;
 const SVC_STUB_SIZE: u32 = 16;
+const INSTRUCTIONS_PER_YIELD: u32 = 10_000;
 pub const RUN_FUNCTION_LR: u32 = 0x7f000000;
 pub const HEAP_BASE: u32 = 0x40000000;
 pub const HEAP_SIZE: u32 = 0x10000000;
@@ -42,8 +38,8 @@ struct ProfileState {
 
 pub(crate) struct ArmCoreInner {
     pub(crate) engine: Box<dyn ArmEngine>,
+    instructions_remaining: u32,
     last_thread_id: ThreadId,
-    threads: BTreeMap<ThreadId, ThreadState>,
     svc_handlers: BTreeMap<u32, Arc<Box<dyn RegisteredFunction>>>,
     next_stub_address: u32,
     profile: Option<ProfileState>,
@@ -70,17 +66,13 @@ fn drain_samples(samples: &mut BTreeMap<Vec<u32>, u64>) -> Vec<ProfileSample> {
 #[derive(Clone)]
 pub struct ArmCore {
     pub(crate) inner: Arc<Mutex<ArmCoreInner>>, // TODO can we change it to another lock like async-lock?
+    threads: Arc<Mutex<BTreeMap<ThreadId, ThreadState>>>,
 }
 
 impl ArmCore {
     pub fn new(enable_gdbserver: bool, profile: Option<ProfileCallback>) -> Result<Self> {
         let mut engine = if enable_gdbserver {
-            #[cfg(not(target_arch = "wasm32"))]
-            let engine = Box::new(DebuggedArm32CpuEngine::new()) as Box<dyn ArmEngine>;
-            #[cfg(target_arch = "wasm32")]
-            let engine = Box::new(Arm32CpuEngine::new());
-
-            engine
+            Box::new(DebuggedArm32CpuEngine::new()) as Box<dyn ArmEngine>
         } else {
             Box::new(Arm32CpuEngine::new())
         };
@@ -96,8 +88,8 @@ impl ArmCore {
 
         let inner = ArmCoreInner {
             engine,
+            instructions_remaining: INSTRUCTIONS_PER_YIELD,
             last_thread_id: 0,
-            threads: BTreeMap::new(),
             svc_handlers: BTreeMap::new(),
             next_stub_address: FUNCTIONS_BASE,
             profile,
@@ -105,20 +97,17 @@ impl ArmCore {
 
         let result = Self {
             inner: Arc::new(Mutex::new(inner)),
+            threads: Arc::new(Mutex::new(BTreeMap::new())),
         };
 
         if enable_gdbserver {
-            #[cfg(not(target_arch = "wasm32"))]
-            GdbTarget::start(result.clone())?;
-            #[cfg(target_arch = "wasm32")]
-            panic!("GDB server is not supported on wasm32");
+            crate::gdb::start(result.clone())?;
         }
 
         Ok(result)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn debug_inner(&self) -> Option<Arc<DebugInner>> {
+    pub(crate) fn debug_inner(&self) -> Option<Arc<DebugInner>> {
         let inner = self.inner.lock();
 
         inner
@@ -151,19 +140,12 @@ impl ArmCore {
 
             let thread_id = inner.last_thread_id + 1;
             inner.last_thread_id += 1;
-            inner.threads.insert(thread_id, state);
 
             thread_id
         };
+        self.threads.lock().insert(thread_id, state);
 
         tracing::info!("Create thread: {thread_id}");
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(debug) = self.debug_inner() {
-                debug.on_thread_created(thread_id);
-            }
-        }
 
         ArmCoreThreadWrapper::new(self.clone(), thread_id, entry)
     }
@@ -171,16 +153,8 @@ impl ArmCore {
     pub fn delete_thread_context(&self, thread_id: ThreadId) {
         tracing::info!("Terminate thread: {thread_id}");
 
-        // we should exit inner lock first to run cleanup on thread state drop
-        let _thread_state = {
-            let mut inner = self.inner.lock();
-            inner.threads.remove(&thread_id)
-        };
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(debug) = self.debug_inner() {
-            debug.on_thread_deleted(thread_id);
-        }
+        // Release the thread lock before freeing its stack.
+        let _thread_state = self.threads.lock().remove(&thread_id);
     }
 
     pub fn enter_thread_context(&self, thread_id: ThreadId) -> ThreadContextGuard {
@@ -188,23 +162,17 @@ impl ArmCore {
     }
 
     pub fn read_thread_context(&self, thread_id: ThreadId) -> Result<ArmCoreContext> {
-        let inner = self.inner.lock();
-
-        let context = inner.threads.get(&thread_id).unwrap().context.clone();
+        let context = self.threads.lock().get(&thread_id).unwrap().context.clone();
 
         Ok(context)
     }
 
     pub fn write_thread_context(&mut self, thread_id: ThreadId, context: &ArmCoreContext) {
-        let mut inner = self.inner.lock();
-
-        inner.threads.get_mut(&thread_id).unwrap().context = context.clone();
+        self.threads.lock().get_mut(&thread_id).unwrap().context = context.clone();
     }
 
     pub fn get_thread_ids(&self) -> Vec<ThreadId> {
-        let inner = self.inner.lock();
-
-        inner.threads.keys().cloned().collect()
+        self.threads.lock().keys().cloned().collect()
     }
 
     fn sample_profile(&self) {
@@ -251,6 +219,15 @@ impl ArmCore {
     {
         // we don't need to save r0-r3, but to make it simple, we save all registers
         let previous_context = self.save_context();
+        let result = self.run_function_inner(address, params).await;
+        self.restore_context(&previous_context);
+        result
+    }
+
+    async fn run_function_inner<R>(&mut self, address: u32, params: &[u32]) -> Result<R>
+    where
+        R: RunFunctionResult<R>,
+    {
         {
             let mut inner = self.inner.lock();
 
@@ -284,24 +261,43 @@ impl ArmCore {
         }
 
         loop {
-            let result = {
+            let (result, should_yield) = {
                 let mut inner = self.inner.lock();
-                inner.engine.run(RUN_FUNCTION_LR, 10_000)?
+                let budget = inner.instructions_remaining;
+                let result = inner.engine.run(RUN_FUNCTION_LR, budget)?;
+                inner.instructions_remaining -= result.instructions_executed;
+                let exhausted = inner.instructions_remaining == 0;
+                if exhausted {
+                    inner.instructions_remaining = INSTRUCTIONS_PER_YIELD;
+                }
+                let should_yield = exhausted || matches!(result.stop_reason, EngineStopReason::Yield);
+                (result.stop_reason, should_yield)
             };
 
             self.sample_profile();
 
-            match result {
-                EngineRunResult::End => break,
-                EngineRunResult::CountExhausted => YieldFuture::new().await, // yield to allow other tasks to run
-                EngineRunResult::Svc { category, lr, spsr } => {
-                    {
-                        let mut inner = self.inner.lock();
-                        // Restore the pre-exception execution state before running the Rust SVC handler.
-                        inner.engine.reg_write(ArmRegister::Cpsr, spsr);
-                        inner.engine.reg_write(ArmRegister::PC, lr);
-                    }
+            let svc_step = if let EngineStopReason::Svc { lr, spsr, .. } = result {
+                // Leave exception mode before yielding: thread contexts do not save banked SVC registers.
+                {
+                    let mut inner = self.inner.lock();
+                    inner.engine.reg_write(ArmRegister::Cpsr, spsr);
+                    inner.engine.reg_write(ArmRegister::PC, lr);
+                }
+                // Nested ARM calls remain part of this handler's single step.
+                self.debug_inner()
+                    .and_then(|debug| debug.begin_svc_step().map(|thread_id| (debug, thread_id)))
+            } else {
+                None
+            };
 
+            if should_yield {
+                YieldFuture::new().await;
+            }
+
+            match result {
+                EngineStopReason::End => break,
+                EngineStopReason::Yield => continue,
+                EngineStopReason::Svc { category, .. } => {
                     let function = {
                         let inner = self.inner.lock();
                         inner
@@ -312,15 +308,16 @@ impl ArmCore {
                     };
 
                     let mut self1 = self.clone();
-                    function.call(&mut self1).await?;
+                    let result = function.call(&mut self1).await;
+                    if let Some((debug, thread_id)) = svc_step {
+                        debug.end_svc_step(thread_id, result.is_ok());
+                    }
+                    result?;
                 }
             }
         }
 
-        let result = R::get(self);
-        self.restore_context(&previous_context);
-
-        Ok(result)
+        Ok(R::get(self))
     }
 
     pub fn register_svc_handler<F, C, R, P>(&mut self, category: u32, handler: F, context: &C) -> Result<()>
@@ -654,10 +651,9 @@ pub struct ThreadContextGuard {
 
 impl ThreadContextGuard {
     pub fn new(mut core: ArmCore, thread_id: ThreadId) -> Self {
-        let context = core.inner.lock().threads.get(&thread_id).unwrap().context.clone(); // TODO we might not need clone
+        let context = core.threads.lock().get(&thread_id).unwrap().context.clone();
         core.restore_context(&context);
 
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(debug) = core.debug_inner() {
             debug.on_thread_entered(thread_id);
         }
@@ -670,11 +666,8 @@ impl Drop for ThreadContextGuard {
     fn drop(&mut self) {
         let context = self.core.save_context();
 
-        let mut inner = self.core.inner.lock();
-        inner.threads.get_mut(&self.thread_id).unwrap().context = context;
-        drop(inner);
+        self.core.threads.lock().get_mut(&self.thread_id).unwrap().context = context;
 
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(debug) = self.core.debug_inner() {
             debug.on_thread_exited(self.thread_id);
         }
@@ -683,12 +676,308 @@ impl Drop for ThreadContextGuard {
 
 #[cfg(test)]
 mod tests {
+    use core::{
+        pin::pin,
+        sync::atomic::{AtomicU32, Ordering},
+        task::{Context, Poll, Waker},
+    };
+
+    use crate::function::JumpTo;
+
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn saved_thread_contexts_are_accessible_while_the_engine_is_locked() {
+        extern crate std;
+
+        let mut core = ArmCore::new(false, None).unwrap();
+        crate::Allocator::init(&mut core).unwrap();
+        let _thread = core.run_in_thread(|| async { Ok(()) }).unwrap();
+        let mut context = core.read_thread_context(1).unwrap();
+        context.r0 = 42;
+
+        let mut observer = core.clone();
+        let (tx, rx) = crossbeam::channel::bounded(1);
+        let engine_guard = core.inner.lock();
+        let reader = std::thread::spawn(move || {
+            observer.write_thread_context(1, &context);
+            tx.send((observer.read_thread_context(1).unwrap().r0, observer.get_thread_ids())).unwrap();
+        });
+        let result = rx.recv_timeout(std::time::Duration::from_secs(1));
+        drop(engine_guard);
+        reader.join().unwrap();
+        assert_eq!(result.unwrap(), (42, vec![1]));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn scheduler_locking_yields_without_resetting_the_instruction_budget() {
+        let mut core = ArmCore::new(false, None).unwrap();
+        let engine = DebuggedArm32CpuEngine::new();
+        let debug = engine.debug_inner();
+        core.inner.lock().engine = Box::new(engine);
+        core.inner.lock().instructions_remaining = 5;
+        core.load(&[0x70, 0x47], 0x1000, 2).unwrap(); // bx lr
+        debug.on_thread_entered(1);
+        debug.resume(Vec::new(), Some(vec![2]));
+
+        let observer = core.clone();
+        let mut run = pin!(core.run_function::<()>(0x1001, &[]));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(run.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(observer.inner.lock().instructions_remaining, 5);
+        debug.resume(Vec::new(), None);
+        assert!(matches!(run.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        assert_eq!(observer.inner.lock().instructions_remaining, 4);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn scheduler_locking_keeps_other_thread_futures_stopped() {
+        let mut core = ArmCore::new(false, None).unwrap();
+        let engine = DebuggedArm32CpuEngine::new();
+        let debug = engine.debug_inner();
+        core.inner.lock().engine = Box::new(engine);
+        crate::Allocator::init(&mut core).unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let observed = calls.clone();
+        let mut task = pin!(
+            core.run_in_thread(move || async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
+            .unwrap()
+        );
+        let _other = core.run_in_thread(|| async { Ok(()) }).unwrap();
+        debug.resume(Vec::new(), Some(vec![2]));
+        let (waker, wake_count) = futures_test::task::new_count_waker();
+        let mut cx = Context::from_waker(&waker);
+        assert!(task.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(wake_count, 0);
+        assert_eq!(observed.load(Ordering::Relaxed), 0);
+        debug.resume(Vec::new(), None);
+        assert!(matches!(task.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+        assert_eq!(observed.load(Ordering::Relaxed), 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn interrupt_stops_a_thread_waiting_in_host_code() {
+        extern crate std;
+
+        let mut core = ArmCore::new(false, None).unwrap();
+        let engine = DebuggedArm32CpuEngine::new();
+        let debug = engine.debug_inner();
+        core.inner.lock().engine = Box::new(engine);
+        crate::Allocator::init(&mut core).unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        let observed = calls.clone();
+        let mut task = Box::pin(
+            core.run_in_thread(move || async move {
+                loop {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    YieldFuture::new().await;
+                }
+            })
+            .unwrap(),
+        );
+        let _other = core.run_in_thread(|| async { Ok(()) }).unwrap();
+        debug.resume(Vec::new(), None);
+        assert!(task.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+
+        debug.interrupt();
+        let runner = std::thread::spawn(move || {
+            assert!(task.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+            task
+        });
+        let stopped = debug.recv_stop_event_timeout(std::time::Duration::from_secs(1));
+        let mut context = debug.read_registers();
+        context.r0 = 123;
+        debug.write_registers(&context);
+        debug.resume(Vec::new(), Some(vec![2]));
+        let _task = runner.join().unwrap();
+        assert!(matches!(
+            stopped,
+            Ok(crate::engine::DebugStopReason::Signal(crate::engine::DebugSignal::Int, 1))
+        ));
+        assert_eq!(observed.load(Ordering::Relaxed), 1);
+        assert_eq!(core.read_thread_context(1).unwrap().r0, 123);
+    }
 
     async fn test_svc_handler(_core: &mut ArmCore, seen_id: &mut Option<u32>, id: crate::SvcId) -> Result<()> {
         *seen_id = Some(id.0);
 
         Ok(())
+    }
+
+    async fn count_inline_svc(core: &mut ArmCore, calls: &mut Arc<AtomicU32>) -> Result<JumpTo> {
+        calls.fetch_add(1, Ordering::Relaxed);
+        Ok(JumpTo(core.read_pc_lr()?.0 | 1))
+    }
+
+    async fn call_nested_arm(core: &mut ArmCore, result: &mut Arc<AtomicU32>) -> Result<JumpTo> {
+        let pc = core.read_pc_lr()?.0;
+        let value = core.run_function(0x10001, &[0]).await?;
+        result.store(value, Ordering::Relaxed);
+        Ok(JumpTo(pc | 1))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn stepping_svc_waits_for_nested_handlers_and_preserves_breakpoints() {
+        extern crate std;
+
+        use crate::engine::{DebugBreakpointKind, DebugStopReason};
+
+        for breakpoint in [false, true] {
+            let mut core = ArmCore::new(false, None).unwrap();
+            let engine = DebuggedArm32CpuEngine::new();
+            let debug = engine.debug_inner();
+            core.inner.lock().engine = Box::new(engine);
+            // Also exercise suspension between the SVC instruction and its host handler.
+            core.inner.lock().instructions_remaining = 1;
+            crate::Allocator::init(&mut core).unwrap();
+            let result = Arc::new(AtomicU32::new(0));
+            let calls = Arc::new(AtomicU32::new(0));
+            core.register_svc_handler(1, call_nested_arm, &result).unwrap();
+            core.register_svc_handler(2, count_inline_svc, &calls).unwrap();
+            core.load(&[0x01, 0xdf, 0x01, 0x30, 0x70, 0x47], 0x1000, 6).unwrap(); // svc #1; add r0, #1; bx lr
+            core.load(&[0x02, 0xdf, 0x01, 0x30, 0x70, 0x47], 0x10000, 6).unwrap(); // svc #2; add r0, #1; bx lr
+            if breakpoint {
+                debug.add_breakpoint(0x10000, DebugBreakpointKind::Thumb16).unwrap();
+            }
+            let mut running = core.clone();
+            let task = core
+                .run_in_thread(move || async move { running.run_function::<()>(0x1001, &[0]).await })
+                .unwrap();
+            debug.resume(vec![1], None);
+            let (tx, rx) = crossbeam::channel::bounded(1);
+            let runner = std::thread::spawn(move || tx.send(futures::executor::block_on(task)).unwrap());
+            let stopped = debug.recv_stop_event_timeout(std::time::Duration::from_secs(1));
+            let context = debug.read_registers();
+            let completed = (result.load(Ordering::Relaxed), calls.load(Ordering::Relaxed));
+            let nested_stop = if breakpoint {
+                debug.resume(vec![1], None);
+                let stopped = debug.recv_stop_event_timeout(std::time::Duration::from_secs(1));
+                Some((stopped, debug.read_registers(), calls.load(Ordering::Relaxed)))
+            } else {
+                None
+            };
+            debug.resume(Vec::new(), None);
+            let finished = rx.recv_timeout(std::time::Duration::from_secs(1));
+            debug.resume(Vec::new(), None);
+            runner.join().unwrap();
+            finished.unwrap().unwrap();
+
+            if let Some((nested_stop, nested_context, nested_calls)) = nested_stop {
+                assert!(matches!(stopped, Ok(DebugStopReason::SwBreak(1))));
+                assert_eq!(context.pc, 0x10000);
+                assert_eq!(completed, (0, 0));
+                assert!(matches!(nested_stop, Ok(DebugStopReason::DoneStep(1))));
+                assert_eq!(nested_context.pc, 0x10002);
+                assert_eq!(nested_calls, 1);
+            } else {
+                assert!(matches!(stopped, Ok(DebugStopReason::DoneStep(1))));
+                assert_eq!(context.pc, 0x1002);
+                assert_eq!(context.r0, 0);
+                assert_eq!(completed, (1, 1));
+            }
+            assert_eq!(result.load(Ordering::Relaxed), 1);
+        }
+    }
+
+    #[test]
+    fn yields_every_ten_thousand_instructions_across_svc() {
+        let mut core = ArmCore::new(false, None).unwrap();
+        let calls = Arc::new(AtomicU32::new(0));
+        core.register_svc_handler(1, count_inline_svc, &calls).unwrap();
+        let mut code = [0x01, 0x30, 0x01, 0xdf].repeat(10_000); // add r0, #1; svc #1
+        code.extend_from_slice(&[0x70, 0x47]); // bx lr
+        core.load(&code, 0x1000, code.len()).unwrap();
+
+        let observer = core.clone();
+        let mut run = pin!(core.run_function::<u32>(0x1001, &[0]));
+        let mut cx = Context::from_waker(Waker::noop());
+        for completed in [5_000, 10_000] {
+            assert!(run.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(observer.read_param(0).unwrap(), completed);
+            assert_eq!(calls.load(Ordering::Relaxed), completed - 1);
+            assert_eq!(observer.save_context().cpsr & 0x3f, 0x3f);
+        }
+        assert!(matches!(run.as_mut().poll(&mut cx), Poll::Ready(Ok(10_000))));
+        assert_eq!(calls.load(Ordering::Relaxed), 10_000);
+    }
+
+    #[test]
+    fn nested_arm_calls_share_the_instruction_budget() {
+        let mut core = ArmCore::new(false, None).unwrap();
+        let result = Arc::new(AtomicU32::new(0));
+        core.register_svc_handler(1, call_nested_arm, &result).unwrap();
+        let mut outer = [0xc0, 0x46].repeat(5_000); // nop
+        outer.extend_from_slice(&[0x01, 0xdf, 0x70, 0x47]); // svc #1; bx lr
+        core.load(&outer, 0x1000, outer.len()).unwrap();
+        let mut nested = [0x01, 0x30].repeat(5_000); // add r0, #1
+        nested.extend_from_slice(&[0x70, 0x47]); // bx lr
+        core.load(&nested, 0x10000, nested.len()).unwrap();
+
+        let observer = core.clone();
+        let mut run = pin!(core.run_function::<u32>(0x1001, &[17]));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(run.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(observer.read_param(0).unwrap(), 4_999);
+        assert_eq!(result.load(Ordering::Relaxed), 0);
+        assert!(matches!(run.as_mut().poll(&mut cx), Poll::Ready(Ok(17))));
+        assert_eq!(result.load(Ordering::Relaxed), 5_000);
+    }
+
+    #[test]
+    fn failed_arm_calls_restore_caller_registers_and_stack() {
+        async fn throwing_handler(core: &mut ArmCore, _: &mut ()) -> Result<()> {
+            core.write_return_value(&[99, 98])?;
+            Err(WieError::JavaException(0x1234))
+        }
+
+        let mut core = ArmCore::new(false, None).unwrap();
+        core.map(0x2000, 0x1000).unwrap();
+        core.register_svc_handler(1, throwing_handler, &()).unwrap();
+        let target = core.make_svc_stub(1, 0u32).unwrap();
+        let mut context = core.save_context();
+        context.r0 = 42;
+        context.r1 = 43;
+        context.sp = 0x3000;
+        context.lr = 0x4001;
+        core.restore_context(&context);
+        let registers = core.dump_regs();
+
+        for address in [target, 0x1001] {
+            let result = futures::executor::block_on(core.run_function::<()>(address, &[1, 2, 3, 4, 5]));
+            if address == target {
+                assert!(matches!(result, Err(WieError::JavaException(0x1234))));
+            } else {
+                assert!(matches!(result, Err(WieError::InvalidMemoryAccess(_))));
+            }
+            assert_eq!(core.dump_regs(), registers);
+        }
+    }
+
+    #[test]
+    fn returning_arm_calls_do_not_reset_the_instruction_budget() {
+        let mut core = ArmCore::new(false, None).unwrap();
+        core.load(&[0x70, 0x47], 0x1000, 2).unwrap(); // bx lr
+        let completed = Arc::new(AtomicU32::new(0));
+        let observed = completed.clone();
+        let mut run = pin!(async move {
+            for _ in 0..10_001 {
+                core.run_function::<()>(0x1001, &[]).await.unwrap();
+                completed.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(run.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(observed.load(Ordering::Relaxed), 9_999);
+        assert!(run.as_mut().poll(&mut cx).is_ready());
+        assert_eq!(observed.load(Ordering::Relaxed), 10_001);
     }
 
     #[test]
@@ -714,14 +1003,15 @@ mod tests {
             inner.engine.run(RUN_FUNCTION_LR, 10).unwrap()
         };
 
-        match result {
-            EngineRunResult::Svc { category, lr, spsr } => {
+        assert_eq!(result.instructions_executed, 5);
+        match result.stop_reason {
+            EngineStopReason::Svc { category, lr, spsr } => {
                 assert_eq!(category, 1);
                 assert_eq!(lr, FUNCTIONS_BASE + SVC_STUB_SIZE + 10);
                 assert_ne!(spsr & 0x20, 0);
             }
-            EngineRunResult::End => panic!("expected SVC, got end"),
-            EngineRunResult::CountExhausted => panic!("expected SVC, got count exhausted"),
+            EngineStopReason::End => panic!("expected SVC, got end"),
+            EngineStopReason::Yield => panic!("expected SVC, got yield"),
         }
     }
 }

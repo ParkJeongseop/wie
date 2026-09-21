@@ -5,7 +5,7 @@ use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::String;
 
-use wie_backend::canvas;
+use wie_backend::canvas::string_width;
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
 // Default font point size (SIZE_MEDIUM). WIPI/MIDP feature phones render roughly
@@ -17,6 +17,8 @@ const DEFAULT_POINT_SIZE: i32 = 10;
 pub struct Font;
 
 impl Font {
+    pub const HEIGHT: i32 = 12;
+
     pub fn as_proto() -> WieJavaClassProto {
         WieJavaClassProto {
             name: "javax/microedition/lcdui/Font",
@@ -137,7 +139,8 @@ impl Font {
 
         let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
 
-        Ok((canvas::font_height(point_size as f32) + 0.5) as i32)
+        // HEIGHT is the medium (default) cell height; other sizes scale with the point size.
+        Ok((Self::HEIGHT * point_size + DEFAULT_POINT_SIZE / 2) / DEFAULT_POINT_SIZE)
     }
 
     async fn get_default_font(jvm: &Jvm, _: &mut WieJvmContext) -> JvmResult<ClassInstanceRef<Self>> {
@@ -157,18 +160,18 @@ impl Font {
         Ok(instance)
     }
 
-    async fn string_width(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, string: ClassInstanceRef<String>) -> JvmResult<i32> {
+    async fn string_width(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>, string: ClassInstanceRef<String>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::stringWidth({this:?}, {string:?})");
 
         let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
 
-        Ok(canvas::string_width(&string, point_size as f32) as _)
+        Ok(string_width(context.system().platform().font(), &string, point_size as f32) as _)
     }
 
     async fn substring_width(
         jvm: &Jvm,
-        _: &mut WieJvmContext,
+        context: &mut WieJvmContext,
         this: ClassInstanceRef<Self>,
         string: ClassInstanceRef<String>,
         offset: i32,
@@ -180,21 +183,21 @@ impl Font {
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
         let substring = string.chars().skip(offset as usize).take(len as usize).collect::<RustString>();
 
-        Ok(canvas::string_width(&substring, point_size as f32) as _)
+        Ok(string_width(context.system().platform().font(), &substring, point_size as f32) as _)
     }
 
-    async fn char_width(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, char: JavaChar) -> JvmResult<i32> {
+    async fn char_width(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>, char: JavaChar) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::charWidth({this:?}, {char})");
 
         let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
         let string = RustString::from_utf16(&[char]).unwrap();
 
-        Ok(canvas::string_width(&string, point_size as f32) as _)
+        Ok(string_width(context.system().platform().font(), &string, point_size as f32) as _)
     }
 
     async fn chars_width(
         jvm: &Jvm,
-        _: &mut WieJvmContext,
+        context: &mut WieJvmContext,
         this: ClassInstanceRef<Self>,
         chars: ClassInstanceRef<Array<JavaChar>>,
         offset: i32,
@@ -206,7 +209,7 @@ impl Font {
         let chars = jvm.load_array(&chars, offset as _, len as _).await?;
         let string = RustString::from_utf16(&chars).unwrap();
 
-        Ok(canvas::string_width(&string, point_size as f32) as _)
+        Ok(string_width(context.system().platform().font(), &string, point_size as f32) as _)
     }
 
     // SIZE_SMALL=8, SIZE_MEDIUM=0, SIZE_LARGE=16 -> resolved point size for neodgm on 240x320.

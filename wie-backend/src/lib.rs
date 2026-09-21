@@ -10,10 +10,12 @@ mod screen;
 mod system;
 mod task;
 mod task_runner;
+pub mod text_layout;
 mod time;
 
 pub use self::{
     audio_sink::{AudioCommand, AudioEventData, AudioHandle, AudioSequence, AudioSink, TimedAudioEvent},
+    canvas::Font,
     database::{Database, DatabaseRepository, RecordId},
     executor::{AsyncCallable, AsyncCallableResult},
     platform::{Filesystem, Platform},

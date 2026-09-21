@@ -1,11 +1,10 @@
 use alloc::{boxed::Box, format, vec};
-use core::cell::RefCell;
 
 use arm32_cpu::{Cpu, Memory, Mode, reg};
 
 use wie_util::{Result, WieError};
 
-use crate::engine::{ArmEngine, ArmRegister, EngineRunResult, MemoryPermission};
+use crate::engine::{ArmEngine, ArmRegister, EngineRunResult, EngineStopReason, MemoryPermission};
 
 pub struct Arm32CpuEngine {
     cpu: Cpu,
@@ -24,7 +23,7 @@ impl Arm32CpuEngine {
         self.cpu.reg_get(Mode::User, reg::PC) == 0x08 && (self.cpu.reg_get(Mode::User, reg::CPSR) & 0x1f) == 0x13
     }
 
-    fn read_svc_result(&mut self) -> Result<EngineRunResult> {
+    fn read_svc_result(&mut self) -> Result<EngineStopReason> {
         let lr = self.cpu.reg_get(Mode::Supervisor, reg::LR);
         let spsr = self.cpu.reg_get(Mode::Supervisor, reg::SPSR);
 
@@ -40,17 +39,18 @@ impl Arm32CpuEngine {
 
         let category = instruction as u32 & 0xff;
 
-        Ok(EngineRunResult::Svc { category, lr, spsr })
+        Ok(EngineStopReason::Svc { category, lr, spsr })
     }
 }
 
 impl ArmEngine for Arm32CpuEngine {
-    fn run(&mut self, end: u32, mut count: u32) -> Result<EngineRunResult> {
-        loop {
+    fn run(&mut self, end: u32, count: u32) -> Result<EngineRunResult> {
+        let mut instructions_executed = 0;
+        let stop_reason = loop {
             let pc = self.cpu.reg_get(Mode::User, reg::PC);
 
             if self.is_svc_exception() {
-                return self.read_svc_result();
+                break self.read_svc_result()?;
             }
 
             if pc < 0x1000 {
@@ -58,11 +58,11 @@ impl ArmEngine for Arm32CpuEngine {
             }
 
             if pc == end {
-                return Ok(EngineRunResult::End);
+                break EngineStopReason::End;
             }
 
-            if count == 0 {
-                return Ok(EngineRunResult::CountExhausted);
+            if instructions_executed == count {
+                break EngineStopReason::Yield;
             }
 
             let mut arm32cpu_memory = self.mem.as_arm32cpu_memory();
@@ -70,12 +70,17 @@ impl ArmEngine for Arm32CpuEngine {
             if !(self.cpu.step(&mut arm32cpu_memory)) {
                 return Err(WieError::FatalError("Undefined instruction".into()));
             }
-            count -= 1;
+            instructions_executed += 1;
 
-            if let Some(x) = arm32cpu_memory.memory_error() {
+            if let Some(x) = arm32cpu_memory.memory_error {
                 return Err(WieError::InvalidMemoryAccess(x));
             }
-        }
+        };
+
+        Ok(EngineRunResult {
+            stop_reason,
+            instructions_executed,
+        })
     }
 
     fn reg_write(&mut self, reg: ArmRegister, value: u32) {
@@ -226,19 +231,15 @@ impl EmulatedMemory {
 
 struct Arm32CpuMemory<'a> {
     emulated_memory: &'a mut EmulatedMemory,
-    memory_error: RefCell<Option<u32>>,
+    memory_error: Option<u32>,
 }
 
 impl<'a> Arm32CpuMemory<'a> {
     fn new(emulated_memory: &'a mut EmulatedMemory) -> Self {
         Self {
             emulated_memory,
-            memory_error: RefCell::new(None),
+            memory_error: None,
         }
-    }
-
-    fn memory_error(&self) -> Option<u32> {
-        *self.memory_error.borrow()
     }
 
     fn get_page(&mut self, addr: u32) -> Option<&mut [u8; PAGE_SIZE]> {
@@ -248,7 +249,7 @@ impl<'a> Arm32CpuMemory<'a> {
         if let Some(x) = page_data {
             Some(x)
         } else {
-            *self.memory_error.borrow_mut() = Some(addr);
+            self.memory_error = Some(addr);
             None
         }
     }
@@ -278,7 +279,7 @@ impl Memory for Arm32CpuMemory<'_> {
 
         let data = page.unwrap();
 
-        (data[offset as usize] as u16) | ((data[offset as usize + 1] as u16) << 8)
+        u16::from_le_bytes(data[offset as usize..offset as usize + 2].try_into().unwrap())
     }
 
     fn r32(&mut self, addr: u32) -> u32 {
@@ -290,10 +291,7 @@ impl Memory for Arm32CpuMemory<'_> {
         }
 
         let data = page.unwrap();
-        (data[offset as usize] as u32)
-            | ((data[offset as usize + 1] as u32) << 8)
-            | ((data[offset as usize + 2] as u32) << 16)
-            | ((data[offset as usize + 3] as u32) << 24)
+        u32::from_le_bytes(data[offset as usize..offset as usize + 4].try_into().unwrap())
     }
 
     fn w8(&mut self, addr: u32, val: u8) {
@@ -319,8 +317,7 @@ impl Memory for Arm32CpuMemory<'_> {
 
         let data = page.unwrap();
 
-        data[offset as usize] = val as u8;
-        data[offset as usize + 1] = (val >> 8) as u8;
+        data[offset as usize..offset as usize + 2].copy_from_slice(&val.to_le_bytes());
     }
 
     fn w32(&mut self, addr: u32, val: u32) {
@@ -333,10 +330,7 @@ impl Memory for Arm32CpuMemory<'_> {
 
         let data = page.unwrap();
 
-        data[offset as usize] = val as u8;
-        data[offset as usize + 1] = (val >> 8) as u8;
-        data[offset as usize + 2] = (val >> 16) as u8;
-        data[offset as usize + 3] = (val >> 24) as u8;
+        data[offset as usize..offset as usize + 4].copy_from_slice(&val.to_le_bytes());
     }
 }
 
@@ -347,7 +341,28 @@ mod tests {
 
     use arm32_cpu::Memory;
 
-    use super::EmulatedMemory;
+    use crate::engine::{ArmEngine, ArmRegister, EngineStopReason, MemoryPermission};
+
+    use super::{Arm32CpuEngine, EmulatedMemory};
+
+    #[test]
+    fn run_reports_executed_instructions_at_budget_and_return_boundaries() {
+        let mut engine = Arm32CpuEngine::new();
+        engine.mem_map(0x1000, 0x1000, MemoryPermission::ReadWriteExecute);
+        engine.mem_write(0x1000, &[0xc0, 0x46, 0xc0, 0x46, 0x70, 0x47]).unwrap(); // nop; nop; bx lr
+        engine.reg_write(ArmRegister::Cpsr, 0x3f);
+        engine.reg_write(ArmRegister::PC, 0x1001);
+        engine.reg_write(ArmRegister::LR, 0x2000);
+
+        for (budget, expected_count, at_end) in [(0, 0, false), (2, 2, false), (10, 1, true), (10, 0, true)] {
+            let result = engine.run(0x2000, budget).unwrap();
+            assert_eq!(result.instructions_executed, expected_count);
+            assert!(matches!(
+                (result.stop_reason, at_end),
+                (EngineStopReason::End, true) | (EngineStopReason::Yield, false)
+            ));
+        }
+    }
 
     #[test]
     fn page_table_is_heap_allocated() {
@@ -405,6 +420,10 @@ mod tests {
 
         let mut buf = [0; 0x1000];
         assert!(memory.read_range(0x1f500, 0x1000, &mut buf).is_err());
+
+        let mut access = memory.as_arm32cpu_memory();
+        assert_eq!(access.r32(0x20000), 0);
+        assert_eq!(access.memory_error, Some(0x20000));
     }
 
     #[test]
@@ -414,5 +433,9 @@ mod tests {
         memory.map(0x10000, 0x10000);
 
         assert!(memory.write_range(0x1f500, &[12; 0x1000]).is_err());
+
+        let mut access = memory.as_arm32cpu_memory();
+        access.w32(0x20000, 12);
+        assert_eq!(access.memory_error, Some(0x20000));
     }
 }

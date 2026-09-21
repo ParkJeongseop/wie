@@ -29,7 +29,7 @@ opt-level = 1
 lto = true
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.5"
 edition = "2024"
 license = "MIT"
 description = "WIPI and J2ME emulator components"
@@ -45,18 +45,33 @@ clap = { version = "^4.6", features = ["derive"] }
 dyn-clone = { version = "^1.0", default-features = false }
 encoding_rs = { version = "^0.8", default-features = false, features = ["alloc"] }
 futures = { version = "^0.3", default-features = false, features = ["alloc"] }
-jvm = { version = "^0.1.1" }
-jvm-bytecode = { version = "^0.1.1" }
-jvm-class-proto = { version = "^0.1.1" }
-jvm-types = { version = "^0.1.1" }
+jvm = { version = "^0.2.0" }
+jvm-bytecode = { version = "^0.2.0" }
+jvm-class-proto = { version = "^0.2.0" }
+jvm-types = { version = "^0.2.0" }
 lazy_static = { version = "^1.5", default-features = false }
 md5 = { version = "^0.8", default-features = false }
-rustjava-runtime = { version = "^0.1.1" }
+rustjava-runtime = { version = "^0.2.0" }
 serde = { version = "^1", default-features = false, features = ["derive", "alloc"] }
+# Use Rustls with ureq to support Android without OpenSSL or JVM certificate-verifier setup.
+sentry = { version = "^0.49", default-features = false, features = [
+    "anyhow",
+    "backtrace",
+    "contexts",
+    "debug-images",
+    "logs",
+    "metrics",
+    "panic",
+    "release-health",
+    "rustls",
+    "tracing",
+    "ureq",
+] }
 spin = { version = "^0.12", features = ["spin_mutex", "rwlock"], default-features = false }
 toml = { version = "^1", default-features = false, features = ["parse", "serde"] }
 tracing = { version = "^0.1", default-features = false, features = ["attributes"] }
-wipi-types = { version = "^0.0.1" }
+tracing-subscriber = { version = "^0.3", features = ["env-filter", "time"] }
+wipi-types = { version = "^0.0.2" }
 
 wie-backend = { version = "0.1.0", path = "wie-backend" }
 wie-j2me = { version = "0.1.0", path = "wie-j2me" }
@@ -85,18 +100,28 @@ description = "WIPI and J2ME emulator"
 repository.workspace = true
 exclude = ["docs"]
 
-[dependencies]
-async-trait = { workspace = true }
-tracing = { workspace = true }
+[lib]
+name = "wie"
 
+[[bin]]
+name = "wie"
+path = "src/main.rs"
+
+[dependencies]
 anyhow = { workspace = true, features = ["backtrace"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+async-trait = { workspace = true }
 clap = { workspace = true }
+sentry = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
 directories = { version = "^6.0" }
 fast_image_resize = "6.0.0"
 midir = { version = "^0.11" }
 rodio = { version = "^0.22", features = ["playback"] }
 softbuffer = { version = "^0.4" }
-tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 winit = { version = "^0.30", features = ["x11", "wayland"] }
 
 wie-backend = { workspace = true }
@@ -106,15 +131,11 @@ wie-lgt = { workspace = true }
 wie-skt = { workspace = true }
 wie-util = { workspace = true }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "^0.4", features = ["wasm_js"] } # not direct dependency, but broken without it in wasm build
-web-sys = { version = "=0.3.85" }                        # We need 0.3.85 to not break midir wasm build
-
 # RustJava is consumed from crates.io upstream; our fork carries only the
 # unmerged delta (currently: quieter String.valueOf logging), applied as a patch.
 [patch.crates-io]
-jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
-jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
-jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
-jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
-rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "e8d9aee" }
+jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "f414a98" }
+jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "f414a98" }
+jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "f414a98" }
+jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "f414a98" }
+rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "f414a98" }
