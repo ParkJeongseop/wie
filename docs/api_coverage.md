@@ -147,6 +147,12 @@ Not API-crate surface, but blockers found while running real games:
   memcpy/memset, time/localtime. Unknown: 0x415 (two nearby pointer args,
   called ~70x at startup; wrong semantics eventually corrupt the app heap —
   blocks 데몬헌터) and 0x404 (single seed-like call, srand-shaped; stubbed).
+- **LGT stdlib 0x408 = strncat** (2026-09-27, user report: 테일즈위버 막시민편
+  quits the moment the ITEM tab opens). The item list formats prices with
+  thousands separators via `strncat(dst, src, n)` (observed calls: n=1 of
+  "1000", then "," then n=3 of "000"); the slot sits between strcat (0x407)
+  and strcmp (0x409). Implemented; ITEM/SKILL/COMBO/HOTKEY/QUEST/SYSTEM tabs
+  all open afterwards.
 - **LGT WIPI-C SVC ids** — mostly mapped now. id 0xcf (graphics block) =
   MC_grpGetContext (implemented); KTF media slot 15 = MC_mdaSetVolume. id
   0x384 (900) is polled ~every 64ms with args (0xffff, 0xff, 0xff, ptr);

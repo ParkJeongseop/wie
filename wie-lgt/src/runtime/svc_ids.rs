@@ -363,6 +363,7 @@ pub enum StdlibSvcId {
     Strcpy = 0x405,
     Strncpy = 0x406,
     Strcat = 0x407,
+    Strncat = 0x408,
     Strcmp = 0x409,
     Unk4 = 0x40a,
     Strstr = 0x410,

@@ -22,6 +22,7 @@ pub fn register_stdlib_svc_handler(core: &mut ArmCore, system: &System) -> Resul
             x if x == StdlibSvcId::Strcpy as u32 => EmulatedFunction::call(&stdlib::strcpy, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Strncpy as u32 => EmulatedFunction::call(&strncpy, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Strcat as u32 => EmulatedFunction::call(&strcat, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Strncat as u32 => EmulatedFunction::call(&strncat, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Strcmp as u32 => EmulatedFunction::call(&strcmp, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Unk4 as u32 => EmulatedFunction::call(&unk4, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Strstr as u32 => EmulatedFunction::call(&strstr, core, &mut ()).await?.write(core, lr),
@@ -91,6 +92,18 @@ async fn strcat(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32) -> R
     write_null_terminated_string_bytes(core, ptr_dst + offset as u32, &src)?;
 
     Ok(())
+}
+
+async fn strncat(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32, size: u32) -> Result<u32> {
+    tracing::debug!("strncat({ptr_dst:#x}, {ptr_src:#x}, {size:#x})");
+
+    let src = read_null_terminated_string_bytes(core, ptr_src)?;
+    let dst = read_null_terminated_string_bytes(core, ptr_dst)?;
+
+    let size_to_copy = min(size as usize, src.len());
+    write_null_terminated_string_bytes(core, ptr_dst + dst.len() as u32, &src[..size_to_copy])?;
+
+    Ok(ptr_dst)
 }
 
 async fn strcmp(core: &mut ArmCore, _: &mut (), ptr_str1: u32, ptr_str2: u32) -> Result<u32> {
