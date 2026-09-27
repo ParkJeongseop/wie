@@ -510,7 +510,13 @@ pub async fn draw_string(
     };
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    primitives::draw_text(context, &framebuffer, &string, x, y, color, clip)
+    // KTF's platform takes `y` as the text baseline: 메이플스토리 도적편 (KTF) hardcodes
+    // its dialogue at y=293/307 inside a box spanning 273..316 and its speaker name at
+    // y=268 on a plate spanning 255..268 — both only fit when glyph ink occupies
+    // y-11..y. LGT's platform takes `y` as the cell top instead (see wie-lgt's
+    // draw_string), so the conversion lives here rather than in the primitive.
+    let top = y + 1 - FONT_HEIGHT;
+    primitives::draw_text(context, &framebuffer, &string, x, top, color, clip)
 }
 
 pub async fn repaint(context: &mut dyn WIPICContext, lcd: i32, x: i32, y: i32, width: i32, height: i32) -> Result<()> {

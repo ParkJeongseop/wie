@@ -160,6 +160,15 @@ Not API-crate surface, but blockers found while running real games:
   memcpy/memset, time/localtime. Unknown: 0x415 (two nearby pointer args,
   called ~70x at startup; wrong semantics eventually corrupt the app heap —
   blocks 데몬헌터) and 0x404 (single seed-like call, srand-shaped; stubbed).
+- **MC_grpDrawString y origin differs per carrier** (2026-09-28): KTF platforms
+  treat `y` as the text baseline (메이플스토리 도적편 KTF dialogue box evidence,
+  2026-09), LGT platforms as the cell top. Verified by rendering all 72 LGT titles
+  both ways: with the baseline shift 테일즈위버 이스핀편 draws "OK" above its button,
+  바이오크로니클 puts dialog titles on the header border, 무한신맞고2009 overlaps
+  story text with the picture, and the LGT build of 메이플스토리 도적편 hides its
+  bottom caption behind an icon — all fit with `y` = top. The conversion now lives
+  in the KTF `draw_string`; wie-lgt passes `y` through. (Matches wfeature's
+  independent finding; ARAM uses top for both.)
 - **LGT stdlib 0x408 = strncat** (2026-09-27, user report: 테일즈위버 막시민편
   quits the moment the ITEM tab opens). The item list formats prices with
   thousands separators via `strncat(dst, src, n)` (observed calls: n=1 of

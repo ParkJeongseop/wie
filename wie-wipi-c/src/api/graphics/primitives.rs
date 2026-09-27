@@ -159,20 +159,16 @@ pub fn copy_framebuffer(
     })
 }
 
+/// Draws `string` with its 12px cell top at `y` (ink starts at `y`, like the original
+/// full-cell bitmap fonts). Callers convert from their platform's convention first.
 pub fn draw_text(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, string: &str, x: i32, y: i32, color: Color, clip: Clip) -> Result<()> {
-    // MC_grpDrawString's `y` is the text baseline, not the top: 메이플스토리 도적편
-    // hardcodes its dialogue at y=293/307 inside a box spanning 273..316 and its
-    // speaker name at y=268 on a plate spanning 255..268 — both only fit when glyph
-    // ink occupies y-11..y, matching the original full-cell 12px bitmap fonts whose
-    // ink ends at the baseline. Canvas::draw_text anchors at the ink top, so shift.
     let font = context.system().platform().font().clone();
-    let top = y + 1 - super::FONT_HEIGHT;
     write_canvas(context, framebuffer, |canvas| {
         canvas.draw_text(
             &font,
             string,
             x,
-            top,
+            y,
             super::FONT_SIZE,
             wie_backend::canvas::TextAlignment::Left,
             color,

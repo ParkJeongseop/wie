@@ -824,6 +824,11 @@ pub async fn draw_string(
     let resolved = resolve_framebuffer(context, dst)?;
     let graphics = resolve_context(context, &resolved, ptr_graphics)?;
     let color = resolved.framebuffer.pixel_to_color(graphics.foreground);
+    // LGT's platform takes `y` as the top of the text cell, unlike KTF's baseline:
+    // with a baseline shift 테일즈위버 이스핀편 draws "OK" above its button box and
+    // 바이오크로니클 draws dialog titles over the header border; the LGT build of
+    // 메이플스토리 도적편 hides its bottom caption behind an icon while the KTF build
+    // fits a baseline. Pass `y` through as the cell top.
     primitives::draw_text(
         context,
         &resolved.framebuffer,
