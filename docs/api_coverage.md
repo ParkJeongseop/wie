@@ -123,6 +123,19 @@ complete; audio and device control are weak.
   (3D), SMS, SMSListener, SMSMessage (messaging), Call, PhoneBook, SISImage,
   ResourceAllocException, UserStopException.
 
+- **LBMP image format** (2026-09-28): the SKVM LCD bitmap decoder now covers the
+  whole format. Header is six LE u32s (`LBMP`, type, width, height, size, mask).
+  Type 8 = RGB332, 16 = RGB565, **2 = 4-level grayscale as two 1bpp planes** (high
+  then low bit, each `size` bytes). 1bpp planes — including the **transparency
+  mask** appended when `mask != 0` — pack eight rows per byte column-wise (byte
+  `(y/8)*width + x`, bit `y%8`, LSB = top row); a set mask bit is transparent.
+  Verified bit order/polarity on real assets (삼국지연의2 text images read
+  upright only LSB-first; Chaos블레이드 tile masks match the fill color 324/324
+  pixels). In the SKT library 2,024 of 2,811 LBMPs carry a mask and 47 are
+  grayscale, all previously drawn opaque or rejected: 삼국지연의2 map tiles and
+  "Press Any Key", 웰루시아 story text/illustrations, 더팜1 (was stuck on the
+  title after the grayscale decode error) now render.
+
 ## MIDP (`wie_midp`, `javax.microedition.*`)
 
 `wie_wipi_java` is built on top of this layer, so its gaps affect WIPI too.
