@@ -5,10 +5,12 @@ use wipi_types::lgt::java::{
     LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor as RawJavaClassDescriptor, LgtJavaClassInstance as RawJavaClassInstance,
 };
 
+use jvm::Method;
+
 use wie_core_arm::{ArmCore, JumpTo, RegisteredFunction, SvcId};
 use wie_util::{Result, WieError, read_generic, read_null_terminated_string_bytes};
 
-use crate::runtime::{SVC_CATEGORY_JAVA, SVC_CATEGORY_MISSING_JAVA_VTABLE_ENTRY};
+use crate::runtime::{SVC_CATEGORY_JAVA, SVC_CATEGORY_MISSING_JAVA_VTABLE_ENTRY, java::jvm_support::JavaMethod};
 
 mod abi;
 pub mod classes;
@@ -35,7 +37,13 @@ async fn handle_java_svc(core: &mut ArmCore, functions: &mut JavaSvcFunctions, i
             Some(resume_address) => Ok(JumpTo(resume_address)),
             None => Err(WieError::JavaException(ptr_exception)),
         },
-        Err(error) => Err(error),
+        Err(error) => {
+            // the svc id is the guest JavaMethod the native was registered for
+            let method = JavaMethod::from_raw(id.0, core);
+            tracing::error!("LGT Java native {}{} failed: {error}", method.name(), method.descriptor());
+
+            Err(error)
+        }
     }
 }
 

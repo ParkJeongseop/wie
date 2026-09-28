@@ -214,6 +214,15 @@ Not API-crate surface, but blockers found while running real games:
   value. 0x389 (InetAddrStr) stays unmapped until a caller shows its shape.
   id 0x19c is MC_dbListDatabases (upstream, 2026-09 sync; formerly our
   return-0 stub) — 슈퍼액션히어로3 boots past it either way.
+- **MC_im block** (2026-09-28): LGT WIPI-C 300..304 is the input-method group in
+  specification order — GetSupportedModeCount, GetSupportedModes, SetCurrentMode,
+  GetCurrentMode, HandleInput — and the KTF graphics table carries the same five
+  at 37..41. 제노니아1 (and 12 other LGT titles in the same cluster) calls
+  count → modes at start-up, reads the first mode code through the returned
+  `M_Char **`, tests it for "/L" or "/S" and then SetCurrentMode(2); with the
+  old return-0 stubs it dereferenced NULL. The shared implementation answers
+  the specification's vocabulary ("EN/L", "EN/S", "KO", "N123"); input is still
+  not composed (HandleInput stays a stub).
 - **LGT stdlib 0x3f9 = vsprintf, 0x426 = malloc, 0x428 = free** (2026-09-28):
   당구마스터2010 calls 0x3f9 with (buffer, "han2bit.Dat", va_list) before
   loading that resource; 리얼사커매니저2009 calls 0x426 with 140/68/17 and

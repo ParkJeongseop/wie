@@ -5,6 +5,7 @@ mod class_instance;
 mod field;
 mod jvm_implementation;
 mod method;
+pub(crate) use self::method::JavaMethod;
 mod value;
 mod vtable;
 
@@ -29,7 +30,6 @@ use self::{
     class_definition::JavaClassDefinition,
     class_instance::JavaClassInstance,
     field::{JavaField, JavaReferenceField, JavaStaticReferenceField},
-    method::JavaMethod,
     value::JavaValueCodec,
     vtable::JavaVtableEntry,
 };

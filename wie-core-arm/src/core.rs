@@ -544,11 +544,21 @@ impl ArmCore {
         Self::dump_regs_inner(&*inner.engine)
     }
 
-    fn format_callstack_address(address: u32, image_base: u32) -> String {
+    fn format_callstack_address(engine: &mut dyn ArmEngine, address: u32, image_base: u32) -> String {
         let description = if (image_base..image_base + 0x100000).contains(&address) {
             format!("<Base>+{:#x}", address - image_base)
         } else if (FUNCTIONS_BASE..FUNCTIONS_BASE + FUNCTIONS_SIZE as u32).contains(&address) {
-            "<Native function>".to_owned()
+            // each stub is `push; ldr; mov; pop; svc #category; bx lr` followed by the id word
+            let stub = FUNCTIONS_BASE + (address - FUNCTIONS_BASE) / SVC_STUB_SIZE * SVC_STUB_SIZE;
+            let mut bytes = [0u8; SVC_STUB_SIZE as usize];
+            match engine.mem_read(stub, bytes.len(), &mut bytes) {
+                Ok(_) => format!(
+                    "<Native function svc {}:{:#x}>",
+                    bytes[8],
+                    u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]])
+                ),
+                Err(_) => "<Native function>".to_owned(),
+            }
         } else {
             "<Unknown>".to_owned()
         };
@@ -563,9 +573,9 @@ impl ArmCore {
         let pc = inner.engine.reg_read(ArmRegister::PC);
         let lr = inner.engine.reg_read(ArmRegister::LR);
 
-        let mut call_stack = Self::format_callstack_address(pc, image_base);
+        let mut call_stack = Self::format_callstack_address(&mut *inner.engine, pc, image_base);
         if lr != RUN_FUNCTION_LR && lr != 0 {
-            call_stack += &Self::format_callstack_address(lr - 5, image_base);
+            call_stack += &Self::format_callstack_address(&mut *inner.engine, lr - 5, image_base);
         }
 
         for i in 0..128 {
@@ -579,7 +589,7 @@ impl ArmCore {
             let value_u32 = u32::from_le_bytes(value);
 
             if value_u32 > 5 && Self::is_code_address(value_u32 - 4, image_base) {
-                call_stack += &Self::format_callstack_address(value_u32 - 5, image_base);
+                call_stack += &Self::format_callstack_address(&mut *inner.engine, value_u32 - 5, image_base);
             }
         }
 
