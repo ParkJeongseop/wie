@@ -3,14 +3,13 @@ use alloc::{boxed::Box, collections::BTreeMap, format, string::String, sync::Arc
 use spin::Mutex;
 use wipi_types::lgt::java::{
     LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor as RawJavaClassDescriptor, LgtJavaClassInstance as RawJavaClassInstance,
+    LgtJavaClassMethod as RawJavaMethod,
 };
-
-use jvm::Method;
 
 use wie_core_arm::{ArmCore, JumpTo, RegisteredFunction, SvcId};
 use wie_util::{Result, WieError, read_generic, read_null_terminated_string_bytes};
 
-use crate::runtime::{SVC_CATEGORY_JAVA, SVC_CATEGORY_MISSING_JAVA_VTABLE_ENTRY, java::jvm_support::JavaMethod};
+use crate::runtime::{SVC_CATEGORY_JAVA, SVC_CATEGORY_MISSING_JAVA_VTABLE_ENTRY};
 
 mod abi;
 pub mod classes;
@@ -25,6 +24,9 @@ pub type JavaSvcFunctions = Arc<Mutex<BTreeMap<u32, Arc<Box<dyn RegisteredFuncti
 
 async fn handle_java_svc(core: &mut ArmCore, functions: &mut JavaSvcFunctions, id: SvcId) -> Result<JumpTo> {
     let (_, lr) = core.read_pc_lr()?;
+    if tracing::enabled!(tracing::Level::TRACE) {
+        tracing::trace!("java svc {}", describe_java_svc(core, id.0));
+    }
     let function = functions
         .lock()
         .get(&id.0)
@@ -38,13 +40,27 @@ async fn handle_java_svc(core: &mut ArmCore, functions: &mut JavaSvcFunctions, i
             None => Err(WieError::JavaException(ptr_exception)),
         },
         Err(error) => {
-            // the svc id is the guest JavaMethod the native was registered for
-            let method = JavaMethod::from_raw(id.0, core);
-            tracing::error!("LGT Java native {}{} failed: {error}", method.name(), method.descriptor());
+            tracing::error!("LGT Java native {} failed: {error}", describe_java_svc(core, id.0));
 
             Err(error)
         }
     }
+}
+
+/// Names the guest method a Java svc id was registered for, or falls back to the raw id when the
+/// registration is not backed by a readable `RawJavaMethod` (array class helpers, corrupted memory).
+fn describe_java_svc(core: &ArmCore, id: u32) -> String {
+    let read = |ptr: u32| -> Option<String> {
+        if ptr == 0 {
+            return None;
+        }
+        let bytes = read_null_terminated_string_bytes(core, ptr).ok()?;
+        String::from_utf8(bytes).ok()
+    };
+    let described = read_generic::<RawJavaMethod, _>(core, id)
+        .ok()
+        .and_then(|raw| Some(format!("{}{} (id {id:#x})", read(raw.ptr_name)?, read(raw.ptr_descriptor)?)));
+    described.unwrap_or_else(|| format!("id {id:#x}"))
 }
 
 async fn handle_missing_java_vtable_entry(core: &mut ArmCore, _: &mut (), id: SvcId) -> Result<JumpTo> {

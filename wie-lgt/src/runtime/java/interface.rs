@@ -305,6 +305,7 @@ async fn java_register_class(core: &mut ArmCore, jvm: &mut Jvm, ptr_class: u32) 
     if class.descriptor()?.link_state == 3 {
         return Ok(());
     }
+    tracing::debug!("Registering LGT Java class {} at {ptr_class:#x}", ClassDefinition::name(&class));
 
     let loader: Box<dyn ClassInstance> = jvm
         .get_static_field("net/wie/LgtClassLoader", "instance", "Lnet/wie/LgtClassLoader;")
@@ -478,14 +479,51 @@ async fn java_instantiate_multi_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_cla
     Ok(LgtJvmSupport::class_instance_raw(&*arrays.remove(0)))
 }
 
-fn read_member_name_and_descriptor(core: &ArmCore, table: u32, index: u16) -> Result<(String, String)> {
+/// Reads one `(name, descriptor)` import entry. Field import tables carry one entry per 32-bit
+/// word, so the high word of a `long`/`double` field is a placeholder with both pointers null
+/// (LGT 학교가는길: `cB J` is followed by such an entry); those return `None`.
+fn read_member_name_and_descriptor(core: &ArmCore, table: u32, index: u16) -> Result<Option<(String, String)>> {
     let ptr_name: u32 = read_generic(core, table + index as u32 * 2 * size_of::<u32>() as u32)?;
     let ptr_descriptor: u32 = read_generic(core, table + (index as u32 * 2 + 1) * size_of::<u32>() as u32)?;
+    if ptr_name == 0 && ptr_descriptor == 0 {
+        return Ok(None);
+    }
     let name = String::from_utf8(read_null_terminated_string_bytes(core, ptr_name)?)
         .map_err(|error| WieError::FatalError(format!("Invalid LGT member name: {error}")))?;
     let descriptor = String::from_utf8(read_null_terminated_string_bytes(core, ptr_descriptor)?)
         .map_err(|error| WieError::FatalError(format!("Invalid LGT member descriptor: {error}")))?;
-    Ok((name, descriptor))
+    Ok(Some((name, descriptor)))
+}
+
+fn read_method_name_and_descriptor(core: &ArmCore, table: u32, index: u16, class_name: &str) -> Result<(String, String)> {
+    read_member_name_and_descriptor(core, table, index)?
+        .ok_or_else(|| WieError::FatalError(format!("Null method import entry {index} while linking {class_name}")))
+}
+
+/// Links one field-import range, giving a wide-field placeholder the word after its low word.
+fn link_field_imports(
+    core: &mut ArmCore,
+    jvm: &Jvm,
+    class_name: &str,
+    imports: u32,
+    word_indices: u32,
+    offset: u16,
+    count: u16,
+    is_static: bool,
+) -> Result<()> {
+    let mut previous_word_index: Option<u16> = None;
+    for index in offset..offset + count {
+        let word_index = match read_member_name_and_descriptor(core, imports, index)? {
+            Some((name, descriptor)) => LgtJvmSupport::field_word_index(jvm, class_name, &name, &descriptor, is_static)?,
+            None => previous_word_index
+                .map(|word_index| word_index + 1)
+                .ok_or_else(|| WieError::FatalError(format!("Dangling wide-field placeholder at import {index} while linking {class_name}")))?,
+        };
+        previous_word_index = Some(word_index);
+        write_generic(core, word_indices + index as u32 * size_of::<u16>() as u32, word_index)?;
+    }
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -505,26 +543,35 @@ async fn link_class_members(
     interface_method_indices: u32,
     non_virtual_method_targets: u32,
 ) -> Result<()> {
-    for index in link.instance_field_offset..link.instance_field_offset + link.instance_field_count {
-        let (name, descriptor) = read_member_name_and_descriptor(core, instance_field_imports, index)?;
-        let word_index = LgtJvmSupport::field_word_index(jvm, class_name, &name, &descriptor, false)?;
-        write_generic(core, instance_field_word_indices + index as u32 * size_of::<u16>() as u32, word_index)?;
-    }
-
-    for index in link.static_field_offset..link.static_field_offset + link.static_field_count {
-        let (name, descriptor) = read_member_name_and_descriptor(core, static_field_imports, index)?;
-        let word_index = LgtJvmSupport::field_word_index(jvm, class_name, &name, &descriptor, true)?;
-        write_generic(core, static_field_word_indices + index as u32 * size_of::<u16>() as u32, word_index)?;
-    }
+    link_field_imports(
+        core,
+        jvm,
+        class_name,
+        instance_field_imports,
+        instance_field_word_indices,
+        link.instance_field_offset,
+        link.instance_field_count,
+        false,
+    )?;
+    link_field_imports(
+        core,
+        jvm,
+        class_name,
+        static_field_imports,
+        static_field_word_indices,
+        link.static_field_offset,
+        link.static_field_count,
+        true,
+    )?;
 
     for index in link.virtual_method_offset..link.virtual_method_offset + link.virtual_method_count {
-        let (name, descriptor) = read_member_name_and_descriptor(core, virtual_method_imports, index)?;
+        let (name, descriptor) = read_method_name_and_descriptor(core, virtual_method_imports, index, class_name)?;
         let method_index = LgtJvmSupport::virtual_method_index(jvm, class_name, &name, &descriptor).await?;
         write_generic(core, virtual_method_indices + index as u32 * size_of::<u16>() as u32, method_index)?;
     }
 
     for index in link.interface_method_offset..link.interface_method_offset + link.interface_method_count {
-        let (name, descriptor) = read_member_name_and_descriptor(core, interface_method_imports, index)?;
+        let (name, descriptor) = read_method_name_and_descriptor(core, interface_method_imports, index, class_name)?;
         let method_index = LgtJvmSupport::virtual_method_index(jvm, class_name, &name, &descriptor).await?;
         write_generic(core, interface_method_indices + index as u32 * size_of::<u16>() as u32, method_index)?;
     }
@@ -536,7 +583,7 @@ async fn link_class_members(
             0 => initialized_class_getter,
             1 => class_getter,
             _ => {
-                let (name, descriptor) = read_member_name_and_descriptor(core, non_virtual_method_imports, index)?;
+                let (name, descriptor) = read_method_name_and_descriptor(core, non_virtual_method_imports, index, class_name)?;
                 LgtJvmSupport::non_virtual_method_target(jvm, class_name, &name, &descriptor)?
             }
         };
@@ -568,6 +615,19 @@ async fn java_link_public_class(
     let class_name = JavaLangClass::name(jvm, &class_object)
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
+    tracing::debug!(
+        "Linking public class {class_name}: instance {}+{} @{instance_field_imports:#x}, static {}+{} @{static_field_imports:#x}, virtual {}+{} @{virtual_method_imports:#x}, interface {}+{} @{interface_method_imports:#x}, direct {}+{} @{non_virtual_method_imports:#x}",
+        link.instance_field_offset,
+        link.instance_field_count,
+        link.static_field_offset,
+        link.static_field_count,
+        link.virtual_method_offset,
+        link.virtual_method_count,
+        link.interface_method_offset,
+        link.interface_method_count,
+        link.non_virtual_method_offset,
+        link.non_virtual_method_count
+    );
     link_class_members(
         core,
         jvm,
@@ -626,7 +686,7 @@ async fn java_link_imported_classes(
         );
         for local_index in 2..link.non_virtual_method_count {
             let member_index = link.non_virtual_method_offset + local_index;
-            let (name, descriptor) = read_member_name_and_descriptor(core, non_virtual_method_imports, member_index)?;
+            let (name, descriptor) = read_method_name_and_descriptor(core, non_virtual_method_imports, member_index, &class_name)?;
             tracing::debug!("Imported direct method {class_name}.{name}{descriptor}");
         }
         jvm.resolve_class(&class_name)

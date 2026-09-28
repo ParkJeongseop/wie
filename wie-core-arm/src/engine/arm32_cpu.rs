@@ -54,6 +54,8 @@ impl ArmEngine for Arm32CpuEngine {
             }
 
             if pc < 0x1000 {
+                let lr = self.cpu.reg_get(Mode::User, reg::LR);
+                tracing::error!("jump to unmapped pc {pc:#x} (lr {lr:#x})");
                 return Err(WieError::InvalidMemoryAccess(pc));
             }
 
@@ -73,6 +75,8 @@ impl ArmEngine for Arm32CpuEngine {
             instructions_executed += 1;
 
             if let Some(x) = arm32cpu_memory.memory_error {
+                let lr = self.cpu.reg_get(Mode::User, reg::LR);
+                tracing::error!("memory fault accessing {x:#x} at pc {pc:#x} (lr {lr:#x})");
                 return Err(WieError::InvalidMemoryAccess(x));
             }
         };

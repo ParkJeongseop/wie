@@ -232,7 +232,7 @@ impl LgtJvmSupport {
         loader: Box<dyn ClassInstance>,
     ) -> Result<Box<dyn ClassInstance>> {
         let mut definition = JavaClassDefinition::from_raw(ptr_class, core);
-        let class_name = ClassDefinition::name(&definition);
+        let class_name = ClassDefinition::name(&definition).into_owned();
         if let Some(existing) = jvm.get_class(&class_name) {
             if existing
                 .definition
@@ -249,7 +249,14 @@ impl LgtJvmSupport {
         }
 
         let previous_link_state = definition.descriptor()?.link_state;
-        definition.prepare_generated(core, jvm, generated_classes).await?;
+        tracing::debug!("Preparing LGT Java class {class_name} at {ptr_class:#x}");
+        definition
+            .prepare_generated(core, jvm, generated_classes)
+            .await
+            .map_err(|error| match error {
+                WieError::JavaException(exception) => WieError::JavaException(exception),
+                error => WieError::FatalError(format!("Preparing LGT Java class {class_name}: {error}")),
+            })?;
         let registered_definition = definition.clone();
         let mut java_class = match jvm.register_class(Box::new(definition), Some(loader)).await {
             Ok(Some(java_class)) => java_class,

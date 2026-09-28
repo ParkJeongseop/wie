@@ -156,7 +156,14 @@ impl Method for JavaMethod {
         let return_type = JavaType::parse(&self.descriptor()).as_method().1.clone();
         let codec = JavaValueCodec::new(&self.core);
         let raw_args = encode_method_arguments(&codec, &args);
-        let result: Result<JavaMethodRunResult> = self.core.clone().run_function(self.target().unwrap(), &raw_args).await;
+        let target = self.target().unwrap();
+        if target == 0 {
+            // an imported method the platform never linked: say which one instead of jumping to 0
+            let name = format!("{}{}", self.name(), self.descriptor());
+            tracing::error!("LGT method {name} has no code (target 0)");
+            return Err(jvm.exception("net/wie/WieError", &format!("{name} has no code (unlinked import)")).await);
+        }
+        let result: Result<JavaMethodRunResult> = self.core.clone().run_function(target, &raw_args).await;
         match result.map(|result| {
             if matches!(return_type, JavaType::Double | JavaType::Long) {
                 codec.decode_wide(result.low, result.high, &return_type)

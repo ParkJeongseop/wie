@@ -255,6 +255,34 @@ Not API-crate surface, but blockers found while running real games:
   `java/lang/Thread` vtable index 13 (메이플스토리2007 — the LGT ABI table only
   pins start=10 and setPriority=14), `org/kwis/msp/lwc/DialogComponent`
   (붕어빵타이쿤3), `wec/SYSTheme` (월드장기체스).
+- **LGT Java vtable tables: Runtime/DataInputStream/Object/String** (2026-09-29):
+  Java-linked LGT titles (`.raptor` lists `cldc wipijava …`) dispatch library
+  methods through compiler-fixed vtable slots (`ldr r3,[obj]; ldr r12,[r3,#4*(i+1)]`),
+  so a class missing from `data/lgt_java_abi.toml` gets only its parent's
+  entries and slots past the end read 0 → `jump to unmapped pc 0x0`. 체스마스터,
+  배틀몬스터, 학교가는길, 당신은골프왕(39 sites), 놈3, 일지매영웅전기 all call
+  `Runtime.getRuntime()` then slot 13, i.e. `gc()`; 배틀몬스터 stores slot-25 of a
+  `DataInputStream` into a `short[]` (`readShort`); 배틀몬스터 `Game.startApp`
+  dispatches Object slot 5 (`notify`); 일지매 hits `String` slot 21 (`indexOf(I)`).
+  The CLDC 1.1 declaration order — with Object overrides folded into their Object
+  slots and word 0 being the compiler's instance-initializer callback — reproduces
+  every previously confirmed index (Object 1/3/4, String 10/11/14/28/33/34,
+  DataInputStream 23, InputStream 10-12/14/15), so the tables now carry the
+  full CLDC order for Object, String, Runtime (11-13; exit=10 left unmapped on
+  purpose) and DataInputStream (23-29). Thread does *not* follow that order
+  (setPriority=14 is confirmed), so its gaps stay open. Result: 체스마스터,
+  배틀몬스터, 일지매영웅전기 boot to their notice screens.
+- **LGT field-import placeholder for wide fields** (2026-09-29): the per-class
+  field import tables carry one entry per 32-bit word, so the high word of a
+  `long`/`double` field is an entry whose name and descriptor pointers are both
+  0 (학교가는길 `an.cB J`). wie read it as a string → `Invalid memory access;
+  address: 0` while linking. `link_field_imports` now gives that entry the low
+  word's index + 1.
+- **Diagnostics** (2026-09-29): the ARM engine logs `jump to unmapped pc … (lr …)`
+  and `memory fault accessing … at pc …`; `JavaMethod::run` refuses target 0
+  with the method name; missing-vtable stubs already named the class/index;
+  `RUST_LOG=wie_lgt=debug` now prints `Registering/Preparing LGT Java class`,
+  `Linking public class … @tables`, and preparation errors carry the class name.
 - **Phone-number DRM** — some games gate on getSystemProperty("PHONENUMBER"
   / "MIN"). wie returns an empty PHONENUMBER, which *passes* the check on
   games that compare the phone number against a value (empty makes the
