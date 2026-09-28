@@ -57,19 +57,22 @@ impl KeyboardEventType {
 #[allow(clippy::upper_case_acronyms)]
 #[allow(non_camel_case_types)]
 pub enum MIDPKeyCode {
-    // keycode is for skvm
+    // SK-VM key codes. Games compare these raw values in keyPressed: across our SKT
+    // library 131/129 (soft keys), 190/191 (call/end) and 194/195 (volume) are what
+    // Chaos블레이드, 닥터k, 더팜1, 미니동화TING, 삼국지연의2, 노리타이쿤 and 엑스맨 test for,
+    // alongside 141..148 for the direction keys and 8 for clear.
     UP = 141, // MIDP Canvas's name
     DOWN = 146,
     LEFT = 142,
     RIGHT = 145,
     FIRE = 148,
-    LEFT_SOFT_KEY = 6,
-    RIGHT_SOFT_KEY = 7,
+    LEFT_SOFT_KEY = 129,
+    RIGHT_SOFT_KEY = 131,
     CLEAR = 8,
-    CALL = 10,
-    HANGUP = -1,
-    VOLUME_UP = 13,
-    VOLUME_DOWN = 14,
+    CALL = 190,
+    HANGUP = 191,
+    VOLUME_UP = 194,
+    VOLUME_DOWN = 195,
 
     KEY_NUM0 = 48,
     KEY_NUM1 = 49,

@@ -136,6 +136,34 @@ complete; audio and device control are weak.
   "Press Any Key", 웰루시아 story text/illustrations, 더팜1 (was stuck on the
   title after the grayscale decode error) now render.
 
+- **MC_grpGetFont sizes** (2026-09-28 sweep, first 40 s of 16 KTF + 72 LGT titles):
+  games ask for size 8 (SMALL) almost exclusively — 1,539 calls across 17 LGT
+  titles and 메이플스토리 도적편 (KTF) — with size 0 (MEDIUM) in 7 LGT titles
+  (데몬헌터, 라그나로크 바이올렛, 라테일, 미니게임천국4, 이터니티) and size 16 once
+  (라테일). Every pixel-verified layout we have (메이플 KTF dialogue box, 이스핀편
+  buttons) is a size-8 request, so SMALL = the 12px cell we render. `get_font`
+  still returns 0 and `get_font_height` ignores the handle, so MEDIUM/LARGE
+  render at 12px too; making the handle carry the size and measuring the
+  medium/large cells on the titles above is the open item.
+- **SK-VM key codes and system properties** (2026-09-28, from the bytecode of the
+  20 SKT titles in our library via javap): games test raw key codes in
+  `keyPressed` — soft keys 129/131 (Chaos블레이드, 닥터k, 더팜1, 미니동화TING,
+  삼국지연의2), call/end 190/191 (닥터k, 미니고치), volume 194/195 (six titles),
+  direction 141/142/145/146, fire 148, clear 8. Our old 6/7/10/-1/13/14 values
+  only appeared as unrelated constants, so `MIDPKeyCode` now uses the SK-VM
+  numbering for soft/call/end/volume too. Properties: every title reads
+  `m.CARRIER`/`m.MIN`/`m.MODEL`/`m.VENDER` (often with `.getBytes()`, which NPEs
+  on a missing key), five read `m.SK_VM` (`equals("10")` or `parseInt`), one
+  `m.COLOR`; `m.MODEL`/`m.SKT_API` are now set. Verified by a soft-key probe
+  on the old vs new codes: 노리타이쿤 opens its build menu and 더팜1 advances
+  its dialogue on the right soft key only with 131, and 엑스맨 backs out of the
+  difficulty screen only with 129. `m.SK_VM` 10 vs 20 showed no observable
+  difference in the first 40 s of any SKT title, so it stays "10". **MIDlet-Key**: 11 titles
+  ship a `SecureUtil` that exits with "인증키가 존재 하지 않습니다" when
+  `getAppProperty("MIDlet-Key")` is empty, but every `.msd` in the library
+  already carries `MIDlet-Key`/`Key2`/`Key4` from the original download, so no
+  key derivation is needed for these packages (미니고치 has neither).
+
 ## MIDP (`wie_midp`, `javax.microedition.*`)
 
 `wie_wipi_java` is built on top of this layer, so its gaps affect WIPI too.

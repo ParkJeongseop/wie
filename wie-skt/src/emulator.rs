@@ -111,9 +111,12 @@ impl SktEmulator {
             ("MIN", "01000000000"),
             ("m.MIN", "01000000000"),
             ("m.COLOR", "7"),
-            ("m.VENDER", "vender"),
+            // games read m.VENDER/m.MODEL with getBytes() and would NPE on a missing key
+            ("m.VENDER", "LG"),
+            ("m.MODEL", "11"),
             ("m.CARRIER", "SKT"),
             ("m.SK_VM", "10"),
+            ("m.SKT_API", "1.2"),
             ("com.xce.wipi.version", ""),
         ];
         let properties = properties
