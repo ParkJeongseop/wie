@@ -6,10 +6,15 @@ mod jvm_implementation;
 pub mod native;
 mod runtime;
 
-use alloc::{boxed::Box, format, string::ToString};
+use alloc::{
+    boxed::Box,
+    format,
+    string::{String as RustString, ToString},
+};
 
-use jvm::{JavaError, Jvm, runtime::JavaLangString};
+use jvm::{ClassInstanceRef, JavaError, Jvm, runtime::JavaLangString};
 use rustjava_runtime::Runtime;
+use rustjava_runtime::classes::java::lang::String;
 
 use wie_backend::System;
 use wie_util::{Result, WieError};
@@ -68,23 +73,38 @@ impl JvmSupport {
     pub async fn to_wie_err(jvm: &Jvm, err: JavaError) -> WieError {
         match err {
             JavaError::JavaException(x) => {
-                let string_writer = jvm.new_class("java/io/StringWriter", "()V", ()).await.unwrap();
-                let print_writer = jvm
-                    .new_class("java/io/PrintWriter", "(Ljava/io/Writer;)V", (string_writer.clone(),))
+                // Name the exception before rendering it: printStackTrace on an app-defined
+                // (AOT) exception class runs guest code, which can fail and hide the cause.
+                let class_name = x.class_definition().name().into_owned();
+                let message: Option<ClassInstanceRef<String>> = jvm
+                    .invoke_virtual(&x, "java/lang/Throwable", "getMessage", "()Ljava/lang/String;", ())
                     .await
-                    .unwrap();
+                    .ok();
+                let message = match message {
+                    Some(message) if !message.is_null() => JavaLangString::to_rust_string(jvm, &message).await.unwrap_or_default(),
+                    _ => RustString::new(),
+                };
+                tracing::error!("Uncaught Java exception {class_name}: {message}");
 
-                let _: () = jvm
-                    .invoke_virtual(&x, "java/lang/Throwable", "printStackTrace", "(Ljava/io/PrintWriter;)V", (print_writer,))
-                    .await
-                    .unwrap();
+                let trace = async {
+                    let string_writer = jvm.new_class("java/io/StringWriter", "()V", ()).await?;
+                    let print_writer = jvm
+                        .new_class("java/io/PrintWriter", "(Ljava/io/Writer;)V", (string_writer.clone(),))
+                        .await?;
+                    let _: () = jvm
+                        .invoke_virtual(&x, "java/lang/Throwable", "printStackTrace", "(Ljava/io/PrintWriter;)V", (print_writer,))
+                        .await?;
+                    let trace = jvm
+                        .invoke_virtual(&string_writer, "java/io/StringWriter", "toString", "()Ljava/lang/String;", [])
+                        .await?;
+                    JavaLangString::to_rust_string(jvm, &trace).await
+                }
+                .await;
 
-                let trace = jvm
-                    .invoke_virtual(&string_writer, "java/io/StringWriter", "toString", "()Ljava/lang/String;", [])
-                    .await
-                    .unwrap();
-
-                WieError::FatalError(format!("\n{}", JavaLangString::to_rust_string(jvm, &trace).await.unwrap()))
+                match trace {
+                    Ok(trace) => WieError::FatalError(format!("\n{trace}")),
+                    Err(_) => WieError::FatalError(format!("{class_name}: {message}")),
+                }
             }
         }
     }

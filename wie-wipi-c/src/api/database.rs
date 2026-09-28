@@ -250,6 +250,20 @@ pub async fn list_databases(context: &mut dyn WIPICContext) -> Result<i32> {
     Ok(available)
 }
 
+/// `MC_dbListDataBases(buf, len)`: NUL-separated database names ending with an empty
+/// name, returning the count. The repository cannot enumerate names yet, so the answer
+/// is the empty list; OpenDatabase still finds existing databases by name.
+pub async fn list_database_names(context: &mut dyn WIPICContext, ptr_buf: WIPICWord, len: i32) -> Result<i32> {
+    tracing::debug!("MC_dbListDataBases({ptr_buf:#x}, {len})");
+
+    if len < 2 {
+        return Ok(-18); // M_E_SHORTBUF
+    }
+    context.write_bytes(ptr_buf, &[0, 0])?;
+
+    Ok(0)
+}
+
 pub async fn seek_record_single(context: &mut dyn WIPICContext, db_id: i32, offset: i32, origin: i32) -> Result<i32> {
     tracing::debug!("MC_dbSeekRecordSingle({db_id:#x}, {offset}, {origin})");
 

@@ -167,7 +167,10 @@ impl Method for JavaMethod {
             Ok(value) => Ok(value),
             Err(WieError::JavaException(ptr_raw)) => Err(JavaError::JavaException(JavaValueCodec::new(&self.core).object_from_raw(ptr_raw))),
             Err(error) => {
-                let message = format!("{error}{}", self.core.dump_reg_stack(0x1000));
+                // name the method so a fault inside a wie-provided native is attributable
+                let name = format!("{}{}", self.name(), self.descriptor());
+                tracing::error!("LGT method {name} failed with args {raw_args:x?}: {error}");
+                let message = format!("{error} in {name}{}", self.core.dump_reg_stack(0x1000));
                 Err(jvm.exception("net/wie/WieError", &message).await)
             }
         }

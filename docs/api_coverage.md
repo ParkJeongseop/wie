@@ -223,6 +223,18 @@ Not API-crate surface, but blockers found while running real games:
   old return-0 stubs it dereferenced NULL. The shared implementation answers
   the specification's vocabulary ("EN/L", "EN/S", "KO", "N123"); input is still
   not composed (HandleInput stays a stub).
+- **LGT WIPI-C 1100 = MC_dbListDataBases(buf, len)** (2026-09-28): 뮤직팩토리 asks
+  for the database name list at start-up. The repository cannot enumerate names
+  yet, so the answer is the empty list (two NULs, count 0) — OpenDatabase still
+  finds existing databases by name. (412 stays upstream's available-storage
+  answer; the two ids are different calls.) 뮤직팩토리 then stops at unmapped
+  db id 410.
+- **LGT Java (Jlet) titles that fault inside their own code** (2026-09-28, with
+  method-named WieErrors): 체스마스터, 레전드오브마스터, 학교가는길 read address 0
+  inside the app's `startApp(String[])`, 배틀몬스터 inside a class `<init>()`.
+  These are AOT-compiled Java methods invoked by wie, so something wie is
+  expected to prepare (a static, a class object, a linked field) is still null —
+  a disassembly task, not a missing API.
 - **LGT stdlib 0x3f9 = vsprintf, 0x426 = malloc, 0x428 = free** (2026-09-28):
   당구마스터2010 calls 0x3f9 with (buffer, "han2bit.Dat", va_list) before
   loading that resource; 리얼사커매니저2009 calls 0x426 with 140/68/17 and
