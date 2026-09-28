@@ -1,8 +1,8 @@
 use alloc::vec;
 
 use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
-use jvm_class_proto::JavaMethodProto;
-use jvm_types::{ClassAccessFlags, MethodAccessFlags};
+use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
+use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
@@ -22,6 +22,7 @@ impl Component {
                 JavaMethodProto::new("showNotify", "(Z)V", Self::show_notify, MethodAccessFlags::PROTECTED),
                 JavaMethodProto::new("configure", "(IIIII)V", Self::configure, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("setFocus", "()V", Self::set_focus, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("hasFocus", "()Z", Self::has_focus, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getHeight", "()I", Self::get_height, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getWidth", "()I", Self::get_width, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getX", "()I", Self::get_x, MethodAccessFlags::PUBLIC),
@@ -29,7 +30,7 @@ impl Component {
                 JavaMethodProto::new("repaint", "()V", Self::repaint, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("repaint", "(IIII)V", Self::repaint_with_area, MethodAccessFlags::PUBLIC),
             ],
-            fields: vec![],
+            fields: vec![JavaFieldProto::new("focused", "Z", FieldAccessFlags::PRIVATE)],
             access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::ABSTRACT,
         }
     }
@@ -48,8 +49,10 @@ impl Component {
         Ok(true)
     }
 
-    async fn focus_notify(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, focus: bool) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.Component::focusNotify({this:?}, {focus:?})");
+    async fn focus_notify(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, focus: bool) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.Component::focusNotify({this:?}, {focus:?})");
+
+        jvm.put_field(&mut this, "focused", "Z", focus).await?;
 
         Ok(())
     }
@@ -67,10 +70,18 @@ impl Component {
         Ok(())
     }
 
-    async fn set_focus(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.Component::setFocus({this:?})");
+    async fn set_focus(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.Component::setFocus({this:?})");
+
+        jvm.put_field(&mut this, "focused", "Z", true).await?;
 
         Ok(())
+    }
+
+    async fn has_focus(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
+        tracing::debug!("org.kwis.msp.lwc.Component::hasFocus({this:?})");
+
+        jvm.get_field(&this, "focused", "Z").await
     }
 
     async fn get_height(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {

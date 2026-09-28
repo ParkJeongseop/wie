@@ -176,11 +176,36 @@ Not API-crate surface, but blockers found while running real games:
   and strcmp (0x409). Implemented; ITEM/SKILL/COMBO/HOTKEY/QUEST/SYSTEM tabs
   all open afterwards.
 - **LGT WIPI-C SVC ids** — mostly mapped now. id 0xcf (graphics block) =
-  MC_grpGetContext (implemented); KTF media slot 15 = MC_mdaSetVolume. id
-  0x384 (900) is polled ~every 64ms with args (0xffff, 0xff, 0xff, ptr);
-  purpose unidentified, stubbed to return 0 (Unk18) so 2008베이징올림픽
-  boots past it. id 0x19c is MC_dbListDatabases (upstream, 2026-09 sync;
-  formerly our return-0 stub) — 슈퍼액션히어로3 boots past it either way.
+  MC_grpGetContext (implemented); KTF media slot 15 = MC_mdaSetVolume.
+  **0x384..0x389 is the MC_util block in specification order** (Htonl, Htons,
+  Ntohl, Ntohs, InetAddrInt, InetAddrStr — the same order as the KTF util
+  table): 슈퍼액션히어로3 passes 0x385 the port 2508 and 블레이드마스터4 passes
+  0x388 a pointer to a dotted-quad string right before its socket connect
+  (2026-09-28). The earlier "0x384 polled every 64ms with 0xffff" stub
+  (2008베이징올림픽) was therefore htonl(0xffff); it now returns the swapped
+  value. 0x389 (InetAddrStr) stays unmapped until a caller shows its shape.
+  id 0x19c is MC_dbListDatabases (upstream, 2026-09 sync; formerly our
+  return-0 stub) — 슈퍼액션히어로3 boots past it either way.
+- **LGT stdlib 0x3f9 = vsprintf, 0x426 = malloc, 0x428 = free** (2026-09-28):
+  당구마스터2010 calls 0x3f9 with (buffer, "han2bit.Dat", va_list) before
+  loading that resource; 리얼사커매니저2009 calls 0x426 with 140/68/17 and
+  keeps the pointer. malloc/free share MC_knlAlloc's heap and size header so
+  blocks can cross between them. **0x415 = memmove, 0x40a = strncmp** (were
+  return-0 stubs): 당구마스터2010 calls 0x415 with (dst, src, 0x17) between
+  its memcpy and memset slots, matching string.h declaration order. (Slot ids
+  cross-checked against wfeature's MIT table; behaviour implemented from our
+  own traces.)
+- **LWC members LGT titles resolve by name** (2026-09-28): `Component.hasFocus`
+  (월드장기체스), `ShellComponent.serviceRepaints` (학교가는길),
+  `TextBoxComponent.<init>(String,int,int)` (붕어빵타이쿤3),
+  `TextComponent.iMode` field (레전드오브마스터),
+  `InputMethodHandler.getCurrentMode`/`hideSymbolCard` (서든어택포켓,
+  훼밀리마트타이쿤), plus `TextComponent.maxLength`/`m_td` (the text as a
+  char[] — setString/getString now store and read it). Focus and input mode
+  are tracked in fields; the rest are no-op stubs. Still open:
+  `java/lang/Thread` vtable index 13 (메이플스토리2007 — the LGT ABI table only
+  pins start=10 and setPriority=14), `org/kwis/msp/lwc/DialogComponent`
+  (붕어빵타이쿤3), `wec/SYSTheme` (월드장기체스).
 - **Phone-number DRM** — some games gate on getSystemProperty("PHONENUMBER"
   / "MIN"). wie returns an empty PHONENUMBER, which *passes* the check on
   games that compare the phone number against a value (empty makes the

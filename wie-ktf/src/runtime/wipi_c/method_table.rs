@@ -171,11 +171,11 @@ pub fn get_graphics_interface(core: &mut ArmCore) -> Result<WIPICGraphicsInterfa
 
 pub fn get_util_method_table() -> Vec<WIPICMethodBody> {
     vec![
-        gen_stub(0, "MC_utilHtonl"),
+        util::htonl.into_body(),
         util::htons.into_body(),
-        gen_stub(2, "MC_utilNtohl"),
-        gen_stub(3, "MC_utilNtohs"),
-        gen_stub(4, "MC_utilInetAddrInt"),
+        util::ntohl.into_body(),
+        util::ntohs.into_body(),
+        util::inet_addr_int.into_body(),
         gen_stub(5, "MC_utilInetAddrStr"),
         gen_stub(6, "OEMC_utilHashbySHA1"),
     ]

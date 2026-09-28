@@ -4,7 +4,9 @@ use core::cmp::min;
 
 use wie_backend::System;
 use wie_core_arm::{Allocator, ArmCore, EmulatedFunction, ResultWriter, SvcId, stdlib};
-use wie_util::{ByteWrite, Result, WieError, read_generic, read_null_terminated_string_bytes, write_generic, write_null_terminated_string_bytes};
+use wie_util::{
+    ByteRead, ByteWrite, Result, WieError, read_generic, read_null_terminated_string_bytes, write_generic, write_null_terminated_string_bytes,
+};
 use wie_wipi_c::api::kernel;
 
 use crate::runtime::{SVC_CATEGORY_STDLIB, svc_ids::StdlibSvcId};
@@ -16,6 +18,9 @@ pub fn register_stdlib_svc_handler(core: &mut ArmCore, system: &System) -> Resul
         match id.0 {
             x if x == StdlibSvcId::Unk2 as u32 => EmulatedFunction::call(&unk2, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Sprintf as u32 => EmulatedFunction::call(&sprintf, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Vsprintf as u32 => EmulatedFunction::call(&vsprintf, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Malloc as u32 => EmulatedFunction::call(&malloc, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Free as u32 => EmulatedFunction::call(&free, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Atoi as u32 => EmulatedFunction::call(&atoi, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Rand as u32 => EmulatedFunction::call(&rand, core, system).await?.write(core, lr),
             x if x == StdlibSvcId::Srand as u32 => EmulatedFunction::call(&srand, core, system).await?.write(core, lr),
@@ -24,7 +29,7 @@ pub fn register_stdlib_svc_handler(core: &mut ArmCore, system: &System) -> Resul
             x if x == StdlibSvcId::Strcat as u32 => EmulatedFunction::call(&strcat, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Strncat as u32 => EmulatedFunction::call(&strncat, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Strcmp as u32 => EmulatedFunction::call(&strcmp, core, &mut ()).await?.write(core, lr),
-            x if x == StdlibSvcId::Unk4 as u32 => EmulatedFunction::call(&unk4, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Strncmp as u32 => EmulatedFunction::call(&strncmp, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Strstr as u32 => EmulatedFunction::call(&strstr, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Strlen as u32 => EmulatedFunction::call(&stdlib::strlen, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Memcpy as u32 => EmulatedFunction::call(&stdlib::memcpy, core, &mut ()).await?.write(core, lr),
@@ -33,7 +38,7 @@ pub fn register_stdlib_svc_handler(core: &mut ArmCore, system: &System) -> Resul
             x if x == StdlibSvcId::Localtime as u32 => EmulatedFunction::call(&localtime, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Unk3 as u32 => EmulatedFunction::call(&unk3, core, &mut ()).await?.write(core, lr),
             x if x == StdlibSvcId::Sprintf as u32 => EmulatedFunction::call(&sprintf, core, &mut ()).await?.write(core, lr),
-            x if x == StdlibSvcId::Unk7 as u32 => EmulatedFunction::call(&unk7, core, &mut ()).await?.write(core, lr),
+            x if x == StdlibSvcId::Memmove as u32 => EmulatedFunction::call(&memmove, core, &mut ()).await?.write(core, lr),
             _ => Err(WieError::FatalError(format!("Unknown lgt stdlib import: {:#x}", id.0))),
         }
     }
@@ -67,6 +72,41 @@ async fn sprintf(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_format: u32, 
     write_null_terminated_string_bytes(core, ptr_dst, &result)?;
 
     Ok(result.len() as u32)
+}
+
+async fn vsprintf(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_format: u32, ptr_args: u32) -> Result<u32> {
+    tracing::debug!("vsprintf({ptr_dst:#x}, {ptr_format:#x}, {ptr_args:#x})");
+
+    let format = read_null_terminated_string_bytes(core, ptr_format)?;
+    // the va_list is the caller's argument words; conversions past its end read junk like on hardware
+    let args = (0..6)
+        .map(|i| read_generic(core, ptr_args + i * 4))
+        .collect::<Result<alloc::vec::Vec<u32>>>()?;
+    let result = kernel::sprintf(core, &format, &args)?;
+    write_null_terminated_string_bytes(core, ptr_dst, &result)?;
+
+    Ok(result.len() as u32)
+}
+
+// malloc/free share MC_knlAlloc's heap and header (the block size stored in the word
+// before the data), so a block from either can be released through the other.
+async fn malloc(core: &mut ArmCore, _: &mut (), size: u32) -> Result<u32> {
+    tracing::debug!("malloc({size:#x})");
+
+    let address = Allocator::alloc(core, size + 4)?;
+    write_generic(core, address, size)?;
+
+    Ok(address + 4)
+}
+
+async fn free(core: &mut ArmCore, _: &mut (), ptr: u32) -> Result<()> {
+    tracing::debug!("free({ptr:#x})");
+
+    if ptr == 0 {
+        return Ok(());
+    }
+    let size: u32 = read_generic(core, ptr - 4)?;
+    Allocator::free(core, ptr - 4, size + 4)
 }
 
 async fn strncpy(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32, size: u32) -> Result<()> {
@@ -176,10 +216,15 @@ async fn unk2(_core: &mut ArmCore, _: &mut (), a0: u32) -> Result<()> {
 
 // unknown import; observed with two nearby pointers as arguments
 // (memmove/realloc-shaped). Returning 0 lets games proceed further.
-async fn unk7(_: &mut ArmCore, _: &mut (), a0: u32, a1: u32, a2: u32) -> Result<u32> {
-    tracing::warn!("stub lgt stdlib unk7({a0:#x}, {a1:#x}, {a2:#x})");
+async fn memmove(core: &mut ArmCore, _: &mut (), ptr_dst: u32, ptr_src: u32, len: u32) -> Result<u32> {
+    tracing::debug!("memmove({ptr_dst:#x}, {ptr_src:#x}, {len:#x})");
 
-    Ok(0)
+    // staged through a host buffer, so overlapping ranges copy correctly
+    let mut bytes = alloc::vec![0u8; len as usize];
+    core.read_bytes(ptr_src, &mut bytes)?;
+    core.write_bytes(ptr_dst, &bytes)?;
+
+    Ok(ptr_dst)
 }
 
 async fn unk3(core: &mut ArmCore, _: &mut (), a0: u32) -> Result<()> {
@@ -190,10 +235,20 @@ async fn unk3(core: &mut ArmCore, _: &mut (), a0: u32) -> Result<()> {
     Ok(())
 }
 
-async fn unk4(_core: &mut ArmCore, _: &mut (), a0: u32, a1: u32, a2: u32, a3: u32) -> Result<()> {
-    tracing::warn!("unk4({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
+async fn strncmp(core: &mut ArmCore, _: &mut (), ptr_str1: u32, ptr_str2: u32, len: u32) -> Result<u32> {
+    tracing::debug!("strncmp({ptr_str1:#x}, {ptr_str2:#x}, {len:#x})");
 
-    Ok(())
+    let str1 = read_null_terminated_string_bytes(core, ptr_str1)?;
+    let str2 = read_null_terminated_string_bytes(core, ptr_str2)?;
+    let len = len as usize;
+    let a = &str1[..str1.len().min(len)];
+    let b = &str2[..str2.len().min(len)];
+
+    Ok(match a.cmp(b) {
+        core::cmp::Ordering::Less => u32::MAX,
+        core::cmp::Ordering::Equal => 0,
+        core::cmp::Ordering::Greater => 1,
+    })
 }
 
 async fn strstr(core: &mut ArmCore, _: &mut (), ptr_haystack: u32, ptr_needle: u32) -> Result<u32> {

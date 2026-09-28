@@ -13,7 +13,7 @@ use wie_jvm_support::JvmSupport;
 use wie_util::{Result, read_generic, write_generic, write_null_terminated_string_bytes};
 use wie_wipi_c::{
     MethodImpl, WIPICContext, WIPICMethodBody, WIPICResult,
-    api::{database, graphics as shared_graphics, im, kernel, media, misc, net},
+    api::{database, graphics as shared_graphics, im, kernel, media, misc, net, util},
 };
 
 use context::LgtWIPICContext;
@@ -150,7 +150,11 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::GetMuteState => media::get_mute_state.into_body(),
         WIPICSvcId::BackLight => misc::back_light.into_body(),
         WIPICSvcId::Unk16 => unk16.into_body(),
-        WIPICSvcId::Unk18 => unk18.into_body(),
+        WIPICSvcId::Htonl => util::htonl.into_body(),
+        WIPICSvcId::Htons => util::htons.into_body(),
+        WIPICSvcId::Ntohl => util::ntohl.into_body(),
+        WIPICSvcId::Ntohs => util::ntohs.into_body(),
+        WIPICSvcId::InetAddrInt => util::inet_addr_int.into_body(),
     };
 
     EmulatedFunction::call(
@@ -414,12 +418,5 @@ async fn unk16(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u
 
     // misc
 
-    Ok(0)
-}
-
-// SVC 0x384: polled roughly every 64ms with args (0xffff, 0xff, 0xff, ptr).
-// Purpose not identified; returning 0 lets 2008베이징올림픽 boot past it.
-async fn unk18(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub lgt WIPIC unk18/0x384({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
     Ok(0)
 }

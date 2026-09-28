@@ -1,8 +1,8 @@
 use alloc::vec;
 
 use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
-use jvm_class_proto::JavaMethodProto;
-use jvm_types::{ClassAccessFlags, MethodAccessFlags};
+use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
+use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
@@ -18,8 +18,10 @@ impl InputMethodHandler {
             methods: vec![
                 JavaMethodProto::new("<init>", "(I)V", Self::init, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("setCurrentMode", "(I)Z", Self::set_current_mode, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("getCurrentMode", "()I", Self::get_current_mode, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("hideSymbolCard", "()V", Self::hide_symbol_card, MethodAccessFlags::PUBLIC),
             ],
-            fields: vec![],
+            fields: vec![JavaFieldProto::new("currentMode", "I", FieldAccessFlags::PRIVATE)],
             access_flags: ClassAccessFlags::PUBLIC,
         }
     }
@@ -32,9 +34,23 @@ impl InputMethodHandler {
         Ok(())
     }
 
-    async fn set_current_mode(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, mode: i32) -> JvmResult<bool> {
-        tracing::warn!("stub org.kwis.msp.lcdui.InputMethodHandler::setCurrentMode({this:?}, {mode})");
+    async fn set_current_mode(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, mode: i32) -> JvmResult<bool> {
+        tracing::debug!("org.kwis.msp.lcdui.InputMethodHandler::setCurrentMode({this:?}, {mode})");
+
+        jvm.put_field(&mut this, "currentMode", "I", mode).await?;
 
         Ok(true)
+    }
+
+    async fn get_current_mode(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("org.kwis.msp.lcdui.InputMethodHandler::getCurrentMode({this:?})");
+
+        jvm.get_field(&this, "currentMode", "I").await
+    }
+
+    async fn hide_symbol_card(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::warn!("stub org.kwis.msp.lcdui.InputMethodHandler::hideSymbolCard({this:?})");
+
+        Ok(())
     }
 }
