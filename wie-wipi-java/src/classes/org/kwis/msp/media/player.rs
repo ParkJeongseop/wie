@@ -157,9 +157,9 @@ impl Player {
         let player = Clip::player(jvm, &clip).await?;
 
         if !player.is_null() {
-            let _: () = jvm
-                .invoke_virtual(&player, "javax/microedition/media/Player", "start", "(Z)V", (false,))
-                .await?;
+            // start(Z) is SmafPlayer's own entry point (see play_clip); the MIDP Player
+            // interface only declares start()V, so looking it up there fails.
+            let _: () = jvm.invoke_virtual(&player, "net/wie/SmafPlayer", "start", "(Z)V", (false,)).await?;
 
             return Ok(true);
         }
