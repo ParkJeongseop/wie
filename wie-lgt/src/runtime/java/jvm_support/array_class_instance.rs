@@ -86,6 +86,14 @@ impl JavaArrayClassInstance {
 #[async_trait::async_trait]
 impl ClassInstance for JavaArrayClassInstance {
     fn destroy(self: Box<Self>) {
+        // See JavaClassInstance::destroy: an array whose header no longer reads cannot be sized.
+        if !JavaClassInstance::is_live_instance(&self.core, self.class_instance.ptr_raw) {
+            tracing::error!(
+                "Not freeing LGT array {:#x}: its class header no longer reads",
+                self.class_instance.ptr_raw
+            );
+            return;
+        }
         let storage_size = self.storage_size();
         self.class_instance.clone().destroy_with_storage(storage_size).unwrap();
     }

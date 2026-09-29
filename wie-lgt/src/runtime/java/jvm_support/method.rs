@@ -177,6 +177,13 @@ impl Method for JavaMethod {
                 // name the method so a fault inside a wie-provided native is attributable
                 let name = format!("{}{}", self.name(), self.descriptor());
                 tracing::error!("LGT method {name} failed with args {raw_args:x?}: {error}");
+                if matches!(error, WieError::InvalidMemoryAccess(_)) {
+                    // the engine returns without restoring registers, so r0 is still the receiver
+                    // of the call that faulted (the usual case: a vtable slot past the end)
+                    if let Ok(receiver) = self.core.read_param(0) {
+                        tracing::error!("  r0 at fault: {}", crate::runtime::java::describe_guest_object(&self.core, receiver));
+                    }
+                }
                 let message = format!("{error} in {name}{}", self.core.dump_reg_stack(0x1000));
                 Err(jvm.exception("net/wie/WieError", &message).await)
             }

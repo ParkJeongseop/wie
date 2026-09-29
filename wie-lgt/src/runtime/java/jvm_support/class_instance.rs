@@ -7,7 +7,7 @@ use core::{
 
 use jvm::{ClassDefinition, ClassInstance, Field, JavaType, JavaValue, Result as JvmResult};
 use jvm_types::FieldAccessFlags;
-use wipi_types::lgt::java::LgtJavaClassInstance as RawJavaClassInstance;
+use wipi_types::lgt::java::{LgtJavaClass as RawJavaClass, LgtJavaClassInstance as RawJavaClassInstance};
 
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::native::NativeJavaValueCodec;
@@ -49,6 +49,25 @@ impl JavaClassInstance {
         Ok(Self::from_raw(ptr_raw, core))
     }
 
+    /// Whether `ptr_instance` points at an allocated object whose header chain is intact
+    /// (instance -> dispatch table -> class record whose vtable pointer is that dispatch table).
+    pub fn is_live_instance(core: &ArmCore, ptr_instance: u32) -> bool {
+        if ptr_instance == 0 || !Allocator::is_allocated(core, ptr_instance, size_of::<RawJavaClassInstance>() as u32).unwrap_or(false) {
+            return false;
+        }
+        let Ok(instance): Result<RawJavaClassInstance> = read_generic(core, ptr_instance) else {
+            return false;
+        };
+        let Ok(ptr_class): Result<u32> = read_generic(core, instance.ptr_dispatch_table) else {
+            return false;
+        };
+        let Ok(class): Result<RawJavaClass> = read_generic(core, ptr_class) else {
+            return false;
+        };
+
+        class.unk1 == instance.ptr_dispatch_table
+    }
+
     pub fn destroy_with_storage(mut self, storage_size: usize) -> Result<()> {
         let ptr_fields = self.ptr_fields()?;
         Allocator::free(&mut self.core, ptr_fields, storage_size.max(size_of::<LgtJvmWord>()) as u32)?;
@@ -82,6 +101,12 @@ impl JavaClassInstance {
 #[async_trait::async_trait]
 impl ClassInstance for JavaClassInstance {
     fn destroy(self: Box<Self>) {
+        // The collector can only free what it can size. An object whose header was overwritten by
+        // guest code is leaked instead of taking the whole emulator down mid-collection.
+        if !Self::is_live_instance(&self.core, self.ptr_raw) {
+            tracing::error!("Not freeing LGT object {:#x}: its class header no longer reads", self.ptr_raw);
+            return;
+        }
         let storage_size = self.storage_size().unwrap();
         (*self).destroy_with_storage(storage_size).unwrap();
     }
@@ -125,6 +150,21 @@ impl ClassInstance for JavaClassInstance {
         let address = self.field_address(word_index).unwrap();
         let low = read_generic(&self.core, address).unwrap();
         let codec = JavaValueCodec::new(&self.core);
+
+        // Guest code owns these words and the reference layout is inferred (field tables or the
+        // compiler's reference bitmap), so a word the collector is told is a reference can hold
+        // something else. Decoding it would panic in the middle of a collection; report it and
+        // treat it as null instead.
+        if matches!(field_type, JavaType::Class(_) | JavaType::Array(_)) && low != 0 && !Self::is_live_instance(&self.core, low) {
+            let holder = self.class().map(|class| ClassDefinition::name(&class).into_owned()).unwrap_or_default();
+            tracing::error!(
+                "{holder} {:#x} field {}{} (word {word_index}) holds {low:#x}, which is not a live object; reading it as null",
+                self.ptr_raw,
+                field.name(),
+                field.descriptor()
+            );
+            return Ok(JavaValue::Object(None));
+        }
 
         Ok(if matches!(field_type, JavaType::Long | JavaType::Double) {
             let high = read_generic(&self.core, address + 4).unwrap();

@@ -54,6 +54,7 @@ pub fn get_java_interface_method(core: &mut ArmCore, function_index: u32) -> Res
         0xe1 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetStringClass)?,
         0xe2 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetStringArrayClass)?,
         0xfa => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StoreReferenceArrayUnchecked)?,
+        0xfd => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StoreLongArray)?,
         _ => return Err(WieError::FatalError(format!("Unknown lgt java import: {function_index:#x}"))),
     })
 }
@@ -98,6 +99,7 @@ async fn handle_java_system_svc(core: &mut ArmCore, (jvm, ptr_jar_path): &mut (J
             JavaSystemSvcId::StoreReferenceArrayUnchecked => EmulatedFunction::call(&java_store_reference_array_unchecked, core, &mut ())
                 .await?
                 .write(core, lr),
+            JavaSystemSvcId::StoreLongArray => EmulatedFunction::call(&java_store_long_array, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::LinkPublicClass => EmulatedFunction::call(&java_link_public_class, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::IsClassAssignable => java_is_class_assignable(core, jvm, core.read_param(0)?, core.read_param(1)?, core.read_param(2)?)
                 .await?
@@ -235,7 +237,12 @@ async fn java_raise_array_index_exception(_core: &mut ArmCore, jvm: &mut Jvm, in
     Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)))
 }
 
-async fn java_raise_arithmetic_exception(_core: &mut ArmCore, jvm: &mut Jvm) -> Result<()> {
+async fn java_raise_arithmetic_exception(core: &mut ArmCore, jvm: &mut Jvm) -> Result<()> {
+    // Guest code raises this itself after testing a divisor, so the caller address is the only
+    // pointer back to where the zero came from.
+    if let Ok((_, lr)) = core.read_pc_lr() {
+        tracing::debug!("ArithmeticException raised by guest code at lr {lr:#x}");
+    }
     let JavaError::JavaException(exception) = jvm.exception("java/lang/ArithmeticException", "/ by zero").await;
     Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)))
 }
@@ -243,6 +250,30 @@ async fn java_raise_arithmetic_exception(_core: &mut ArmCore, jvm: &mut Jvm) -> 
 async fn java_store_reference_array_unchecked(core: &mut ArmCore, _: &mut (), ptr_array: u32, index: u32, ptr_value: u32) -> Result<()> {
     let ptr_fields: u32 = read_generic(core, ptr_array + 2 * size_of::<u32>() as u32)?;
     write_generic(core, ptr_fields + (index + 1) * size_of::<u32>() as u32, ptr_value)
+}
+
+/// `array[index] = value` for a `long[]`. The compiler emits this helper instead of inlining the
+/// two-word store and passes the value high word first: LGT 슈퍼액션히어로 widens an int with
+/// `asrs r5, r4, #31` and hands `r5` in r2 and `r4` in r3, and stores `System.currentTimeMillis()`'s
+/// r0/r1 result as r3/r2.
+async fn java_store_long_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32, value_high: u32, value_low: u32) -> Result<()> {
+    if ptr_array == 0 {
+        let JavaError::JavaException(exception) = jvm.exception("java/lang/NullPointerException", "long array store").await;
+        return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
+    }
+    let mut array = LgtJvmSupport::class_instance_from_raw(core, ptr_array);
+    let length = jvm
+        .array_length(&array)
+        .await
+        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
+    if index as usize >= length {
+        let JavaError::JavaException(exception) = jvm.exception("java/lang/ArrayIndexOutOfBoundsException", &index.to_string()).await;
+        return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
+    }
+    let value = (((value_high as u64) << 32) | value_low as u64) as i64;
+    jvm.store_array(&mut array, index as usize, [jvm::JavaValue::Long(value)])
+        .await
+        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))
 }
 
 async fn java_store_reference_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32, ptr_value: u32) -> Result<()> {
@@ -500,6 +531,17 @@ fn read_method_name_and_descriptor(core: &ArmCore, table: u32, index: u16, class
         .ok_or_else(|| WieError::FatalError(format!("Null method import entry {index} while linking {class_name}")))
 }
 
+fn log_imported_members(core: &ArmCore, class_name: &str, kind: &str, table: u32, offset: u16, count: u16) -> Result<()> {
+    for index in offset..offset + count {
+        match read_member_name_and_descriptor(core, table, index)? {
+            Some((name, descriptor)) => tracing::debug!("Imported {kind} {class_name}.{name}{descriptor}"),
+            None => tracing::debug!("Imported {kind} {class_name} (wide-field placeholder)"),
+        }
+    }
+
+    Ok(())
+}
+
 /// Links one field-import range, giving a wide-field placeholder the word after its low word.
 fn link_field_imports(
     core: &mut ArmCore,
@@ -684,6 +726,40 @@ async fn java_link_imported_classes(
             link.non_virtual_method_offset,
             link.non_virtual_method_count
         );
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            log_imported_members(
+                core,
+                &class_name,
+                "instance field",
+                instance_field_imports,
+                link.instance_field_offset,
+                link.instance_field_count,
+            )?;
+            log_imported_members(
+                core,
+                &class_name,
+                "static field",
+                static_field_imports,
+                link.static_field_offset,
+                link.static_field_count,
+            )?;
+            log_imported_members(
+                core,
+                &class_name,
+                "virtual method",
+                virtual_method_imports,
+                link.virtual_method_offset,
+                link.virtual_method_count,
+            )?;
+            log_imported_members(
+                core,
+                &class_name,
+                "interface method",
+                interface_method_imports,
+                link.interface_method_offset,
+                link.interface_method_count,
+            )?;
+        }
         for local_index in 2..link.non_virtual_method_count {
             let member_index = link.non_virtual_method_offset + local_index;
             let (name, descriptor) = read_method_name_and_descriptor(core, non_virtual_method_imports, member_index, &class_name)?;

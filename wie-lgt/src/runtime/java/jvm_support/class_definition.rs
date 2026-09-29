@@ -871,23 +871,7 @@ impl ClassDefinition for JavaClassDefinition {
                 self.ptr_static_fields().unwrap() + word_index * size_of::<LgtJvmWord>() as u32,
             )
             .unwrap();
-            if ptr_instance == 0 {
-                continue;
-            }
-            if !Allocator::is_allocated(&self.core, ptr_instance, size_of::<RawJavaClassInstance>() as u32).unwrap() {
-                continue;
-            }
-
-            let Ok(instance): Result<RawJavaClassInstance> = read_generic(&self.core, ptr_instance) else {
-                continue;
-            };
-            let Ok(ptr_class): Result<u32> = read_generic(&self.core, instance.ptr_dispatch_table) else {
-                continue;
-            };
-            let Ok(class): Result<RawJavaClass> = read_generic(&self.core, ptr_class) else {
-                continue;
-            };
-            if class.unk1 == instance.ptr_dispatch_table {
+            if JavaClassInstance::is_live_instance(&self.core, ptr_instance) {
                 fields.push(Box::new(JavaStaticReferenceField {
                     ptr_class: self.ptr_raw,
                     word_index,

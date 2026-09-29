@@ -32,13 +32,20 @@ field = [
 ]
 
 [[class]]
+# read x3, available and close are confirmed; the CLDC declaration order (read, read, read, skip,
+# available, close, mark, reset, markSupported) fills the gaps. skip(J)=13 is backed by LGT
+# 배틀몬스터, whose loader thread calls slot 13 on a ByteArrayInputStream.
 name = "java/io/InputStream"
 vtable = [
     { name = "read", descriptor = "()I", index = 10 },
     { name = "read", descriptor = "([B)I", index = 11 },
     { name = "read", descriptor = "([BII)I", index = 12 },
+    { name = "skip", descriptor = "(J)J", index = 13 },
     { name = "available", descriptor = "()I", index = 14 },
     { name = "close", descriptor = "()V", index = 15 },
+    { name = "mark", descriptor = "(I)V", index = 16 },
+    { name = "reset", descriptor = "()V", index = 17 },
+    { name = "markSupported", descriptor = "()Z", index = 18 },
 ]
 
 [[class]]
@@ -50,11 +57,15 @@ vtable = [
 
 [[class]]
 # readByte is confirmed; readShort is backed by a call site that stores the result into a short[]
-# (LGT 배틀몬스터). The remaining entries follow the CLDC declaration order between and after those
+# (LGT 배틀몬스터), readFully([B)=19 by 스파이더맨3 and readFully([BII)=20 by 서든어택포켓. The remaining entries follow the CLDC declaration order between and after those
 # anchors (readFully, readFully, skipBytes, readBoolean, readByte, readUnsignedByte, readShort,
 # readUnsignedShort, readChar, readInt, readLong, readUTF starting at index 19).
 name = "java/io/DataInputStream"
 vtable = [
+    { name = "readFully", descriptor = "([B)V", index = 19 },
+    { name = "readFully", descriptor = "([BII)V", index = 20 },
+    { name = "skipBytes", descriptor = "(I)I", index = 21 },
+    { name = "readBoolean", descriptor = "()Z", index = 22 },
     { name = "readByte", descriptor = "()B", index = 23 },
     { name = "readUnsignedByte", descriptor = "()I", index = 24 },
     { name = "readShort", descriptor = "()S", index = 25 },
@@ -113,10 +124,19 @@ vtable = [
 ]
 
 [[class]]
+# start=10 and setPriority=14 are confirmed. They match the CLDC 1.1 declaration order
+# (start, run, interrupt, isAlive, setPriority, getPriority, join, getName; toString folds into
+# Object's slot), which also names the slot-13 call LGT 메이플스토리2007 makes: isAlive().
 name = "java/lang/Thread"
 vtable = [
     { name = "start", descriptor = "()V", index = 10 },
+    { name = "run", descriptor = "()V", index = 11 },
+    { name = "interrupt", descriptor = "()V", index = 12 },
+    { name = "isAlive", descriptor = "()Z", index = 13 },
     { name = "setPriority", descriptor = "(I)V", index = 14 },
+    { name = "getPriority", descriptor = "()I", index = 15 },
+    { name = "join", descriptor = "()V", index = 16 },
+    { name = "getName", descriptor = "()Ljava/lang/String;", index = 17 },
 ]
 
 [[class]]
@@ -138,6 +158,14 @@ vtable = [
     { name = "elementAt", descriptor = "(I)Ljava/lang/Object;", index = 23 },
     { name = "removeElementAt", descriptor = "(I)V", index = 27 },
     { name = "insertElementAt", descriptor = "(Ljava/lang/Object;I)V", index = 28 },
+]
+
+[[class]]
+# get(int) is confirmed by LGT 붕어빵타이쿤3, which fills an int[4] from slot 19 with the
+# field ids 1, 2, 5, 11 (YEAR, MONTH, DATE, HOUR_OF_DAY). The other Calendar slots are unknown.
+name = "java/util/Calendar"
+vtable = [
+    { name = "get", descriptor = "(I)I", index = 19 },
 ]
 
 [[class]]

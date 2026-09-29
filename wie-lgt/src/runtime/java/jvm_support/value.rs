@@ -21,7 +21,12 @@ impl JavaValueCodec {
 impl NativeJavaValueCodec for JavaValueCodec {
     fn object_from_raw(&self, raw: u32) -> Box<dyn ClassInstance> {
         let instance = JavaClassInstance::from_raw(raw, &self.core);
-        if ClassDefinition::name(&instance.class().unwrap()).starts_with('[') {
+        let class = instance.class().unwrap_or_else(|error| {
+            // A reference whose header no longer reads is almost always one the collector already
+            // freed; name the pointer so the matching "Destroying" trace line can be found.
+            panic!("LGT object reference {raw:#x} has no readable class header: {error}")
+        });
+        if ClassDefinition::name(&class).starts_with('[') {
             Box::new(JavaArrayClassInstance::from_raw(raw, &self.core))
         } else {
             Box::new(instance)

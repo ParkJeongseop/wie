@@ -84,12 +84,13 @@ defined at all (measured against WIPI Java API 1.1.1).
 
 - **org.kwis.msp.lwc** (16): ButtonComponent, ChangeListener,
   CheckboxComponent, CheckboxGroup, Command, CommandBarComponent,
-  CommandListener, DateFieldComponent, Decorator, DialogComponent,
+  CommandListener, DateFieldComponent, Decorator,
   ImageComponent, ListComponent, ListItemComponent, ProgressComponent,
   ProxyCard, ScrollbarComponent, TickerComponent. (Defined now:
   GrabKeyListener, ActionListener, FormComponent (extends
   ContainerComponent), LabelComponent (extends Component) — the last two
-  unblocked KTF boot crashes.)
+  unblocked KTF boot crashes — and DialogComponent, which unblocked three
+  LGT links.)
 - **org.kwis.msp.lcdui** (3): DisplayProxy, JletStateChangeException,
   SystemEventListener. (InputMethodListener defined — interface
   `void notifyTextChanged(char[],int,int)`; unblocked KTF boot crashes.)
@@ -269,9 +270,72 @@ Not API-crate surface, but blockers found while running real games:
   every previously confirmed index (Object 1/3/4, String 10/11/14/28/33/34,
   DataInputStream 23, InputStream 10-12/14/15), so the tables now carry the
   full CLDC order for Object, String, Runtime (11-13; exit=10 left unmapped on
-  purpose) and DataInputStream (23-29). Thread does *not* follow that order
-  (setPriority=14 is confirmed), so its gaps stay open. Result: 체스마스터,
-  배틀몬스터, 일지매영웅전기 boot to their notice screens.
+  purpose) and DataInputStream (23-29). Thread follows it too once CLDC 1.1's
+  `interrupt()` is counted (start 10, run 11, interrupt 12, isAlive 13,
+  setPriority 14, getPriority 15, join 16, getName 17 — both confirmed indices
+  land), which names 메이플스토리2007's slot-13 call as `isAlive()`. Result:
+  체스마스터, 배틀몬스터, 일지매영웅전기 boot to their notice screens.
+- **`org.kwis.msp.lwc.DialogComponent`** (2026-09-29): defined per the 1.1.1
+  field list (extends ShellComponent; TYPE_NONE/OK/OK_CANCEL = 0/1/2,
+  DLG_TIMEOUT/OK/CANCEL = 10/11/12, OK_BUTTON/CANCEL_BUTTON = 20/21,
+  TIMEOUT_INFINITE = -1; a button-less dialog's documented display time is 3 s).
+  당신은골프왕, 붕어빵타이쿤3 and 슈퍼액션히어로 all failed to link on the missing
+  class; each imports only the 3-argument constructor, `doModal` and (two of them)
+  `setButtonString`, and none reaches `doModal` in a 40-second boot. LWC does not
+  paint, so `doModal` cannot show the dialog: it answers DLG_TIMEOUT for
+  TYPE_NONE and DLG_OK otherwise, logging the title as a stub.
+- **LGT Java import 0x64/0xfd = long-array store** (2026-09-29): `(long[] a, int
+  i, int hi, int lo)`; 슈퍼액션히어로 widens an int with `asrs r5, r4, #31` and
+  passes `r5` in r2, and stores `System.currentTimeMillis()`'s r0/r1 as r3/r2.
+  Other unmapped entries of the same table seen in LGT binaries (not yet
+  reached at runtime): 0x26 (7 titles), 0x38 (7), 0x40 (16), 0x5b (4 — the same
+  four as 0xfd; returns a 64-bit value from `(r0, r1 & 0xff)`), 0x64 (16).
+- **`java.util.Calendar.get(int)` = slot 19** (2026-09-29): 붕어빵타이쿤3 fills an
+  `int[4]` from slot 19 with 1, 2, 5, 11 (YEAR, MONTH, DATE, HOUR_OF_DAY); the
+  missing slot read the next heap word (string bytes "dgor") as a target. Only
+  this slot is pinned. The title now runs past its notice to the Com2uS logo and
+  its "속도 체크 중" screen.
+- **InputStream / DataInputStream gaps** (2026-09-29): InputStream now carries
+  the full CLDC order (skip(J)=13 backed by 배틀몬스터's loader thread; mark,
+  reset, markSupported 16-18), and DataInputStream 19-22 (readFully x2,
+  skipBytes, readBoolean — readFully([B)=19 by 스파이더맨3, readFully([BII)=20 by
+  서든어택포켓). RustJava already implements all of them. 스파이더맨3 now plays
+  through its title, difficulty select and first stage; 레전드오브마스터 and
+  배틀몬스터 run the full 40 seconds.
+- **`org.kwis.msp.media.Player.resume(Clip)`** looked up `start(Z)V` on the MIDP
+  `Player` interface (which only has `start()V`) instead of `net/wie/SmafPlayer`,
+  so 배틀몬스터 died on its first resumed clip.
+- **LGT collector robustness + two root-set gaps** (2026-09-29): with keys
+  delivered, 일지매영웅전기 and 스파이더맨3 panicked inside `collect_garbage` and
+  놈3 did so in 2 of 3 runs (a preemption-timing shift from the changes above
+  exposed it). A reference-typed instance word that does not point at a live
+  object (header chain instance -> dispatch table -> class record whose vtable is
+  that table) is now logged with its holder and read as null, and an object
+  whose header no longer reads is leaked with an error instead of being sized
+  and freed. That turns the panics into log lines (일지매 9 -> 28 frames) but the
+  corruption behind them remains:
+  1. **Thread subclass layout overlap.** LGT's `java/lang/Thread` has two
+     instance words — 스파이더맨3's `c extends Thread` puts its first own
+     reference at word 2 (bitmap `0x3f 0xc0`, MSB-first: words 2-9). wie's
+     RustJava Thread occupies words 0-8 (id J, target, name, priority,
+     interrupted, started, alive, daemon), so the app's fields and wie's thread
+     state overwrite each other (words 6/7 read 1 = started/alive). Any app class
+     extending Thread is affected; the fix is to keep wie's Thread state outside
+     the two ABI words.
+  2. **Guest stack is not a root.** AOT code keeps locals in ARM registers and
+     stack; `System.gc()` (일지매 calls it 165 times in 40 s) can free an object
+     that is only held there, and the pointer later stored into a field dangles
+     (일지매 `atdata/ITEM_PREFIX` word 0). Needs a conservative scan of guest
+     stacks as extra roots (a RustJava hook).
+  The bitmap bit order itself checks out: `ITEM_PREFIX` has five instance words
+  and bitmap `0xf8` — exactly words 0-4 MSB-first, while LSB-first would mark
+  words that do not exist.
+- **Next layers found while doing the above** (2026-09-29): 당신은골프왕 divides
+  by `getSystemProperty("PHONENUMBER").length()`; wie returns "" on purpose
+  (see Phone-number DRM below), so it raises `/ by zero` at lr 0x576f.
+  슈퍼액션히어로's thread calls slot 32 on an object that is a plain
+  `java/lang/Thread` in wie — no CLDC Thread has that slot, so the object in that
+  static differs from the handset's; not traced yet.
 - **LGT field-import placeholder for wide fields** (2026-09-29): the per-class
   field import tables carry one entry per 32-bit word, so the high word of a
   `long`/`double` field is an entry whose name and descriptor pointers are both
@@ -283,6 +347,10 @@ Not API-crate surface, but blockers found while running real games:
   with the method name; missing-vtable stubs already named the class/index;
   `RUST_LOG=wie_lgt=debug` now prints `Registering/Preparing LGT Java class`,
   `Linking public class … @tables`, and preparation errors carry the class name.
+  Later the same day: every imported field/virtual/interface member is logged
+  (`Imported virtual method …`), a faulting guest call logs the receiver still in
+  r0 (`r0 at fault: … (class, N vtable slots)`), and guest-raised divide-by-zero
+  logs its call site.
 - **Phone-number DRM** — some games gate on getSystemProperty("PHONENUMBER"
   / "MIN"). wie returns an empty PHONENUMBER, which *passes* the check on
   games that compare the phone number against a value (empty makes the

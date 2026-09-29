@@ -63,6 +63,24 @@ fn describe_java_svc(core: &ArmCore, id: u32) -> String {
     described.unwrap_or_else(|| format!("id {id:#x}"))
 }
 
+/// Best-effort description of a guest pointer as a Java object: its class name and how many
+/// method slots its vtable has. Used when a call through a vtable faults, so the log names the
+/// receiver whose slot was missing instead of only the pc.
+pub(crate) fn describe_guest_object(core: &ArmCore, ptr_instance: u32) -> String {
+    let describe = || -> Option<String> {
+        if ptr_instance == 0 {
+            return None;
+        }
+        let instance: RawJavaClassInstance = read_generic(core, ptr_instance).ok()?;
+        let ptr_class: u32 = read_generic(core, instance.ptr_dispatch_table).ok()?;
+        let class: RawJavaClass = read_generic(core, ptr_class).ok()?;
+        let descriptor: RawJavaClassDescriptor = read_generic(core, class.ptr_descriptor).ok()?;
+        let name = String::from_utf8(read_null_terminated_string_bytes(core, descriptor.ptr_name).ok()?).ok()?;
+        Some(format!("{ptr_instance:#x} ({name}, {} vtable slots)", descriptor.vtable_count))
+    };
+    describe().unwrap_or_else(|| format!("{ptr_instance:#x} (not a Java object)"))
+}
+
 async fn handle_missing_java_vtable_entry(core: &mut ArmCore, _: &mut (), id: SvcId) -> Result<JumpTo> {
     let ptr_instance = core.read_param(0)?;
     let instance: RawJavaClassInstance = read_generic(core, ptr_instance)?;
