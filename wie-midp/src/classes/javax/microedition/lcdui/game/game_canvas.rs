@@ -73,15 +73,7 @@ impl GameCanvas {
         tracing::debug!("javax.microedition.lcdui.game.GameCanvas::getGraphics({this:?})");
 
         let offscreen_image: ClassInstanceRef<Image> = jvm.get_field(&this, "offscreenImage", "Ljavax/microedition/lcdui/Image;").await?;
-        let graphics = jvm
-            .new_class(
-                "javax/microedition/lcdui/Graphics",
-                "(Ljavax/microedition/lcdui/Image;)V",
-                (offscreen_image,),
-            )
-            .await?;
-
-        Ok(graphics.into())
+        Graphics::new_for_image(jvm, offscreen_image).await
     }
 
     async fn flush_graphics(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {

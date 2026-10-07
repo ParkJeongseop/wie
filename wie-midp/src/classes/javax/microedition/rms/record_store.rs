@@ -10,6 +10,8 @@ use rustjava_runtime::classes::java::lang::String;
 use wie_backend::Database;
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
+use super::{RecordComparator, RecordEnumeration, RecordFilter};
+
 // class javax.microedition.rms.RecordStore
 pub struct RecordStore;
 
@@ -31,6 +33,12 @@ impl RecordStore {
                 JavaMethodProto::new("setRecord", "(I[BII)V", Self::set_record, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getNumRecords", "()I", Self::get_num_records, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("closeRecordStore", "()V", Self::close_record_store, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new(
+                    "enumerateRecords",
+                    "(Ljavax/microedition/rms/RecordFilter;Ljavax/microedition/rms/RecordComparator;Z)Ljavax/microedition/rms/RecordEnumeration;",
+                    Self::enumerate_records,
+                    MethodAccessFlags::PUBLIC,
+                ),
                 JavaMethodProto::new(
                     "openRecordStore",
                     "(Ljava/lang/String;Z)Ljavax/microedition/rms/RecordStore;",
@@ -208,13 +216,43 @@ impl RecordStore {
         Ok(())
     }
 
-    async fn open_record_store(
+    async fn enumerate_records(
         jvm: &Jvm,
         _context: &mut WieJvmContext,
+        this: ClassInstanceRef<Self>,
+        filter: ClassInstanceRef<RecordFilter>,
+        comparator: ClassInstanceRef<RecordComparator>,
+        keep_updated: bool,
+    ) -> JvmResult<ClassInstanceRef<RecordEnumeration>> {
+        tracing::debug!("javax.microedition.rms.RecordStore::enumerateRecords({this:?}, {filter:?}, {comparator:?}, {keep_updated})");
+
+        let enumeration = jvm
+            .new_class(
+                "net/wie/RecordEnumerationImpl",
+                "(Ljavax/microedition/rms/RecordStore;Ljavax/microedition/rms/RecordFilter;Ljavax/microedition/rms/RecordComparator;Z)V",
+                (this, filter, comparator, keep_updated),
+            )
+            .await?;
+
+        Ok(enumeration.into())
+    }
+
+    async fn open_record_store(
+        jvm: &Jvm,
+        context: &mut WieJvmContext,
         name: ClassInstanceRef<String>,
         create: bool,
     ) -> JvmResult<ClassInstanceRef<Self>> {
         tracing::debug!("javax.microedition.rms.RecordStore::openRecordStore({name:?}, {create:?})");
+
+        if !create {
+            let name = JavaLangString::to_rust_string(jvm, &name).await?;
+            let system = context.system();
+            let pid = system.pid().to_owned();
+            if !system.platform().database_repository().exists(&name, &pid).await {
+                return Err(jvm.exception("javax/microedition/rms/RecordStoreNotFoundException", &name).await);
+            }
+        }
 
         let store = jvm
             .new_class("javax/microedition/rms/RecordStore", "(Ljava/lang/String;)V", (name,))
@@ -223,8 +261,15 @@ impl RecordStore {
         Ok(store.into())
     }
 
-    async fn delete_record_store(_jvm: &Jvm, _context: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<()> {
-        tracing::warn!("stub javax.microedition.rms.RecordStore::deleteRecordStore({name:?})");
+    async fn delete_record_store(jvm: &Jvm, context: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.rms.RecordStore::deleteRecordStore({name:?})");
+
+        let name = JavaLangString::to_rust_string(jvm, &name).await?;
+        let system = context.system();
+        let pid = system.pid().to_owned();
+        if !system.platform().database_repository().delete(&name, &pid).await {
+            return Err(jvm.exception("javax/microedition/rms/RecordStoreNotFoundException", &name).await);
+        }
 
         Ok(())
     }
@@ -237,7 +282,7 @@ impl RecordStore {
         Ok(result.into())
     }
 
-    async fn get_database(jvm: &Jvm, context: &mut WieJvmContext, this: &ClassInstanceRef<Self>) -> JvmResult<Box<dyn Database>> {
+    pub(crate) async fn get_database(jvm: &Jvm, context: &mut WieJvmContext, this: &ClassInstanceRef<Self>) -> JvmResult<Box<dyn Database>> {
         let db_name = jvm.get_field(this, "dbName", "Ljava/lang/String;").await?;
         let db_name_str = JavaLangString::to_rust_string(jvm, &db_name).await?;
 

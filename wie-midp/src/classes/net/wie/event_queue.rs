@@ -247,19 +247,16 @@ impl EventQueue {
 
                 break;
             } else {
-                let events = jvm.get_field(&this, "callSeriallyEvents", "Ljava/util/Vector;").await?;
-                let count: i32 = jvm.invoke_virtual(&events, "java/util/Vector", "size", "()I", ()).await?;
-                if count > 0 {
-                    let midlet: ClassInstanceRef<MIDlet> = jvm
-                        .get_static_field("javax/microedition/midlet/MIDlet", "currentMIDlet", "Ljavax/microedition/midlet/MIDlet;")
+                // Repaints the application asked for are painted here, after the events and before the
+                // callbacks.
+                let midlet: ClassInstanceRef<MIDlet> = jvm
+                    .get_static_field("javax/microedition/midlet/MIDlet", "currentMIDlet", "Ljavax/microedition/midlet/MIDlet;")
+                    .await?;
+                if !midlet.is_null() {
+                    let display = MIDlet::display(jvm, &midlet).await?;
+                    let _: () = jvm
+                        .invoke_virtual(&display, "javax/microedition/lcdui/Display", "serviceRepaints", "()V", ())
                         .await?;
-                    if !midlet.is_null() {
-                        let display = MIDlet::display(jvm, &midlet).await?;
-                        // A frontend Redraw may not have reached the backend queue yet.
-                        let _: () = jvm
-                            .invoke_virtual(&display, "javax/microedition/lcdui/Display", "serviceRepaints", "()V", ())
-                            .await?;
-                    }
                 }
                 Self::dispatch_callbacks(jvm, context, this.clone()).await?;
                 context.system().sleep(16).await; // TODO we need to wait for events
@@ -501,6 +498,139 @@ mod test {
         system.tick()?;
         clock.set(32);
         system.tick()?;
+        assert!(completed.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    struct PaintedCanvas;
+
+    impl PaintedCanvas {
+        async fn paint(
+            jvm: &Jvm,
+            _context: &mut WieJvmContext,
+            mut this: ClassInstanceRef<Self>,
+            _graphics: ClassInstanceRef<Graphics>,
+        ) -> JvmResult<()> {
+            let paint_count: i32 = jvm.get_field(&this, "paintCount", "I").await?;
+            jvm.put_field(&mut this, "paintCount", "I", paint_count + 1).await
+        }
+
+        async fn run(_jvm: &Jvm, context: &mut WieJvmContext, _this: ClassInstanceRef<Self>) -> JvmResult<()> {
+            context.system().event_queue().push(Event::Keydown(KeyCode::NUM1));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn repaint_is_painted_once_without_a_host_redraw() -> Result<()> {
+        let canvas_proto = WieJavaClassProto {
+            name: "net/wie/PaintedCanvas",
+            parent_class: Some("javax/microedition/lcdui/Canvas"),
+            interfaces: vec!["java/lang/Runnable"],
+            methods: vec![
+                JavaMethodProto::new("run", "()V", PaintedCanvas::run, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new(
+                    "paint",
+                    "(Ljavax/microedition/lcdui/Graphics;)V",
+                    PaintedCanvas::paint,
+                    MethodAccessFlags::PROTECTED,
+                ),
+            ],
+            fields: vec![JavaFieldProto::new("paintCount", "I", FieldAccessFlags::PRIVATE)],
+            access_flags: ClassAccessFlags::PUBLIC,
+        };
+        let midlet_proto = WieJavaClassProto {
+            name: "net/wie/QueueTestMidlet",
+            parent_class: Some("javax/microedition/midlet/MIDlet"),
+            interfaces: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: ClassAccessFlags::PUBLIC,
+        };
+        let clock = TestClock::new();
+        let mut system = System::new(Box::new(TestPlatform::with_clock(clock.clone())), "", "", DefaultTaskRunner);
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_task = completed.clone();
+        let system_task = system.clone();
+        let clock_task = clock.clone();
+        system.spawn(async move || {
+            let jvm = JvmSupport::new_jvm(
+                &system_task,
+                None,
+                Box::new([get_protos().into(), Box::new([canvas_proto, midlet_proto])]),
+                &[],
+                RustJavaJvmImplementation,
+            )
+            .await?;
+            let queue = jvm
+                .invoke_static("net/wie/EventQueue", "getEventQueue", "()Lnet/wie/EventQueue;", ())
+                .await
+                .unwrap();
+            let midlet: ClassInstanceRef<MIDlet> = jvm.instantiate_class("net/wie/QueueTestMidlet").await.unwrap().into();
+            let _: () = jvm
+                .invoke_special(&midlet, "javax/microedition/midlet/MIDlet", "<init>", "()V", ())
+                .await
+                .unwrap();
+            let display = MIDlet::display(&jvm, &midlet).await.unwrap();
+            let canvas = jvm.instantiate_class("net/wie/PaintedCanvas").await.unwrap();
+            let _: () = jvm
+                .invoke_special(&canvas, "javax/microedition/lcdui/Canvas", "<init>", "()V", ())
+                .await
+                .unwrap();
+
+            // Becoming current asks for a paint. The callback then makes getNextEvent return a key; no
+            // host redraw is involved.
+            let _: () = jvm
+                .invoke_virtual(
+                    &display,
+                    "javax/microedition/lcdui/Display",
+                    "setCurrent",
+                    "(Ljavax/microedition/lcdui/Displayable;)V",
+                    (canvas.clone(),),
+                )
+                .await
+                .unwrap();
+            let _: () = jvm
+                .invoke_virtual(&queue, "net/wie/EventQueue", "callSerially", "(Ljava/lang/Runnable;)V", (canvas.clone(),))
+                .await
+                .unwrap();
+            let event: ClassInstanceRef<Array<i32>> = jvm.instantiate_array("I", 4).await.unwrap().into();
+            let _: () = jvm
+                .invoke_virtual(&queue, "net/wie/EventQueue", "getNextEvent", "([I)V", (event.clone(),))
+                .await
+                .unwrap();
+            assert_eq!(jvm.load_array::<i32>(&event, 0, 1).await.unwrap(), [EventQueueEvent::KeyEvent as i32]);
+            assert_eq!(jvm.get_field::<i32>(&canvas, "paintCount", "I").await.unwrap(), 1);
+
+            // A repaint that serviceRepaints carries out is not painted again by the event thread.
+            let _: () = jvm
+                .invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", "repaint", "()V", ())
+                .await
+                .unwrap();
+            let _: () = jvm
+                .invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", "serviceRepaints", "()V", ())
+                .await
+                .unwrap();
+            let _: () = jvm
+                .invoke_virtual(&queue, "net/wie/EventQueue", "callSerially", "(Ljava/lang/Runnable;)V", (canvas.clone(),))
+                .await
+                .unwrap();
+            let _: () = jvm
+                .invoke_virtual(&queue, "net/wie/EventQueue", "getNextEvent", "([I)V", (event,))
+                .await
+                .unwrap();
+            assert_eq!(jvm.get_field::<i32>(&canvas, "paintCount", "I").await.unwrap(), 2);
+
+            completed_task.store(true, Ordering::SeqCst);
+            // Let the enclosing tick finish after this task completes.
+            clock_task.advance(100);
+            Ok(())
+        });
+
+        for now in [0, 16, 32, 48] {
+            clock.set(now);
+            system.tick()?;
+        }
         assert!(completed.load(Ordering::SeqCst));
         Ok(())
     }

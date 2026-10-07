@@ -125,6 +125,8 @@ impl Graphics {
                 JavaFieldProto::new("translateY", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("color", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("xorMode", "Z", FieldAccessFlags::PRIVATE),
+                // Opacity of everything drawn, 0..=255; OEM subclasses (LG MMPP GraphicsX) expose it.
+                JavaFieldProto::new("alpha", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("font", "Ljavax/microedition/lcdui/Font;", FieldAccessFlags::PRIVATE),
             ],
             access_flags: ClassAccessFlags::PUBLIC,
@@ -167,6 +169,7 @@ impl Graphics {
         jvm.put_field(&mut this, "translateY", "I", 0).await?;
         jvm.put_field(&mut this, "color", "I", 0).await?;
         jvm.put_field(&mut this, "xorMode", "Z", false).await?;
+        jvm.put_field(&mut this, "alpha", "I", 255).await?;
         let font: ClassInstanceRef<Font> = jvm
             .invoke_static("javax/microedition/lcdui/Font", "getDefaultFont", "()Ljavax/microedition/lcdui/Font;", ())
             .await?;
@@ -188,9 +191,7 @@ impl Graphics {
 
     async fn current_font_size(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<f32> {
         let font: ClassInstanceRef<Font> = jvm.get_field(this, "font", "Ljavax/microedition/lcdui/Font;").await?;
-        let point_size: i32 = jvm.get_field(&font, "pointSize", "I").await?;
-
-        Ok(point_size as f32)
+        jvm.get_field(&font, "pointSize", "F").await
     }
 
     async fn set_color(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, rgb: i32) -> JvmResult<()> {
@@ -912,10 +913,29 @@ impl Graphics {
         let image = Self::image(jvm, this).await?;
         let mut canvas = Image::canvas(jvm, &image).await?;
         let xor_mode: bool = jvm.get_field(this, "xorMode", "Z").await?;
+        let alpha: i32 = jvm.get_field(this, "alpha", "I").await?;
 
         canvas.set_xor_mode(xor_mode);
+        canvas.set_alpha(alpha.clamp(0, 255) as u8);
 
         Ok(canvas)
+    }
+
+    /// Creates the Graphics that draws on `image`. A platform whose LCDUI hands out an OEM subclass
+    /// of Graphics (on LG MMPP every Graphics is a `GraphicsX`, and titles downcast to it) names that
+    /// class in the `wie.midp.graphics` system property; it must have the same `(Image)` constructor.
+    pub async fn new_for_image(jvm: &Jvm, image: ClassInstanceRef<Image>) -> JvmResult<ClassInstanceRef<Self>> {
+        let key = JavaLangString::from_rust_string(jvm, "wie.midp.graphics").await?;
+        let class_name: ClassInstanceRef<String> = jvm
+            .invoke_static("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", (key,))
+            .await?;
+        let class_name = if class_name.is_null() {
+            RustString::from("javax/microedition/lcdui/Graphics")
+        } else {
+            JavaLangString::to_rust_string(jvm, &class_name).await?
+        };
+
+        Ok(jvm.new_class(&class_name, "(Ljavax/microedition/lcdui/Image;)V", (image,)).await?.into())
     }
 
     pub async fn image(jvm: &Jvm, this: &mut ClassInstanceRef<Graphics>) -> JvmResult<ClassInstanceRef<Image>> {

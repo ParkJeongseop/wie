@@ -1,6 +1,6 @@
 use alloc::vec;
 
-use jvm::{Array, ClassInstanceRef, Jvm, Result as JvmResult};
+use jvm::{Array, ClassInstanceRef, JavaError, Jvm, Result as JvmResult};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::String;
@@ -138,12 +138,15 @@ impl DataBase {
     ) -> JvmResult<ClassInstanceRef<DataBase>> {
         tracing::debug!("org.kwis.msp.db.DataBase::openDataBase({data_base_name:?}, {record_size}, {create}, {flags})");
 
+        // TODO a missing database is created even without `create`. It should be a DataBaseException,
+        // but titles that catch it go on to print it, which the KTF runtime cannot do yet
+        // (미니게임파티: AbstractMethodError for its toString).
         let record_store: ClassInstanceRef<RecordStore> = jvm
             .invoke_static(
                 "javax/microedition/rms/RecordStore",
                 "openRecordStore",
                 "(Ljava/lang/String;Z)Ljavax/microedition/rms/RecordStore;",
-                (data_base_name, create),
+                (data_base_name, true),
             )
             .await?;
 
@@ -284,16 +287,20 @@ impl DataBase {
     async fn delete_data_base(jvm: &Jvm, _: &mut WieJvmContext, data_base_name: ClassInstanceRef<String>) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.db.DataBase::deleteDataBase({data_base_name:?})");
 
-        let _: () = jvm
+        let result: JvmResult<()> = jvm
             .invoke_static(
                 "javax/microedition/rms/RecordStore",
                 "deleteRecordStore",
                 "(Ljava/lang/String;)V",
                 (data_base_name,),
             )
-            .await?;
+            .await;
 
-        Ok(())
+        // deleting a database that is not there stays silent, for the same reason as opening one
+        match result {
+            Err(JavaError::JavaException(exception)) if jvm.is_instance(&*exception, "javax/microedition/rms/RecordStoreNotFoundException") => Ok(()),
+            result => result,
+        }
     }
 
     async fn delete_data_base_with_flag(_: &Jvm, _: &mut WieJvmContext, data_base_name: ClassInstanceRef<String>, flag: i32) -> JvmResult<()> {

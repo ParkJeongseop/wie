@@ -8,10 +8,9 @@ use rustjava_runtime::classes::java::lang::String;
 use wie_backend::canvas::string_width;
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-// Default font point size (SIZE_MEDIUM). WIPI/MIDP feature phones render roughly
-// this size on a 240x320 screen; kept at the previous hardcoded value to avoid
-// regressing games that only ever use the default font.
-const DEFAULT_POINT_SIZE: i32 = 10;
+// The point size the glyphs are drawn at and the line height, for SIZE_SMALL, SIZE_MEDIUM and
+// SIZE_LARGE. WIPI/MIDP feature phones render SIZE_MEDIUM at roughly this size on a 240x320 screen.
+const DEFAULT_SIZES: [(f32, i32); 3] = [(8.0, 10), (10.0, Font::HEIGHT), (13.0, 16)];
 
 // class javax.microedition.lcdui.Font
 pub struct Font;
@@ -28,6 +27,8 @@ impl Font {
                 JavaMethodProto::new("<clinit>", "()V", Self::cl_init, MethodAccessFlags::STATIC),
                 JavaMethodProto::new("<init>", "()V", Self::init, MethodAccessFlags::empty()),
                 JavaMethodProto::new("getHeight", "()I", Self::get_height, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("getBaselinePosition", "()I", Self::get_baseline_position, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("getSize", "()I", Self::get_size, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("stringWidth", "(Ljava/lang/String;)I", Self::string_width, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new(
                     "substringWidth",
@@ -101,8 +102,14 @@ impl Font {
                     "I",
                     FieldAccessFlags::PUBLIC | FieldAccessFlags::STATIC | FieldAccessFlags::FINAL,
                 ),
-                // instance state: resolved point size in points
-                JavaFieldProto::new("pointSize", "I", FieldAccessFlags::PRIVATE),
+                JavaFieldProto::new(
+                    "defaultFont",
+                    "Ljavax/microedition/lcdui/Font;",
+                    FieldAccessFlags::PRIVATE | FieldAccessFlags::STATIC,
+                ),
+                // instance state: the point size the glyphs are drawn at and the line height
+                JavaFieldProto::new("pointSize", "F", FieldAccessFlags::PRIVATE),
+                JavaFieldProto::new("height", "I", FieldAccessFlags::PRIVATE),
             ],
             access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::FINAL,
         }
@@ -129,7 +136,9 @@ impl Font {
     async fn init(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Font>) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Font::<init>({this:?})");
 
-        jvm.put_field(&mut this, "pointSize", "I", DEFAULT_POINT_SIZE).await?;
+        let (point_size, height) = Self::sizes(jvm).await?[1];
+        jvm.put_field(&mut this, "pointSize", "F", point_size).await?;
+        jvm.put_field(&mut this, "height", "I", height).await?;
 
         Ok(())
     }
@@ -137,25 +146,70 @@ impl Font {
     async fn get_height(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::getHeight({this:?})");
 
-        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
+        jvm.get_field(&this, "height", "I").await
+    }
 
-        // HEIGHT is the medium (default) cell height; other sizes scale with the point size.
-        Ok((Self::HEIGHT * point_size + DEFAULT_POINT_SIZE / 2) / DEFAULT_POINT_SIZE)
+    async fn get_baseline_position(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Font::getBaselinePosition({this:?})");
+
+        let height: i32 = jvm.get_field(&this, "height", "I").await?;
+
+        // the bundled font keeps a sixth of its cell below the baseline
+        Ok((height * 5 + 3) / 6)
+    }
+
+    async fn get_size(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Font::getSize({this:?})");
+
+        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
+        let [(small, _), _, (large, _)] = Self::sizes(jvm).await?;
+
+        // SIZE_SMALL=8, SIZE_MEDIUM=0, SIZE_LARGE=16
+        Ok(if point_size == small {
+            8
+        } else if point_size == large {
+            16
+        } else {
+            0
+        })
     }
 
     async fn get_default_font(jvm: &Jvm, _: &mut WieJvmContext) -> JvmResult<ClassInstanceRef<Self>> {
         tracing::debug!("javax.microedition.lcdui.Font::getDefaultFont");
 
-        let instance = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?;
+        // every Graphics starts out with it, so there is one instance
+        let default_font: ClassInstanceRef<Self> = jvm
+            .get_static_field("javax/microedition/lcdui/Font", "defaultFont", "Ljavax/microedition/lcdui/Font;")
+            .await?;
+        if !default_font.is_null() {
+            return Ok(default_font);
+        }
 
-        Ok(instance.into())
+        let default_font: ClassInstanceRef<Self> = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?.into();
+        jvm.put_static_field(
+            "javax/microedition/lcdui/Font",
+            "defaultFont",
+            "Ljavax/microedition/lcdui/Font;",
+            default_font.clone(),
+        )
+        .await?;
+
+        Ok(default_font)
     }
 
     async fn get_font(jvm: &Jvm, _: &mut WieJvmContext, face: i32, style: i32, size: i32) -> JvmResult<ClassInstanceRef<Font>> {
         tracing::debug!("javax.microedition.lcdui.Font::getFont({face}, {style}, {size})");
 
+        let [small, medium, large] = Self::sizes(jvm).await?;
+        let (point_size, height) = match size {
+            8 => small,
+            16 => large,
+            _ => medium,
+        };
+
         let mut instance: ClassInstanceRef<Font> = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?.into();
-        jvm.put_field(&mut instance, "pointSize", "I", Self::size_to_point(size)).await?;
+        jvm.put_field(&mut instance, "pointSize", "F", point_size).await?;
+        jvm.put_field(&mut instance, "height", "I", height).await?;
 
         Ok(instance)
     }
@@ -163,10 +217,10 @@ impl Font {
     async fn string_width(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>, string: ClassInstanceRef<String>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::stringWidth({this:?}, {string:?})");
 
-        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
+        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
 
-        Ok(string_width(context.system().platform().font(), &string, point_size as f32) as _)
+        Ok(string_width(context.system().platform().font(), &string, point_size) as _)
     }
 
     async fn substring_width(
@@ -179,20 +233,20 @@ impl Font {
     ) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::substringWidth({this:?}, {string:?}, {offset}, {len})");
 
-        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
+        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
         let substring = string.chars().skip(offset as usize).take(len as usize).collect::<RustString>();
 
-        Ok(string_width(context.system().platform().font(), &substring, point_size as f32) as _)
+        Ok(string_width(context.system().platform().font(), &substring, point_size) as _)
     }
 
     async fn char_width(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>, char: JavaChar) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::charWidth({this:?}, {char})");
 
-        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
+        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
         let string = RustString::from_utf16(&[char]).unwrap();
 
-        Ok(string_width(context.system().platform().font(), &string, point_size as f32) as _)
+        Ok(string_width(context.system().platform().font(), &string, point_size) as _)
     }
 
     async fn chars_width(
@@ -205,19 +259,35 @@ impl Font {
     ) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::charsWidth({this:?}, {chars:?}, {offset}, {len})");
 
-        let point_size: i32 = jvm.get_field(&this, "pointSize", "I").await?;
+        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
         let chars = jvm.load_array(&chars, offset as _, len as _).await?;
         let string = RustString::from_utf16(&chars).unwrap();
 
-        Ok(string_width(context.system().platform().font(), &string, point_size as f32) as _)
+        Ok(string_width(context.system().platform().font(), &string, point_size) as _)
     }
 
-    // SIZE_SMALL=8, SIZE_MEDIUM=0, SIZE_LARGE=16 -> resolved point size for neodgm on 240x320.
-    fn size_to_point(size: i32) -> i32 {
-        match size {
-            8 => 8,   // SIZE_SMALL
-            16 => 13, // SIZE_LARGE
-            _ => DEFAULT_POINT_SIZE,
+    /// The point size and line height of SIZE_SMALL, SIZE_MEDIUM and SIZE_LARGE. A platform whose
+    /// handsets set text in other sizes lists its own in the `wie.midp.font.sizes` system property
+    /// as three comma-separated `points:height` entries.
+    async fn sizes(jvm: &Jvm) -> JvmResult<[(f32, i32); 3]> {
+        let key = JavaLangString::from_rust_string(jvm, "wie.midp.font.sizes").await?;
+        let value: ClassInstanceRef<String> = jvm
+            .invoke_static("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", (key,))
+            .await?;
+        if value.is_null() {
+            return Ok(DEFAULT_SIZES);
         }
+
+        let value = JavaLangString::to_rust_string(jvm, &value).await?;
+        let mut sizes = DEFAULT_SIZES;
+        for (size, entry) in sizes.iter_mut().zip(value.split(',')) {
+            if let Some((point_size, height)) = entry.split_once(':')
+                && let (Ok(point_size), Ok(height)) = (point_size.trim().parse(), height.trim().parse())
+            {
+                *size = (point_size, height);
+            }
+        }
+
+        Ok(sizes)
     }
 }

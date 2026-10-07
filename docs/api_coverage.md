@@ -170,15 +170,28 @@ complete; audio and device control are weak.
 `wie_wipi_java` is built on top of this layer, so its gaps affect WIPI too.
 
 - **IMPL**: Graphics (drawing; honors the current Font size in draw/metrics),
-  Font (stores the point size; getHeight/stringWidth derive from it), Image,
-  Canvas / GameCanvas (repaint is null-safe before the canvas is shown),
-  Displayable.isShown, Display lifecycle, RecordStore CRUD, SmafPlayer,
-  MIDlet init.
+  Font (the point size and line height of the three sizes are platform data,
+  `wie.midp.font.sizes`; `getDefaultFont` is one shared instance), Image,
+  Canvas / GameCanvas (repaint is null-safe before the canvas is shown;
+  `showNotify` / `hideNotify`; `serviceRepaints` services a pending repaint and
+  nothing else), Displayable.isShown, Display lifecycle (`isColor`, `numColors`),
+  RecordStore CRUD with `enumerateRecords`, `deleteRecordStore` and
+  `RecordStoreNotFoundException` for a store opened without `createIfNecessary`,
+  SmafPlayer, MIDlet init.
 - **STUB**: Alert (setType/setTimeout/setString), Form (append), Command
-  dispatch, ChoiceGroup, `serviceRepaints`, `notifyDestroyed`,
-  RecordStore delete/list, Font face/style rendering (size only).
-- **MISSING / thin**: `media.control`, most of `io` (Generic Connection),
-  `pki`; Manager only handles SMAF.
+  dispatch, ChoiceGroup, `notifyDestroyed`, `notifyPaused`,
+  RecordStore close/list, Font face/style rendering (size only),
+  `javax.microedition.io`: the Generic Connection interfaces and `Connector`
+  exist, every `open` throws `ConnectionNotFoundException` (no network).
+- **MISSING / thin**: `media.control`, `pki`, `lcdui.TextField` (7 SK-VM titles
+  reference it); Manager only handles SMAF.
+- **Platform data**: what a platform's handsets report differs, and the platform
+  crate hands it to this layer as system properties instead of this layer knowing
+  platforms. `wie.midp.keymap` lists `internal=application[:action]` key codes
+  (`keyPressed` argument and `getGameAction` result per `MIDPKeyCode`; without it
+  the SK-VM codes are reported as before), `wie.midp.graphics` names the class
+  every Graphics is an instance of, `wie.midp.font.sizes` gives `points:height`
+  for SIZE_SMALL, SIZE_MEDIUM and SIZE_LARGE.
 
 ## Platform Runtime Gaps (empirical)
 
@@ -471,6 +484,99 @@ Not API-crate surface, but blockers found while running real games:
   (`Imported virtual method …`), a faulting guest call logs the receiver still in
   r0 (`r0 at fault: … (class, N vtable slots)`), and guest-raised divide-by-zero
   logs its call site.
+- **Hidden fields were one field** (2026-10-07, RustJava): a class may declare a
+  field with the name and type of a field of its superclass, and obfuscators give
+  private fields the same short names up and down a hierarchy (6 of the 105
+  ez-java and 6 of the 90 SK-VM titles have such pairs). `getfield` / `putfield`
+  looked the name up from the object's class instead of the class the reference
+  names, and an instance kept its values by name, descriptor and flags, so the
+  two were one field twice over. 샤먼슬레이어's game canvas (`h.R` and `g.R`, two
+  private Images) cleared its superclass's back buffer every frame and threw
+  NullPointerException from `paint` 300 times in 12 s behind a black screen.
+  Bytecode now resolves a field from the referenced class
+  (`Jvm::get_class_field` / `put_class_field`) and a field's identity includes
+  its declaring class. Native code still finds fields by name from the object's
+  class: where a title's field can hide the library's, name the class. 23 ez-java
+  MIDlets declare their own `display`, which made `Display.getDisplay` hand out
+  their null; `MIDlet` reads its own through `get_class_field`. So does WIPI's
+  `Card` for `x`/`y`/`w`/`h`/`canvas`/`display`: 북천항해기2 (KTF) has fields of
+  those names in its Card subclass, `Card.repaint` saw a card of no size and asked
+  for nothing, and the title showed a collapsed menu behind an exception per
+  frame. It plays now. Other classes titles subclass keep the hazard (`Thread`'s
+  `name`/`priority`/`alive`/`started`, `TimerTask.state`, `Displayable.title`,
+  lwc `Component.focused`); no title of the scanned libraries collides there.
+- **Java threads are time sliced** (2026-10-07, RustJava): threads are cooperative
+  tasks, and a loop that never blocks — `repaint()` then spin until `paint` has
+  run, or poll `currentTimeMillis()` — kept the event thread from ever running
+  (길거리축구, 바람의나라, 영웅서기-이안편, 지혜의 검, 프란체스카맞고 hung). The
+  interpreter now yields every 2000 bytecodes, in the range of KVM's own slice;
+  under the virtual clock this stays deterministic.
+- **`invokespecial` resolves through the superclasses** (2026-10-07, RustJava):
+  `super.getWidth()` in a MIDP 1.0 Canvas subclass names `Canvas`, where the
+  method is `Displayable`'s — NoSuchMethodError in 나이트세이버, 무한의룩,
+  에인션트 엠파이어2, 엑스피드스노보드2006, 햄버거타이쿤.
+- **`showNotify` / `hideNotify`** (2026-10-07): were neither declared nor called,
+  and 96 of the 105 ez-java titles override `showNotify`. 샤먼슬레이어 starts its
+  loop paused and waited for the call forever. They are told with the first paint
+  after the displayable changed and not from within `setCurrent`: 미니고치's
+  `startApp` goes on setting up what its `showNotify` draws with after it has
+  called `setCurrent`.
+- **One `paint` for one repaint request** (2026-10-07): `Canvas.serviceRepaints`
+  painted whether or not a repaint was pending, and `repaint` asked the host for
+  a redraw whose event painted once more after `serviceRepaints` had already
+  done it. Titles advance their state in `paint`: 림오브팬텀 draws its dialogue on
+  the first paint of a state and clears the text, and the second paint drew the
+  empty box over it. `serviceRepaints` now does nothing without a pending
+  repaint, and `repaint` only marks the request, which the event thread services
+  when its queue is empty (after input, before `callSerially` callbacks). A host
+  redraw still always paints: that is how WIPI-C's MC_grpRepaint reaches a clet
+  (바이오크로니클 and 데몬헌터 stayed black in an attempt that made host redraws
+  conditional), and what a window being exposed needs.
+- **Exceptions from `paint` and key handlers are swallowed**, as on a handset, and
+  logged at `warn`. A sweep at the default log level sees nothing of them — the
+  title keeps running, on a stale frame. `tools/sweep` logs at warn and counts
+  them (`EXC xN`); a few per title at screen changes are the title's own
+  (a paint that finds its next screen not loaded yet).
+- **`DataInputStream` around null** (2026-10-07, RustJava): reading from one
+  panicked the host; it is the NullPointerException titles catch around a
+  missing resource (first frame of several ez-java titles).
+- **`ClassLoader.loadClass` is synchronized** (2026-10-07, RustJava): our loader
+  of native classes takes a class's prototype out of its table when it defines
+  the class, and registering the class yields. A second thread needing the same
+  class for the first time meanwhile found it neither loaded nor in the table:
+  NoClassDefFoundError for `org.kwis.msp.lcdui.Graphics` in 한게임신맞고1 (KTF),
+  whose timer thread and the event thread now both paint early. Java declares
+  the method synchronized; with that the second thread waits.
+- **WIPI `DataBase.openDataBase(…, create=false)` still creates** (2026-10-07):
+  it sits on the MIDP RecordStore, which now refuses to open a missing store
+  without `createIfNecessary`. Passing that on as DataBaseException is what the
+  specification says and 모바일크래프트2 and 전국호텔왕plus catch it, but
+  미니게임파티 goes on to print the exception and the KTF runtime answers its
+  `toString` with AbstractMethodError, so `DataBase` keeps creating (and
+  `deleteDataBase` of a missing database stays silent) until that is fixed.
+- **What the ez-java work did to the other platforms** (2026-10-07, sweeps
+  against the build before it; 40 s, KTF 16 s): none of the above is ez-java
+  specific. SK-VM: 70 of 90 titles progress, 58 before, none worse — (SKT)
+  삼국지연의, (SKT)매직히어로 슐, 닥터k (both), 메르헨전기, 미니게임츄리닝 and
+  엑스피드스노보드 no longer fail at start; Chaos블레이드, [SKVM]얼라이브,
+  댄스배틀오디션, 에이지오브엠파이어2 and 파파라치타이쿤 get past a screen they sat
+  on. KTF: 240 of 321, 236 before — 북천항해기2 (Card fields), 동전쌓기에볼루션,
+  미니게임의달인, (KTF)아포칼립스; 테트리스2006 shows the same static screen one
+  sample earlier and counts as one frame less. LGT: 57 of 79, 붕어빵타이쿤3 no
+  longer runs out of heap after 21 s (three minutes checked). Which change does
+  that was not isolated; sharing the default Font alone is not it.
+- **SK-VM API the titles reference and nothing defines** (2026-10-07, static scan
+  of the 90 titles with `tools/scan`): classes `com.xce.lcdui.TextComponentHandler`
+  (15 titles), `com.xce.net.Socket` (7), `javax.microedition.lcdui.TextField` (7),
+  `com.xce.jam.XBrowser` (6), `com.xce.lcdui.XEventHandler` (3),
+  `com.xce.io.ByteToCharConverter` (2), `com.sun.midp.lcdui.InputMethodHandler`
+  (1); methods `Image.<init>()` (6: titles subclass Image, and 디지몬 RPG II,
+  포켓올림픽, 바운티블루스, 어스토니시아ep2 and ep3 fail on it at start),
+  `Displayable.repaintIM` (4), `Graphics.getPixel16` / `setPixel16`
+  / `dumpRGB565` / `getImage` / `getRedComponent` (and green, blue, gray) /
+  `getStrokeStyle` / `setStrokeStyle` (2, 어스토니시아ep3 twice),
+  `XDisplay.clear`, `Toolkit.*Img` (매지컬프린세스), `PrintStream.println([B)`,
+  `System.exec`. Reaching one is a NoSuchMethodError or NoClassDefFoundError.
 - **Phone-number DRM** — some games gate on getSystemProperty("PHONENUMBER"
   / "MIN"). wie returns an empty PHONENUMBER, which *passes* the check on
   games that compare the phone number against a value (empty makes the

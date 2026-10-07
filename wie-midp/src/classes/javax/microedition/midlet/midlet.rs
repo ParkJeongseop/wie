@@ -33,6 +33,12 @@ impl MIDlet {
                     Self::notify_destroyed,
                     MethodAccessFlags::PUBLIC | MethodAccessFlags::FINAL,
                 ),
+                JavaMethodProto::new(
+                    "notifyPaused",
+                    "()V",
+                    Self::notify_paused,
+                    MethodAccessFlags::PUBLIC | MethodAccessFlags::FINAL,
+                ),
             ],
             fields: vec![
                 JavaFieldProto::new(
@@ -40,6 +46,8 @@ impl MIDlet {
                     "Ljavax/microedition/midlet/MIDlet;",
                     FieldAccessFlags::PRIVATE | FieldAccessFlags::STATIC,
                 ),
+                // MIDlets commonly declare a `display` field of this very type themselves, which hides
+                // this one: it is always read as MIDlet's.
                 JavaFieldProto::new("display", "Ljavax/microedition/lcdui/Display;", FieldAccessFlags::PRIVATE),
             ],
             access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::ABSTRACT,
@@ -61,7 +69,14 @@ impl MIDlet {
 
         let display = jvm.new_class("javax/microedition/lcdui/Display", "()V", ()).await?;
 
-        jvm.put_field(&mut this, "display", "Ljavax/microedition/lcdui/Display;", display).await?;
+        jvm.put_class_field(
+            &mut this,
+            "javax/microedition/midlet/MIDlet",
+            "display",
+            "Ljavax/microedition/lcdui/Display;",
+            display,
+        )
+        .await?;
 
         Ok(())
     }
@@ -88,7 +103,15 @@ impl MIDlet {
         Ok(())
     }
 
+    async fn notify_paused(_jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        // The host never pauses or resumes a MIDlet on its own, so there is no state to record.
+        tracing::debug!("javax.microedition.midlet.MIDlet::notifyPaused({this:?})");
+
+        Ok(())
+    }
+
     pub async fn display(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Display>> {
-        jvm.get_field(this, "display", "Ljavax/microedition/lcdui/Display;").await
+        jvm.get_class_field(this, "javax/microedition/midlet/MIDlet", "display", "Ljavax/microedition/lcdui/Display;")
+            .await
     }
 }

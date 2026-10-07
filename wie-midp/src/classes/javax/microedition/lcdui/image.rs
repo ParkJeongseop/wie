@@ -175,15 +175,7 @@ impl Image {
     async fn get_graphics(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Graphics>> {
         tracing::debug!("javax.microedition.lcdui.Image::getGraphics({this:?})");
 
-        let instance = jvm
-            .new_class(
-                "javax/microedition/lcdui/Graphics",
-                "(Ljavax/microedition/lcdui/Image;)V",
-                (this.clone(),),
-            )
-            .await?;
-
-        Ok(instance.into())
+        Graphics::new_for_image(jvm, this).await
     }
 
     async fn get_width(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {

@@ -65,6 +65,9 @@ pub trait Canvas: Send {
     fn image(&self) -> &dyn Image;
     fn get_pixel(&self, x: i32, y: i32) -> Option<Color>;
     fn set_xor_mode(&mut self, xor_mode: bool);
+    /// Opacity applied to everything drawn afterwards: 255 draws normally, lower values blend each
+    /// drawn pixel over the destination.
+    fn set_alpha(&mut self, alpha: u8);
     fn copy_area(&mut self, dx: i32, dy: i32, sx: i32, sy: i32, w: u32, h: u32, clip: Clip);
     fn draw(&mut self, dx: i32, dy: i32, w: u32, h: u32, src: &dyn Image, sx: i32, sy: i32, clip: Clip);
     fn draw_line(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: Color, clip: Clip);
@@ -321,6 +324,7 @@ where
 {
     image_buffer: T,
     xor_mode: bool,
+    alpha: u8,
 }
 
 impl<T> ImageBufferCanvas<T>
@@ -331,6 +335,7 @@ where
         Self {
             image_buffer,
             xor_mode: false,
+            alpha: 255,
         }
     }
 
@@ -346,6 +351,13 @@ where
         if x < 0 || y < 0 || (x as u32) >= self.image_buffer.width() || (y as u32) >= self.image_buffer.height() {
             return;
         }
+
+        let (color, blend) = if self.alpha < 255 {
+            let a = ((color.a as u16 * self.alpha as u16 + 127) / 255) as u8;
+            (Color { a, ..color }, true)
+        } else {
+            (color, blend)
+        };
 
         if self.xor_mode {
             if color.a == 0 {
@@ -514,6 +526,10 @@ where
 
     fn set_xor_mode(&mut self, xor_mode: bool) {
         self.xor_mode = xor_mode;
+    }
+
+    fn set_alpha(&mut self, alpha: u8) {
+        self.alpha = alpha;
     }
 
     fn copy_area(&mut self, dx: i32, dy: i32, sx: i32, sy: i32, w: u32, h: u32, clip: Clip) {
@@ -1167,6 +1183,33 @@ mod tests {
         canvas.fill_rect(1, 1, 2, 2, XOR_COLOR, full_clip(4));
 
         assert_color(canvas.image(), 1, 1, BACKGROUND);
+    }
+
+    #[test]
+    fn test_alpha_blends_what_is_drawn() {
+        let clip = Clip {
+            x: 0,
+            y: 0,
+            width: 3,
+            height: 1,
+        };
+        let mut canvas = ImageBufferCanvas::new(VecImageBuffer::<ArgbPixel>::new(3, 1));
+        let black = Color { r: 0, g: 0, b: 0, a: 255 };
+        let white = Color {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        };
+        canvas.fill_rect(0, 0, 3, 1, black, clip);
+
+        for (x, alpha) in [(0, 0), (1, 128), (2, 255)] {
+            canvas.set_alpha(alpha);
+            canvas.fill_rect(x, 0, 1, 1, white, clip);
+        }
+
+        let levels = (0..3).map(|x| canvas.get_pixel(x, 0).unwrap().r).collect::<Vec<_>>();
+        assert_eq!(levels, [0, 128, 255]);
     }
 
     #[test]

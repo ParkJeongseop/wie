@@ -8,7 +8,7 @@ use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
 use crate::classes::{
     javax::microedition::lcdui::{Display, Graphics},
-    net::wie::{KeyboardEventType, MIDPKeyCode},
+    net::wie::{KeyMap, KeyboardEventType, MIDPKeyCode},
 };
 
 // abstract class javax.microedition.lcdui.Canvas
@@ -31,9 +31,12 @@ impl Canvas {
                     MethodAccessFlags::PROTECTED | MethodAccessFlags::ABSTRACT,
                 ),
                 JavaMethodProto::new("getGameAction", "(I)I", Self::get_game_action, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("hasRepeatEvents", "()Z", Self::has_repeat_events, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("keyPressed", "(I)V", Self::key_pressed, MethodAccessFlags::PROTECTED),
                 JavaMethodProto::new("keyRepeated", "(I)V", Self::key_repeated, MethodAccessFlags::PROTECTED),
                 JavaMethodProto::new("keyReleased", "(I)V", Self::key_released, MethodAccessFlags::PROTECTED),
+                JavaMethodProto::new("showNotify", "()V", Self::show_notify, MethodAccessFlags::PROTECTED),
+                JavaMethodProto::new("hideNotify", "()V", Self::hide_notify, MethodAccessFlags::PROTECTED),
                 JavaMethodProto::new("setFullScreenMode", "(Z)V", Self::set_full_screen_mode, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("isDoubleBuffered", "()Z", Self::is_double_buffered, MethodAccessFlags::PUBLIC),
                 // wie private methods
@@ -126,17 +129,22 @@ impl Canvas {
                 (),
             )
             .await?;
+        // Only a pending repaint is serviced: without one this does nothing.
         if !display.is_null() {
             let _: () = jvm
-                .invoke_virtual(&display, "javax/microedition/lcdui/Display", "handlePaintEvent", "()V", ())
+                .invoke_virtual(&display, "javax/microedition/lcdui/Display", "serviceRepaints", "()V", ())
                 .await?;
         }
 
         Ok(())
     }
 
-    async fn get_game_action(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, key: i32) -> JvmResult<i32> {
+    async fn get_game_action(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, key: i32) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Canvas::getGameAction({this:?}, {key})");
+
+        if let Some(key_map) = KeyMap::load(jvm).await? {
+            return Ok(key_map.game_action(key));
+        }
 
         let action = match MIDPKeyCode::from_raw(key) {
             Some(MIDPKeyCode::UP) => 1,    // UP
@@ -148,6 +156,12 @@ impl Canvas {
         };
 
         Ok(action)
+    }
+
+    async fn has_repeat_events(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
+        tracing::debug!("javax.microedition.lcdui.Canvas::hasRepeatEvents({this:?})");
+
+        Ok(false)
     }
 
     async fn key_pressed(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, key: i32) -> JvmResult<()> {
@@ -164,6 +178,18 @@ impl Canvas {
 
     async fn key_released(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, key: i32) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Canvas::keyReleased({this:?}, {key})");
+
+        Ok(())
+    }
+
+    async fn show_notify(_jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Canvas::showNotify({this:?})");
+
+        Ok(())
+    }
+
+    async fn hide_notify(_jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Canvas::hideNotify({this:?})");
 
         Ok(())
     }
@@ -188,6 +214,10 @@ impl Canvas {
             event_type
         } else {
             return Err(jvm.exception("java/lang/IllegalArgumentException", "Invalid keyboard event type").await);
+        };
+        let code = match KeyMap::load(jvm).await? {
+            Some(key_map) => key_map.application_code(code),
+            None => code,
         };
 
         let _: () = match event_type {
@@ -251,6 +281,58 @@ mod test {
 
     struct RecordingCanvas;
     struct RecordingGameCanvas;
+    struct VisibilityCanvas;
+
+    impl VisibilityCanvas {
+        fn as_proto() -> WieJavaClassProto {
+            JavaClassProto {
+                name: "javax/microedition/lcdui/TestVisibilityCanvas",
+                parent_class: Some("javax/microedition/lcdui/Canvas"),
+                interfaces: vec![],
+                methods: vec![
+                    JavaMethodProto::new("<init>", "()V", Self::init, MethodAccessFlags::PUBLIC),
+                    JavaMethodProto::new(
+                        "paint",
+                        "(Ljavax/microedition/lcdui/Graphics;)V",
+                        Self::paint,
+                        MethodAccessFlags::PROTECTED,
+                    ),
+                    JavaMethodProto::new("showNotify", "()V", Self::show_notify, MethodAccessFlags::PROTECTED),
+                    JavaMethodProto::new("hideNotify", "()V", Self::hide_notify, MethodAccessFlags::PROTECTED),
+                ],
+                fields: vec![
+                    JavaFieldProto::new("shown", "I", FieldAccessFlags::PUBLIC),
+                    JavaFieldProto::new("hidden", "I", FieldAccessFlags::PUBLIC),
+                    JavaFieldProto::new("painted", "I", FieldAccessFlags::PUBLIC),
+                ],
+                access_flags: ClassAccessFlags::PUBLIC,
+            }
+        }
+
+        async fn init(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+            jvm.invoke_special(&this, "javax/microedition/lcdui/Canvas", "<init>", "()V", ()).await
+        }
+
+        async fn paint(
+            jvm: &Jvm,
+            _context: &mut WieJvmContext,
+            mut this: ClassInstanceRef<Self>,
+            _graphics: ClassInstanceRef<Graphics>,
+        ) -> JvmResult<()> {
+            let painted: i32 = jvm.get_field(&this, "painted", "I").await?;
+            jvm.put_field(&mut this, "painted", "I", painted + 1).await
+        }
+
+        async fn show_notify(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
+            let shown: i32 = jvm.get_field(&this, "shown", "I").await?;
+            jvm.put_field(&mut this, "shown", "I", shown + 1).await
+        }
+
+        async fn hide_notify(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
+            let hidden: i32 = jvm.get_field(&this, "hidden", "I").await?;
+            jvm.put_field(&mut this, "hidden", "I", hidden + 1).await
+        }
+    }
 
     impl RecordingCanvas {
         fn as_proto() -> WieJavaClassProto {
@@ -388,6 +470,85 @@ mod test {
         async fn key_released(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, code: i32) -> JvmResult<()> {
             jvm.put_field(&mut this, "released", "I", code).await
         }
+    }
+
+    #[test]
+    fn canvas_is_told_when_it_is_shown_and_hidden() -> Result<()> {
+        run_jvm_test(Box::new([get_protos().into(), [VisibilityCanvas::as_proto()].into()]), |jvm| async move {
+            let display: ClassInstanceRef<Display> = jvm.new_class("javax/microedition/lcdui/Display", "()V", ()).await?.into();
+            let first: ClassInstanceRef<Canvas> = jvm.new_class("javax/microedition/lcdui/TestVisibilityCanvas", "()V", ()).await?.into();
+            let second: ClassInstanceRef<Canvas> = jvm.new_class("javax/microedition/lcdui/TestVisibilityCanvas", "()V", ()).await?.into();
+
+            // (canvas made current, then shown/hidden counts of the first and of the second canvas)
+            let mut before = [(0, 0), (0, 0)];
+            for (current, expected) in [
+                (&first, [(1, 0), (0, 0)]),
+                (&first, [(1, 0), (0, 0)]),
+                (&second, [(1, 1), (1, 0)]),
+                (&first, [(2, 1), (1, 1)]),
+            ] {
+                let _: () = jvm
+                    .invoke_virtual(
+                        &display,
+                        "javax/microedition/lcdui/Display",
+                        "setCurrent",
+                        "(Ljavax/microedition/lcdui/Displayable;)V",
+                        (current.clone(),),
+                    )
+                    .await?;
+
+                // nothing is told from within setCurrent, only with the paint that follows
+                for (painted, expected) in [(false, before), (true, expected)] {
+                    if painted {
+                        let _: () = jvm
+                            .invoke_virtual(&display, "javax/microedition/lcdui/Display", "serviceRepaints", "()V", ())
+                            .await?;
+                    }
+                    for (canvas, (shown, hidden)) in [&first, &second].into_iter().zip(expected) {
+                        assert_eq!(jvm.get_field::<i32>(canvas, "shown", "I").await?, shown);
+                        assert_eq!(jvm.get_field::<i32>(canvas, "hidden", "I").await?, hidden);
+                    }
+                }
+                before = expected;
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn service_repaints_paints_once_for_each_request() -> Result<()> {
+        run_jvm_test(Box::new([get_protos().into(), [VisibilityCanvas::as_proto()].into()]), |jvm| async move {
+            let display: ClassInstanceRef<Display> = jvm.new_class("javax/microedition/lcdui/Display", "()V", ()).await?.into();
+            let canvas: ClassInstanceRef<Canvas> = jvm.new_class("javax/microedition/lcdui/TestVisibilityCanvas", "()V", ()).await?.into();
+            let _: () = jvm
+                .invoke_virtual(
+                    &display,
+                    "javax/microedition/lcdui/Display",
+                    "setCurrent",
+                    "(Ljavax/microedition/lcdui/Displayable;)V",
+                    (canvas.clone(),),
+                )
+                .await?;
+
+            // becoming current requests the first paint; (repaint first, paints so far)
+            for (repaint, painted) in [(false, 1), (true, 2)] {
+                if repaint {
+                    let _: () = jvm
+                        .invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", "repaint", "()V", ())
+                        .await?;
+                }
+                // the request is serviced once
+                for _ in 0..2 {
+                    let _: () = jvm
+                        .invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", "serviceRepaints", "()V", ())
+                        .await?;
+                    assert_eq!(jvm.get_field::<i32>(&canvas, "painted", "I").await?, painted);
+                }
+            }
+
+            Ok(())
+        })
     }
 
     #[test]

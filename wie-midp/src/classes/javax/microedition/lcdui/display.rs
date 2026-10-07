@@ -67,6 +67,8 @@ impl Display {
                     Self::get_current,
                     MethodAccessFlags::PUBLIC,
                 ),
+                JavaMethodProto::new("isColor", "()Z", Self::is_color, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("numColors", "()I", Self::num_colors, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getWidth", "()I", Self::get_width, MethodAccessFlags::empty()),
                 JavaMethodProto::new("getHeight", "()I", Self::get_height, MethodAccessFlags::empty()),
                 JavaMethodProto::new("callSerially", "(Ljava/lang/Runnable;)V", Self::call_serially, MethodAccessFlags::PUBLIC),
@@ -117,6 +119,8 @@ impl Display {
             fields: vec![
                 JavaFieldProto::new("isInFullScreenMode", "Z", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("currentDisplayable", "Ljavax/microedition/lcdui/Displayable;", FieldAccessFlags::PRIVATE),
+                // the Canvas that was on screen at the last paint
+                JavaFieldProto::new("shownCanvas", "Ljavax/microedition/lcdui/Displayable;", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("screenImage", "Ljavax/microedition/lcdui/Image;", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("screenGraphics", "Ljavax/microedition/lcdui/Graphics;", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("width", "I", FieldAccessFlags::PRIVATE),
@@ -270,6 +274,19 @@ impl Display {
             softkey_y: height - softkey_height,
             softkey_height,
         })
+    }
+
+    async fn is_color(_jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
+        tracing::debug!("javax.microedition.lcdui.Display::isColor({this:?})");
+
+        Ok(true)
+    }
+
+    async fn num_colors(_jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Display::numColors({this:?})");
+
+        // 16-bit colour, the depth of the handsets these titles shipped on
+        Ok(65536)
     }
 
     async fn get_width(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
@@ -465,6 +482,43 @@ impl Display {
         timer_result?;
         ticker_result?;
         repaint_result?;
+
+        Ok(())
+    }
+
+    /// Tells Canvases that the displayable on screen changed since the last paint: `hideNotify` to
+    /// the one that was showing, `showNotify` to the one about to be painted. Titles pause and resume
+    /// their loops on these, some from the first `showNotify` on. They come with the paint and not
+    /// from within `setCurrent`: a MIDlet goes on setting up what its `showNotify` uses after it has
+    /// made the Canvas current.
+    async fn notify_visibility(jvm: &Jvm, this: &mut ClassInstanceRef<Self>, current: &ClassInstanceRef<Displayable>) -> JvmResult<()> {
+        let shown: ClassInstanceRef<Displayable> = jvm.get_field(this, "shownCanvas", "Ljavax/microedition/lcdui/Displayable;").await?;
+        let canvas: ClassInstanceRef<Displayable> = if !current.is_null() && jvm.is_instance(&***current, "javax/microedition/lcdui/Canvas") {
+            current.clone()
+        } else {
+            None.into()
+        };
+        let unchanged = if shown.is_null() || canvas.is_null() {
+            shown.is_null() && canvas.is_null()
+        } else {
+            shown.identity() == canvas.identity()
+        };
+        if unchanged {
+            return Ok(());
+        }
+        jvm.put_field(this, "shownCanvas", "Ljavax/microedition/lcdui/Displayable;", canvas.clone())
+            .await?;
+
+        for (canvas, name) in [(shown, "hideNotify"), (canvas, "showNotify")] {
+            if canvas.is_null() {
+                continue;
+            }
+
+            let result: JvmResult<()> = jvm.invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", name, "()V", ()).await;
+            if let Err(error) = result {
+                Self::handle_exception(jvm, error).await?;
+            }
+        }
 
         Ok(())
     }
@@ -709,7 +763,7 @@ impl Display {
 
     async fn repaint(
         jvm: &Jvm,
-        context: &mut WieJvmContext,
+        _context: &mut WieJvmContext,
         mut this: ClassInstanceRef<Self>,
         x: i32,
         y: i32,
@@ -718,12 +772,9 @@ impl Display {
     ) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Display::repaint({this:?}, {x}, {y}, {width}, {height})");
 
-        jvm.put_field(&mut this, "repaintPending", "Z", true).await?;
-        let platform = context.system().platform();
-        let screen = platform.screen();
-        screen.request_redraw().unwrap();
-
-        Ok(())
+        // The event thread paints it, unless serviceRepaints comes first. It is not a host redraw:
+        // that would arrive later and paint again, and titles advance their state in `paint`.
+        jvm.put_field(&mut this, "repaintPending", "Z", true).await
     }
 
     async fn handle_key_event(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>, event_type: i32, code: i32) -> JvmResult<()> {
@@ -812,6 +863,7 @@ impl Display {
         let height: i32 = jvm.get_field(&this, "height", "I").await?;
 
         if current_displayable.is_null() {
+            Self::notify_visibility(jvm, &mut this, &current_displayable).await?;
             let _: () = jvm
                 .invoke_virtual(&screen_graphics, "javax/microedition/lcdui/Graphics", "reset", "()V", ())
                 .await?;
@@ -843,6 +895,7 @@ impl Display {
             if let Err(error) = notification_result {
                 Self::handle_exception(jvm, error).await?;
             }
+            Self::notify_visibility(jvm, &mut this, &current_displayable).await?;
 
             let layout = Self::chrome_layout(jvm, context, &current_displayable, width, height).await?;
             let _: () = jvm

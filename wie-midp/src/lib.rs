@@ -5,8 +5,16 @@ pub mod classes;
 
 use wie_jvm_support::WieJavaClassProto;
 
-pub fn get_protos() -> [WieJavaClassProto; 40] {
+pub fn get_protos() -> [WieJavaClassProto; 56] {
     [
+        classes::javax::microedition::io::Connection::as_proto(),
+        classes::javax::microedition::io::ConnectionNotFoundException::as_proto(),
+        classes::javax::microedition::io::Connector::as_proto(),
+        classes::javax::microedition::io::ContentConnection::as_proto(),
+        classes::javax::microedition::io::HttpConnection::as_proto(),
+        classes::javax::microedition::io::InputConnection::as_proto(),
+        classes::javax::microedition::io::OutputConnection::as_proto(),
+        classes::javax::microedition::io::StreamConnection::as_proto(),
         classes::javax::microedition::lcdui::Alert::as_proto(),
         classes::javax::microedition::lcdui::AlertType::as_proto(),
         classes::javax::microedition::lcdui::Canvas::as_proto(),
@@ -37,14 +45,22 @@ pub fn get_protos() -> [WieJavaClassProto; 40] {
         classes::javax::microedition::media::Player::as_proto(),
         classes::javax::microedition::media::PlayerListener::as_proto(),
         classes::javax::microedition::midlet::MIDlet::as_proto(),
+        classes::javax::microedition::midlet::MIDletStateChangeException::as_proto(),
         classes::javax::microedition::rms::InvalidRecordIDException::as_proto(),
+        classes::javax::microedition::rms::RecordComparator::as_proto(),
+        classes::javax::microedition::rms::RecordEnumeration::as_proto(),
+        classes::javax::microedition::rms::RecordFilter::as_proto(),
         classes::javax::microedition::rms::RecordStore::as_proto(),
         classes::javax::microedition::rms::RecordStoreException::as_proto(),
+        classes::javax::microedition::rms::RecordStoreFullException::as_proto(),
+        classes::javax::microedition::rms::RecordStoreNotFoundException::as_proto(),
+        classes::javax::microedition::rms::RecordStoreNotOpenException::as_proto(),
         classes::net::wie::ChoiceElement::as_proto(),
         classes::net::wie::CommandEvent::as_proto(),
         classes::net::wie::EventQueue::as_proto(),
         classes::net::wie::ItemStateEvent::as_proto(),
         classes::net::wie::Launcher::as_proto(),
+        classes::net::wie::RecordEnumerationImpl::as_proto(),
         classes::net::wie::SmafPlayer::as_proto(),
         classes::net::wie::WieError::as_proto(),
     ]
