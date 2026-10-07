@@ -1,5 +1,5 @@
 [package]
-name = "wie-j2me"
+name = "wie-mmpp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,13 +8,17 @@ repository.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
-bytemuck = { workspace = true }
 tracing = { workspace = true }
 
 jvm = { workspace = true }
+jvm-class-proto = { workspace = true }
+jvm-types = { workspace = true }
+rustjava-runtime = { workspace = true }
 
 wie-backend = { workspace = true }
 wie-jvm-support = { workspace = true }
 wie-midp = { workspace = true }
-wie-mmpp = { workspace = true }
+
+[dev-dependencies]
+test-utils = { workspace = true }
 wie-util = { workspace = true }

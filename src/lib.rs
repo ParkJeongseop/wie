@@ -184,6 +184,8 @@ fn start(filename: &str, options: Options, midi_device: Option<usize>) -> anyhow
             Box::new(LgtEmulator::from_archive(platform, files, options)?)
         } else if SktEmulator::loadable_archive(&files) {
             Box::new(SktEmulator::from_archive(platform, files)?)
+        } else if J2MEEmulator::loadable_archive(&files) {
+            Box::new(J2MEEmulator::from_archive(platform, files)?)
         } else {
             anyhow::bail!("Unknown archive format");
         }

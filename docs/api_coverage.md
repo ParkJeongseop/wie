@@ -2,7 +2,7 @@
 
 This document tracks how completely the emulator implements the API surfaces
 visible to emulated apps. It is an audit of the API crates (`wie_wipi_c`,
-`wie_wipi_java`, `wie_skvm`, `wie_midp`) measured against the reference
+`wie_wipi_java`, `wie_skvm`, `wie_midp`, `wie_mmpp`) measured against the reference
 specifications, and a prioritized list of the biggest gaps to fill in.
 
 Status tags used below:
@@ -18,7 +18,7 @@ See also `CONTRIBUTING.md`.
 |---------|-----------|-------|
 | WIPI Java (`org.kwis.*`) | [WIPI Java API 1.1.1](https://nikita36078.github.io/J2ME_Docs/docs/WIPI_API_1_1_1) | Javadoc, 2003 |
 | KTF extensions | [KTF WIPI API](https://nikita36078.github.io/J2ME_Docs/docs/KTF_WIPI_API) | `com.ktf.kfc`, `wec` |
-| LGT extensions | [LG MMPP API](https://nikita36078.github.io/J2ME_Docs/docs/LG_MMPP_API) | `mmpp.*` |
+| LGT ez-java (`mmpp.*`) | [LG MMPP API](https://nikita36078.github.io/J2ME_Docs/docs/LG_MMPP_API) | MIDP 1.0 + MMPP, LG Telecom's platform before WIPI. What the platform reports (properties, key codes, font sizes) is read from the data tables of LG's own emulator |
 | SKVM / SKT (`com.skt.m.*`, `com.xce.*`) | SKVM API (web.archive, xce.co.kr) | 24 classes |
 | WIPI-C ABI | WIPI 1.2.1 Spec + `wipi_types` / `wipic_sys` SDK | Spec server currently down; SDK is the working reference |
 | MIDP / CLDC | [MIDP 2.0](https://nikita36078.github.io/J2ME_Docs/docs/midp-2.0), CLDC 1.1 | `wie_wipi_java` and `wie_midp` build on this |
@@ -31,7 +31,8 @@ See also `CONTRIBUTING.md`.
 | `wie_wipi_java` | `org.kwis.*` | ~62% | LWC widgets (20 classes missing), `msf.core`/`msf.io` networking, Display capability queries |
 | `wie_skvm` | `com.skt.m.*`, `com.xce.*` | ~30% | audio volume, Device control, 3D, SMS, 10 classes missing |
 | `wie_midp` | `javax.microedition.*` | ~60% | Alert/Form/Command, media.control |
-| carrier ext | KTF `kfc`/`wec`, LGT `mmpp.*` | 0% | entire namespaces unimplemented |
+| `wie_mmpp` | LGT `mmpp.*` (LG MMPP) | 8 of 14 classes; everything the 105 ez-java titles link against | TextFieldX Hangul/symbol input, MathFP trigonometry, `mmpp.media.phrase`, Beep, LED |
+| carrier ext | KTF `kfc`/`wec` | 0% | entire namespaces unimplemented |
 
 ## WIPI-C (`wie_wipi_c`)
 
@@ -192,6 +193,51 @@ complete; audio and device control are weak.
   the SK-VM codes are reported as before), `wie.midp.graphics` names the class
   every Graphics is an instance of, `wie.midp.font.sizes` gives `points:height`
   for SIZE_SMALL, SIZE_MEDIUM and SIZE_LARGE.
+
+## LG MMPP / ez-java (`wie_mmpp`, `wie_j2me`)
+
+LG Telecom's Java platform before WIPI: MIDP 1.0 / CLDC 1.0 with LG's MMPP
+extensions. Titles come as a zip with a `DESC.jad` and a JAR, and `wie_j2me`
+runs them on `wie_midp` + `wie_mmpp`.
+
+- **Loader**: an archive with a JAD and a JAR is a MIDlet suite
+  (`J2MEEmulator::loadable_archive`). `MIDletX-LCD-Size: w,h` of the descriptor
+  sets the LCD through `Screen::resize`; a descriptor with other `MIDletX-`
+  attributes and no size is a build for the first, 120x143 handsets. The manifest
+  in the JAR names the MIDlet class and the descriptor's is only the fallback:
+  미니미니트레인's descriptor, rewritten by the download server, names a class the
+  JAR does not have. `archive_title` / `archive_id` / `archive_icon` read the name
+  and the largest icon (`MIDletX-Big-Icon`, `MIDletX-Medium-Icon`, then the
+  MIDlet's own).
+- **What the platform reports** follows the data tables of LG's own emulator
+  (`midp3.exe`): `microedition.encoding=KSC5601`, `platform=j2me`, `locale=ko`,
+  `profiles=MIDP-1.0`, `configuration=CLDC-1.0`, `phone.model=CPD525/1.0`; key
+  codes -1..-5 for the arrows and fire, -6/-7 soft keys, -8 clear, -10 send, with
+  `7`/`9`/`*`/`#` as GAME_A..D; every Graphics a `GraphicsX` (titles downcast).
+- **Fonts**: LG's emulator creates its fonts 9, 11 and 15 pixels high and, for the
+  usual MEDIUM one, 5 pixels wide per character, 10 for Hangul. Titles count on
+  that width. 만마전 and SD한국전쟁 break their dialogue after a fixed 22 or 33
+  half-width characters, which fills their text boxes exactly at 5 px and ran out
+  of them at the 6.67 px of the default MIDP font; 슈퍼액션히어로 wraps to 98 px
+  into a 16-line array, which overflowed. Hence `6.75:9,7.5:11,10.5:15`: point
+  sizes that give 9, 10 and 14 px wide Hangul in the bundled font.
+- **IMPL**: `GraphicsX` (alpha 0..256, XOR colour, getPixel/setPixel, capture,
+  polygons), `MediaPlayer` (SMAF; volume "0".."5", loop), `Vibration`,
+  `BackLight` (accepted, no effect), `MathFP` (20.12: arithmetic, parse,
+  toString), `Phone.getProperty` (MIN, LCD width/height/colour depth, battery and
+  signal levels), `TextFieldX` (numeric and roman multi-tap entry, caret, paint).
+- **STUB**: `Phone.placeCall` / `invokeWAPBrowser`, `ContentsManager.setCurrent*`
+  (report SUCCESS), `TextFieldX` Hangul and symbol modes (`nextInputMode` cycles
+  small/caps/numeric).
+- **MISSING**: `MathFP` sin/cos/tan/log/exp/pow/sqrt, `mmpp.media.Beep`, `LED`,
+  `mmpp.media.phrase.*`, `com.velox.SISAniImage`. None is referenced by the 105
+  titles of the library: a static scan of every class file (`tools/scan`) finds no
+  missing class, method or field.
+- **Status** (2026-10-07, 105 titles, 40 s with OK every 3 s): 104 progress, the
+  105th (해리포터) plays but stands still without direction keys; no title fails.
+  All were also looked at on contact sheets, which is how the text running out of
+  its boxes and the erased dialogue of 림오브팬텀 were found: neither shows in
+  the sweep's numbers.
 
 ## Platform Runtime Gaps (empirical)
 
@@ -620,17 +666,17 @@ Not API-crate surface, but blockers found while running real games:
 
 ## Carrier Extensions (not implemented)
 
-None of the carrier-specific Java namespaces are implemented. Platform crates
-`wie_ktf` / `wie_lgt` contain only boot/ARM/JVM glue.
+KTF's carrier-specific Java namespaces are not implemented; platform crates
+`wie_ktf` / `wie_lgt` contain only boot/ARM/JVM glue. LGT's `mmpp.*` is
+`wie_mmpp`, see above.
 
 - **KTF** — `com.ktf.kfc` (~32 GUI widgets). Started: GForm, GFormBase,
   GMenubarForm (constructor-only, ShellComponent-based — enough for
   미니게임패밀리 to boot to its game-select screen). Remaining: GButton,
   GList, GMenuBar, GTextField, GMsgBox, …, `wec` (~25 hardware: Camera, GPS, AddressBook, SubLCD,
   WakeupTimer, …), `com.ktf.ext.am`.
-- **LGT** — `mmpp.media` (BackLight, Beep, LED, MediaPlayer, Vibration),
-  `mmpp.media.phrase` (ringtone), `mmpp.phone`, `mmpp.microedition.lcdui`
-  (GraphicsX, TextFieldX), `mmpp.lang.MathFP`.
+- **LGT** — remaining of `mmpp.*`: `mmpp.media.Beep`, `LED`,
+  `mmpp.media.phrase` (ringtone), `com.velox.SISAniImage`.
 
 ## Priorities
 

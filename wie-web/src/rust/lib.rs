@@ -44,6 +44,7 @@ enum ArchivePlatform {
     Ktf,
     Lgt,
     Skt,
+    J2me,
 }
 
 fn parse_archive(buf: &[u8]) -> anyhow::Result<(ArchivePlatform, BTreeMap<String, Vec<u8>>)> {
@@ -59,6 +60,8 @@ fn parse_archive(buf: &[u8]) -> anyhow::Result<(ArchivePlatform, BTreeMap<String
         ArchivePlatform::Lgt
     } else if SktEmulator::loadable_archive(&files) {
         ArchivePlatform::Skt
+    } else if J2MEEmulator::loadable_archive(&files) {
+        ArchivePlatform::J2me
     } else {
         anyhow::bail!("Unknown archive format");
     };
@@ -208,6 +211,9 @@ pub fn extract_app_metadata(filename: &str, buf: &[u8]) -> Result<ImportedAppMet
             ArchivePlatform::Skt => SktEmulator::archive_id(&files)
                 .zip(SktEmulator::archive_title(&files))
                 .map(|(id, title)| (id, title, SktEmulator::archive_icon(&files))),
+            ArchivePlatform::J2me => J2MEEmulator::archive_id(&files)
+                .zip(J2MEEmulator::archive_title(&files))
+                .map(|(id, title)| (id, title, J2MEEmulator::archive_icon(&files))),
         }
     } else if lowercase_filename.ends_with(".jar") {
         let filename = filename.rsplit('/').next().unwrap();
@@ -248,6 +254,7 @@ impl WieWeb {
                     ArchivePlatform::Ktf => Box::new(KtfEmulator::from_archive(platform, files, options)?),
                     ArchivePlatform::Lgt => Box::new(LgtEmulator::from_archive(platform, files, options)?),
                     ArchivePlatform::Skt => Box::new(SktEmulator::from_archive(platform, files)?),
+                    ArchivePlatform::J2me => Box::new(J2MEEmulator::from_archive(platform, files)?),
                 }
             } else if filename.to_ascii_lowercase().ends_with(".jar") {
                 let filename_without_path = filename.rsplit('/').next().unwrap().to_owned();

@@ -7051,6 +7051,7 @@ dependencies = [
  "wie-backend",
  "wie-jvm-support",
  "wie-midp",
+ "wie-mmpp",
  "wie-util",
 ]
 
@@ -7157,6 +7158,23 @@ dependencies = [
  "tracing",
  "wie-backend",
  "wie-jvm-support",
+ "wie-util",
+]
+
+[[package]]
+name = "wie-mmpp"
+version = "0.1.5"
+dependencies = [
+ "async-trait",
+ "jvm",
+ "jvm-class-proto",
+ "jvm-types",
+ "rustjava-runtime",
+ "test-utils",
+ "tracing",
+ "wie-backend",
+ "wie-jvm-support",
+ "wie-midp",
  "wie-util",
 ]
 
