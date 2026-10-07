@@ -5,7 +5,7 @@ use jvm::{ArrayClassDefinition, ClassDefinition, ClassInstance, JavaType, Jvm, R
 
 use wie_core_arm::ArmCore;
 use wie_jvm_support::native::array_element_size;
-use wie_util::Result;
+use wie_util::{Result, WieError};
 
 use crate::runtime::java::JavaSvcFunctions;
 
@@ -48,9 +48,17 @@ impl ArrayClassDefinition for JavaArrayClassDefinition {
     }
 
     async fn instantiate_array(&self, jvm: &Jvm, length: usize) -> JvmResult<Box<dyn ClassInstance>> {
-        match JavaArrayClassInstance::new(&mut self.core.clone(), self, length) {
+        let mut instance = JavaArrayClassInstance::new(&mut self.core.clone(), self, length);
+        if matches!(instance, Err(WieError::AllocationFailure)) {
+            // Titles that never call System.gc() otherwise fill the guest heap with garbage.
+            jvm.collect_garbage()?;
+            instance = JavaArrayClassInstance::new(&mut self.core.clone(), self, length);
+        }
+        match instance {
             Ok(instance) => Ok(Box::new(instance)),
-            Err(error) => Err(jvm.exception("net/wie/WieError", &format!("Failed to instantiate array: {error}")).await),
+            Err(error) => {
+                Err(super::error::raise_instantiation_failure(jvm, &format!("array {}[{length}]", self.element_type_descriptor()), error).await)
+            }
         }
     }
 }

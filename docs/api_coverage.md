@@ -295,6 +295,126 @@ Not API-crate surface, but blockers found while running real games:
   missing slot read the next heap word (string bytes "dgor") as a target. Only
   this slot is pinned. The title now runs past its notice to the Com2uS logo and
   its "속도 체크 중" screen.
+- **Native-class instance fields live in an extension block** (2026-10-01): titles
+  subclass wie's classes with layouts fixed by the LGT compiler against the
+  handset's runtime — a Thread subclass puts its first field at word 2, Card
+  subclasses at word 8, 12 or 13, Jlet at 5 or 6 (measured from field metadata
+  across the library), while wie's Thread used words 0-8 and Card 0-16, so the
+  two sides overwrote each other (스파이더맨3's `c extends Thread` read 1 =
+  wie's `started` flag where it expected a reference). wie-defined instance
+  fields now live in a per-instance extension block hung off the instance
+  header's spare word (`unk1`, zero in the ABI), indexed per native class chain
+  and recorded in descriptor `unk7`; only fields pinned in the ABI table stay in
+  the app-visible storage, because compiled code reads those at a fixed word
+  (java/lang/Class) or titles import them through the link tables (Font.face/
+  style/size, Card.x/y/w/h, TextComponent.*). An imported instance field that
+  is not pinned now fails the link with a message naming it.
+- **GC roots from the guest** (2026-10-01): RustJava gained
+  `Jvm::set_extra_roots`; the LGT runtime reports every register of every ARM
+  thread context, of every guest caller suspended inside a nested
+  `run_function` (their registers only exist in a Rust local while the callee
+  runs — this was the reference that kept dying), and every word of every
+  thread stack (whole stacks: a task suspended inside guest code keeps frames
+  the live stack pointer does not cover). Words that pass the live-object
+  header check become roots. 일지매영웅전기 went from 968 "not a live object"
+  reports per run to 0 and 스파이더맨3/놈3 stopped panicking; 메이플스토리2007
+  still reports a few dozen, so a root category is still missing there.
+- **Resource streams are DataInputStreams on LGT** (2026-10-01): 슈퍼액션히어로
+  dispatches slot 32 on the stream `Class.getResourceAsStream` returns and
+  hands the result to `String.getBytes` — `DataInputStream.readUTF()` under
+  the CLDC 1.1 order (readFloat 30, readDouble 31, readUTF 32). RustJava's class
+  loader now wraps resource streams in the class named by the
+  `rustjava.resource_stream_wrapper` property, which the LGT runtime sets to
+  `java/io/DataInputStream`. `java/io/OutputStream` got its CLDC table too
+  (close=14 from 메이플스토리2007's record writer).
+- **Thread table corrected** (2026-10-01): the slot-32 call 슈퍼액션히어로 makes is
+  on that resource stream, not on a Thread, so the earlier CLDC-order Thread
+  entries beyond the confirmed start=10/setPriority=14 were dropped; the table
+  keeps isAlive=13 as a guess and vtable_size 18.
+- **LGT vtables carry 64 slots and missing-slot stubs are shared** (2026-10-01):
+  every vtable wie allocates now has room for `VTABLE_CAPACITY` (64) entries, the
+  slack filled with missing-entry stubs, and `set_vtable_entries` grows in place
+  while the new table fits — instances created before linking appended an entry
+  keep dispatching correctly, and a title that calls through a slot wie knows
+  nothing about (학교가는길 lr 0x25c0, 훼밀리마트타이쿤 lr 0xc5544) fails with the
+  class and slot number instead of `jump to unmapped pc 0x0`. The first cut
+  made `make_svc_stub` once per slot per class, which exhausted the 4096-stub SVC
+  region during `wie-lgt`'s own JVM test; the resulting fatal error was raised as
+  a `net/wie/WieError` exception, defining *that* class failed the same way, and
+  the retry recursed until the stack overflowed (macOS crash report:
+  `define_class → JavaClassDefinition::new → Jvm::exception → new_class → … →
+  define_class`). Three fixes: `ArmCore::shared_svc_stub` hands out one stub per
+  `(category, id)` so all missing-slot stubs together cost at most 64; the stub
+  region grew to 1 MB (65536 stubs — every Rust-implemented Java method the guest
+  can call takes one, so the old 4096 cap was within reach of a large title);
+  and `LgtJvmImplementation::define_error` aborts with both errors when a class
+  definition fails while the error for an earlier failure is being raised,
+  instead of recursing.
+  The named stubs then exposed the next layers in one sweep: 학교가는길 called
+  `java/util/Stack` slot 32, 훼밀리마트타이쿤 `java/lang/StringBuffer` slot 22, and
+  서든어택포켓/턴 (both "no frame painted" before) `java/io/DataOutputStream`
+  slot 19, then all three `java/io/ByteArrayOutputStream` slot 16. The CLDC 1.1
+  declaration order reproduces every confirmed index in Vector (size 15,
+  elementAt 23, removeElementAt 27, insertElementAt 28) and StringBuffer
+  (append(Object) 17, append(String) 18, append(I) 23, delete 27), so those
+  tables are now complete and Stack (push 32 …), DataOutputStream (writeBoolean 15
+  … writeUTF 24) and ByteArrayOutputStream (reset 15, toByteArray 16, size 17)
+  follow from them. 학교가는길 now runs its 40 s (one screen so far), the other
+  three are next. Found on the way: `set_vtable_entries` must never grow a
+  compiler-laid-out vtable in place — it has exactly `vtable_count` slots inside
+  the module image — so in-place growth is limited to tables wie allocated on
+  the heap.
+- **놈3 is nondeterministic, not regressed** (2026-10-01): across identical
+  `WIE_VCLOCK` runs it either passes the 이용안내 screen on the first key, sits
+  there for 40 s with the paint loop running, or (base build, debug logging)
+  stops calling wie altogether after 2 s with the title glyphs garbled. The same
+  binary produces both outcomes, so the key-wait depends on something outside
+  the virtual clock; finding the remaining source of nondeterminism is the
+  prerequisite for debugging it (and the other flaky titles: 삼국지연의2,
+  2006독일축구, 동전쌓기2006, 붕어빵타이쿤3's rare thread fault).
+  Two sources found the same day, both hash-map iteration order (hashbrown's
+  default hasher is seeded per process): `wie-backend`'s executor polled its
+  tasks out of a `HashMap`, so which guest thread ran first in a step was a
+  coin toss, and RustJava's `collect_garbage` destroyed the unreachable set in
+  `HashSet` order, so the allocator's free list — and every later address —
+  differed between runs. The executor now keeps tasks in a `BTreeMap` (spawn
+  order) and the collector destroys garbage sorted by identity.
+- **LGT Java import 0x64 = interface dispatch table** (2026-10-01): with
+  ByteArrayOutputStream mapped, 턴's loader thread died with `Unknown lgt java
+  import: 0x64`. The module's import thunks are 16-byte entries `{push {lr}; bl
+  resolver; table; index}` whose resolver patches the entry into `ldr ip,[pc,#4];
+  bx ip` after `get_import_function`, so a thunk address identifies its import.
+  The five call sites of the (0x64, 100) thunk all read `[class+8]` (descriptor)
+  then `[descriptor+8]` (name) of an interface class and call
+  `import100(object, name)`, then index the result with a linked interface
+  method index and call `[table + 4*index + 4]` — exactly what older titles do
+  through 0x0a, which this compiler no longer emits. So 0x64 shares the
+  GetInterfaceDispatchTable handler. (First guess "link class" was wrong: the
+  per-class `fn_get_class` stubs call thunks 0x1403288/0x1403298 = (0x64, 11/12)
+  = RegisterClass/ResolveClass, not 100.) `get_import_function` now logs the
+  guest return address (`from 0x…`), and a missing vtable slot reports its
+  caller and r1–r3.
+  With 0x64 answered, 턴 called `[table + 4]` and hit `PlayGuide vtable index 0`:
+  wie answered an interface dispatch request with the *interface's* vtable (fine
+  for wie-defined interfaces, whose entries dispatch by name), but a generated
+  class keeps a per-interface reference cell `{ptr_interface_class, target of
+  method 0, target of method 1, …}` (PlayGuide: `0x1401334` → IEventHandler +
+  five code pointers), and the title indexes that cell directly. The handler now
+  walks the receiver's generated class chain for the cell whose class is the
+  named interface and falls back to the interface vtable only for wie classes.
+- **Collect on heap exhaustion; one guard for every raised wie error**
+  (2026-10-01): with deterministic scheduling 붕어빵타이쿤3 aborted at 21 s with a
+  host stack overflow. The crash report shows the loop: `Throwable.<init>` →
+  `JavaLangString::from_rust_string` → instantiate → allocation fails →
+  `jvm.exception(WieError)` → needs a `[C` → `instantiate_array` fails →
+  `jvm.exception` → … The guest heap was simply full — the LGT runtime only
+  collected inside two WIPI-C resource calls, so a Java title that never calls
+  `System.gc()` runs until its 256 MB are gone. `instantiate`/`instantiate_array`
+  now collect once on `AllocationFailure` and retry, raise
+  `java/lang/OutOfMemoryError` if that still fails, and every site that turns a
+  wie error into a Java exception goes through `jvm_support::error::raise`, which
+  aborts with both messages when a failure happens while another one is being
+  raised (the class-definition guard above is the same helper now).
 - **InputStream / DataInputStream gaps** (2026-09-29): InputStream now carries
   the full CLDC order (skip(J)=13 backed by 배틀몬스터's loader thread; mark,
   reset, markSupported 16-18), and DataInputStream 19-22 (readFully x2,

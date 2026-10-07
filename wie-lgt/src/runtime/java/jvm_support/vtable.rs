@@ -19,9 +19,21 @@ pub struct JavaVtableEntry {
 
 pub struct JavaVtable;
 
+/// Every vtable wie allocates has room for at least this many entries. Linking can append entries
+/// later (the fallback in `virtual_method_index`), and instances created before that keep pointing
+/// at the vtable they were born with; growing in place keeps them dispatching correctly and keeps
+/// their header chain recognisable. Slots past `vtable_count` hold missing-entry stubs, so a title
+/// that dispatches through a slot wie knows nothing about fails with the slot's number instead of
+/// jumping through whatever word follows the table.
+pub const VTABLE_CAPACITY: usize = 64;
+
 impl JavaVtable {
+    pub fn capacity_for(entry_count: usize) -> usize {
+        entry_count.max(VTABLE_CAPACITY)
+    }
+
     pub fn allocate(core: &mut ArmCore, entry_count: usize) -> Result<u32> {
-        Allocator::alloc(core, ((entry_count + 1) * size_of::<u32>()) as u32)
+        Allocator::alloc(core, ((Self::capacity_for(entry_count) + 1) * size_of::<u32>()) as u32)
     }
 
     pub fn read(core: &ArmCore, ptr_vtable: u32, entry_count: usize, known_classes: &[(String, Vec<JavaMethod>)]) -> Result<Vec<JavaVtableEntry>> {
@@ -49,11 +61,10 @@ impl JavaVtable {
 
     pub fn write(core: &mut ArmCore, ptr_vtable: u32, ptr_class: u32, entries: &[JavaVtableEntry]) -> Result<()> {
         write_generic(core, ptr_vtable, ptr_class)?;
-        for (index, entry) in entries.iter().enumerate() {
-            let target = if entry.target == 0 {
-                core.make_svc_stub(SVC_CATEGORY_MISSING_JAVA_VTABLE_ENTRY, index as u32)?
-            } else {
-                entry.target
+        for index in 0..Self::capacity_for(entries.len()) {
+            let target = match entries.get(index) {
+                Some(entry) if entry.target != 0 => entry.target,
+                _ => core.shared_svc_stub(SVC_CATEGORY_MISSING_JAVA_VTABLE_ENTRY, index as u32)?,
             };
             write_generic(core, ptr_vtable + ((index + 1) * size_of::<u32>()) as u32, target)?;
         }

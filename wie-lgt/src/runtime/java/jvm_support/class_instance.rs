@@ -7,11 +7,13 @@ use core::{
 
 use jvm::{ClassDefinition, ClassInstance, Field, JavaType, JavaValue, Result as JvmResult};
 use jvm_types::FieldAccessFlags;
-use wipi_types::lgt::java::{LgtJavaClass as RawJavaClass, LgtJavaClassInstance as RawJavaClassInstance};
+use wipi_types::lgt::java::{
+    LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor as RawJavaClassDescriptor, LgtJavaClassInstance as RawJavaClassInstance,
+};
 
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::native::NativeJavaValueCodec;
-use wie_util::{ByteRead, ByteWrite, Result, read_generic, write_generic};
+use wie_util::{ByteRead, ByteWrite, Result, read_generic, read_null_terminated_string_bytes, write_generic};
 
 use super::{JavaClassDefinition, JavaField, JavaReferenceField, LgtJvmWord, value::JavaValueCodec};
 
@@ -36,17 +38,50 @@ impl JavaClassInstance {
         let ptr_fields = Allocator::alloc(core, allocated_storage_size as u32)?;
         core.write_bytes(ptr_fields, &vec![0; allocated_storage_size])?;
 
+        let extension_size = class.extension_word_count()? * size_of::<LgtJvmWord>();
+        let ptr_extension = if extension_size == 0 {
+            0
+        } else {
+            let ptr_extension = Allocator::alloc(core, extension_size as u32)?;
+            core.write_bytes(ptr_extension, &vec![0; extension_size])?;
+            ptr_extension
+        };
+
         write_generic(
             core,
             ptr_raw,
             RawJavaClassInstance {
                 ptr_dispatch_table: class.ptr_vtable()?,
-                unk1: 0,
+                unk1: ptr_extension,
                 ptr_fields,
             },
         )?;
 
         Ok(Self::from_raw(ptr_raw, core))
+    }
+
+    /// The extension block holding wie-defined instance fields (header `unk1`, which the LGT ABI
+    /// leaves at zero). Allocated on demand for instances that predate their class's fields.
+    pub fn extension_address(&self, class: &JavaClassDefinition) -> Result<u32> {
+        let mut raw: RawJavaClassInstance = read_generic(&self.core, self.ptr_raw)?;
+        if raw.unk1 == 0 {
+            let size = (class.extension_word_count()? * size_of::<LgtJvmWord>()).max(size_of::<LgtJvmWord>());
+            let mut core = self.core.clone();
+            raw.unk1 = Allocator::alloc(&mut core, size as u32)?;
+            core.write_bytes(raw.unk1, &vec![0; size])?;
+            write_generic(&mut core, self.ptr_raw, raw)?;
+        }
+
+        Ok(raw.unk1)
+    }
+
+    fn java_field_address(&self, field: &JavaField) -> Result<u32> {
+        let word_index = field.word_index()?;
+        if field.is_extension()? {
+            Ok(self.extension_address(&self.class()?)? + word_index * size_of::<LgtJvmWord>() as u32)
+        } else {
+            self.field_address(word_index)
+        }
     }
 
     /// Whether `ptr_instance` points at an allocated object whose header chain is intact
@@ -64,13 +99,26 @@ impl JavaClassInstance {
         let Ok(class): Result<RawJavaClass> = read_generic(core, ptr_class) else {
             return false;
         };
-
-        class.unk1 == instance.ptr_dispatch_table
+        if class.unk1 == instance.ptr_dispatch_table {
+            return true;
+        }
+        // An instance born before its class's vtable was replaced still points at the old table;
+        // accept it when the class record it names reads as a class (descriptor and name).
+        let Ok(descriptor): Result<RawJavaClassDescriptor> = read_generic(core, class.ptr_descriptor) else {
+            return false;
+        };
+        descriptor.ptr_name != 0
+            && read_null_terminated_string_bytes(core, descriptor.ptr_name)
+                .is_ok_and(|name| !name.is_empty() && name.len() < 256 && name.iter().all(|byte| byte.is_ascii_graphic()))
     }
 
     pub fn destroy_with_storage(mut self, storage_size: usize) -> Result<()> {
-        let ptr_fields = self.ptr_fields()?;
-        Allocator::free(&mut self.core, ptr_fields, storage_size.max(size_of::<LgtJvmWord>()) as u32)?;
+        let raw: RawJavaClassInstance = read_generic(&self.core, self.ptr_raw)?;
+        if raw.unk1 != 0 {
+            let extension_size = (self.class()?.extension_word_count()? * size_of::<LgtJvmWord>()).max(size_of::<LgtJvmWord>());
+            Allocator::free(&mut self.core, raw.unk1, extension_size as u32)?;
+        }
+        Allocator::free(&mut self.core, raw.ptr_fields, storage_size.max(size_of::<LgtJvmWord>()) as u32)?;
         Allocator::free(&mut self.core, self.ptr_raw, size_of::<RawJavaClassInstance>() as u32)
     }
 
@@ -125,6 +173,12 @@ impl ClassInstance for JavaClassInstance {
             core.read_bytes(self.ptr_fields().unwrap(), &mut fields).unwrap();
             core.write_bytes(instance.ptr_fields().unwrap(), &fields).unwrap();
         }
+        let extension_size = class.extension_word_count().unwrap() * size_of::<LgtJvmWord>();
+        if extension_size != 0 {
+            let mut extension = vec![0; extension_size];
+            core.read_bytes(self.extension_address(&class).unwrap(), &mut extension).unwrap();
+            core.write_bytes(instance.extension_address(&class).unwrap(), &extension).unwrap();
+        }
         Ok(Box::new(instance))
     }
 
@@ -142,12 +196,12 @@ impl ClassInstance for JavaClassInstance {
     fn get_field(&self, field: &dyn Field) -> JvmResult<JavaValue> {
         debug_assert!(!field.access_flags().contains(FieldAccessFlags::STATIC));
         let field_type = JavaType::parse(&field.descriptor());
-        let word_index = if let Some(field) = field.as_any().downcast_ref::<JavaField>() {
-            field.word_index().unwrap()
+        let (word_index, address) = if let Some(field) = field.as_any().downcast_ref::<JavaField>() {
+            (field.word_index().unwrap(), self.java_field_address(field).unwrap())
         } else {
-            field.as_any().downcast_ref::<JavaReferenceField>().unwrap().word_index
+            let word_index = field.as_any().downcast_ref::<JavaReferenceField>().unwrap().word_index;
+            (word_index, self.field_address(word_index).unwrap())
         };
-        let address = self.field_address(word_index).unwrap();
         let low = read_generic(&self.core, address).unwrap();
         let codec = JavaValueCodec::new(&self.core);
 
@@ -176,12 +230,12 @@ impl ClassInstance for JavaClassInstance {
 
     fn put_field(&mut self, field: &dyn Field, value: JavaValue) -> JvmResult<()> {
         debug_assert!(!field.access_flags().contains(FieldAccessFlags::STATIC));
-        let word_index = if let Some(field) = field.as_any().downcast_ref::<JavaField>() {
-            field.word_index().unwrap()
+        let address = if let Some(field) = field.as_any().downcast_ref::<JavaField>() {
+            self.java_field_address(field).unwrap()
         } else {
-            field.as_any().downcast_ref::<JavaReferenceField>().unwrap().word_index
+            self.field_address(field.as_any().downcast_ref::<JavaReferenceField>().unwrap().word_index)
+                .unwrap()
         };
-        let address = self.field_address(word_index).unwrap();
         let codec = JavaValueCodec::new(&self.core);
 
         if matches!(value, JavaValue::Long(_) | JavaValue::Double(_)) {

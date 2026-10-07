@@ -172,6 +172,16 @@ impl ResultWriter<u32> for u32 {
     }
 }
 
+/// A 64-bit result in the ARM EABI registers: r0 holds the low word, r1 the high word.
+impl ResultWriter<u64> for u64 {
+    fn write(self, core: &mut ArmCore, next_pc: u32) -> Result<()> {
+        core.write_return_value(&[self as u32, (self >> 32) as u32])?;
+        core.set_next_pc(next_pc)?;
+
+        Ok(())
+    }
+}
+
 impl ResultWriter<()> for () {
     fn write(self, core: &mut ArmCore, next_pc: u32) -> Result<()> {
         core.set_next_pc(next_pc)?;

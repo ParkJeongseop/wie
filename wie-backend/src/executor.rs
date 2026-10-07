@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, sync::Arc, task::Wake};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, task::Wake};
 use core::{
     future::Future,
     pin::Pin,
@@ -6,7 +6,6 @@ use core::{
     task::{Context, Poll, Waker},
 };
 
-use hashbrown::HashMap;
 use spin::Mutex;
 
 use wie_util::{Result, WieError};
@@ -29,8 +28,10 @@ impl Wake for TaskWake {
 
 pub struct ExecutorInner {
     current_task_id: Option<usize>,
-    tasks: HashMap<usize, Task>,
-    sleeping_tasks: HashMap<usize, Instant>,
+    // Ordered by task id so every step polls tasks in spawn order: a hash map's iteration order
+    // changes from process to process and made otherwise identical runs diverge.
+    tasks: BTreeMap<usize, Task>,
+    sleeping_tasks: BTreeMap<usize, Instant>,
     last_task_id: usize,
     last_now: Instant,
 }
@@ -83,8 +84,8 @@ impl Executor {
     pub fn new() -> Self {
         let inner = Arc::new(Mutex::new(ExecutorInner {
             current_task_id: None,
-            tasks: HashMap::new(),
-            sleeping_tasks: HashMap::new(),
+            tasks: BTreeMap::new(),
+            sleeping_tasks: BTreeMap::new(),
             last_task_id: 0,
             last_now: Instant::from_epoch_millis(0),
         }));
@@ -162,9 +163,9 @@ impl Executor {
     fn step(&mut self, now: Instant) -> Result<()> {
         self.inner.lock().last_now = now;
 
-        let mut next_tasks = HashMap::new();
-        let tasks = self.inner.lock().tasks.drain().collect::<HashMap<_, _>>();
-        let mut sleeping_tasks = self.inner.lock().sleeping_tasks.drain().collect::<HashMap<_, _>>();
+        let mut next_tasks = BTreeMap::new();
+        let tasks = core::mem::take(&mut self.inner.lock().tasks);
+        let mut sleeping_tasks = core::mem::take(&mut self.inner.lock().sleeping_tasks);
 
         let mut first_error = None;
         let waker = Waker::from(self.wake.clone());

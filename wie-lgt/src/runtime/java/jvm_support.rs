@@ -2,6 +2,7 @@ mod array_class_definition;
 mod array_class_instance;
 mod class_definition;
 mod class_instance;
+mod error;
 mod field;
 mod jvm_implementation;
 mod method;
@@ -9,15 +10,15 @@ pub(crate) use self::method::JavaMethod;
 mod value;
 mod vtable;
 
-use alloc::{boxed::Box, format, string::String};
+use alloc::{boxed::Box, collections::BTreeSet, format, string::String, vec, vec::Vec};
 
 use jvm::{ClassDefinition, ClassInstance, JavaError, Jvm, Method};
 
 use wie_backend::System;
-use wie_core_arm::ArmCore;
+use wie_core_arm::{ArmCore, HEAP_BASE, HEAP_SIZE};
 use wie_jvm_support::{JvmImplementation, JvmSupport, native::NativeJavaValueCodec};
 use wie_midp::get_protos as get_midp_protos;
-use wie_util::{Result, WieError};
+use wie_util::{ByteRead, Result, WieError};
 use wie_wipi_java::get_protos as get_wipi_java_protos;
 
 use super::classes::net::wie::{CletWrapper, CletWrapperCard, CletWrapperContext, LgtClassLoader};
@@ -42,7 +43,10 @@ impl LgtJvmSupport {
     pub async fn init(core: &mut ArmCore, system: &System, jar_name: Option<&str>) -> Result<Jvm> {
         let protos = [get_midp_protos().into(), get_wipi_java_protos().into()];
         let implementation = LgtJvmImplementation::new(core)?;
-        let jvm = JvmSupport::new_jvm(system, jar_name, Box::new(protos), &[], implementation.clone()).await?;
+        // The handset's Class.getResourceAsStream returns a DataInputStream, and titles dispatch
+        // DataInputStream methods (readUTF, slot 32) on it without wrapping (LGT 슈퍼액션히어로).
+        let properties = [("rustjava.resource_stream_wrapper", "java/io/DataInputStream")];
+        let jvm = JvmSupport::new_jvm(system, jar_name, Box::new(protos), &properties, implementation.clone()).await?;
 
         let class = match implementation
             .define_class_rust(&jvm, LgtClassLoader::as_proto(), Box::new(core.clone()))
@@ -64,7 +68,78 @@ impl LgtJvmSupport {
             jvm.register_class(class, None).await.unwrap();
         }
 
+        // AOT-compiled Java keeps object references in ARM registers and on ARM stacks, where the
+        // collector cannot see them; without this, System.gc() frees objects that are only held
+        // by a running guest method.
+        let scan_core = core.clone();
+        jvm.set_extra_roots(move || Self::guest_roots(&scan_core));
+
         Ok(jvm)
+    }
+
+    /// Conservative root scan of every guest thread: every register, and every word of every
+    /// thread stack. Whole stacks rather than the part above each saved stack pointer, because a
+    /// task suspended inside guest code keeps its frames where the engine's current stack pointer
+    /// does not point (the live stack pointer was observed sitting at another thread's stack top
+    /// while that thread's frames, holding the only reference to a StringBuffer, lay below it).
+    /// Stale words in dead frames keep a few garbage objects alive; that is the price.
+    fn guest_roots(core: &ArmCore) -> Vec<Box<dyn ClassInstance>> {
+        const UNKNOWN_STACK_WINDOW: u32 = 16 * 1024;
+        const CHUNK: usize = 64 * 1024;
+        let stacks = core.thread_contexts_with_stacks();
+        let live = core.save_context();
+        let suspended = core.suspended_caller_contexts();
+
+        let mut candidates = Vec::new();
+        for context in stacks
+            .iter()
+            .map(|(context, _, _)| context)
+            .chain(suspended.iter())
+            .chain(core::iter::once(&live))
+        {
+            candidates.extend([
+                context.r0, context.r1, context.r2, context.r3, context.r4, context.r5, context.r6, context.r7, context.r8, context.sb, context.sl,
+                context.fp, context.ip,
+            ]);
+        }
+        let mut regions = stacks
+            .iter()
+            .map(|(_, base, size)| (*base, base.saturating_add(*size)))
+            .collect::<Vec<_>>();
+        let live_sp = live.sp & !3;
+        if (HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&live_sp) && !regions.iter().any(|(base, end)| (*base..*end).contains(&live_sp)) {
+            regions.push((live_sp, live_sp.saturating_add(UNKNOWN_STACK_WINDOW).min(HEAP_BASE + HEAP_SIZE)));
+        }
+        let mut chunk = vec![0u8; CHUNK];
+        for (base, end) in regions {
+            let mut address = base & !3;
+            while address < end {
+                let length = ((end - address) as usize).min(CHUNK);
+                if core.read_bytes(address, &mut chunk[..length]).is_err() {
+                    break;
+                }
+                candidates.extend(
+                    chunk[..length]
+                        .chunks_exact(4)
+                        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]])),
+                );
+                address += length as u32;
+            }
+        }
+
+        let mut roots = Vec::new();
+        let mut seen = BTreeSet::new();
+        for word in candidates {
+            if word % 4 != 0 || !(HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&word) || !seen.insert(word) {
+                continue;
+            }
+            if JavaClassInstance::is_live_instance(core, word) {
+                roots.push(Self::class_instance_from_raw(core, word));
+            }
+        }
+        tracing::trace!("guest root scan: {} candidate words, {} live objects", seen.len(), roots.len());
+
+        roots
     }
 
     pub fn class_from_raw(core: &ArmCore, ptr_class: u32) -> JavaClassDefinition {
@@ -102,6 +177,11 @@ impl LgtJvmSupport {
                     .as_any()
                     .downcast_ref::<JavaField>()
                     .ok_or_else(|| WieError::FatalError(format!("Unsupported field implementation for {current_name}.{name}{descriptor}")))?;
+                if field.is_extension()? {
+                    return Err(WieError::FatalError(format!(
+                        "{class_name} imports instance field {current_name}.{name}{descriptor}, which wie keeps in extension storage; pin it in data/lgt_java_abi.toml at the word the title expects"
+                    )));
+                }
                 return u16::try_from(field.word_index()?)
                     .map_err(|_| WieError::FatalError(format!("Field word index does not fit LGT ABI for {current_name}.{name}{descriptor}")));
             }
@@ -284,7 +364,7 @@ impl LgtJvmSupport {
 mod tests {
     use alloc::{boxed::Box, string::String as RustString, sync::Arc, vec, vec::Vec};
     use core::{
-        mem::{offset_of, size_of},
+        mem::size_of,
         sync::atomic::{AtomicBool, Ordering},
     };
 
@@ -294,8 +374,8 @@ mod tests {
     use rustjava_runtime::classes::java::lang::String;
     use wipi_types::lgt::java::{
         LGT_JAVA_CLASS_SUPER_CLASS_IS_NAME, LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor as RawJavaClassDescriptor,
-        LgtJavaClassField as RawJavaField, LgtJavaClassInstance as RawJavaClassInstance, LgtJavaClassMethod as RawJavaMethod,
-        LgtJavaInterfaceReference as RawJavaInterfaceReference, LgtJavaInterfaceReferences as RawJavaInterfaceReferences,
+        LgtJavaClassInstance as RawJavaClassInstance, LgtJavaClassMethod as RawJavaMethod, LgtJavaInterfaceReference as RawJavaInterfaceReference,
+        LgtJavaInterfaceReferences as RawJavaInterfaceReferences,
     };
 
     use test_utils::TestPlatform;
@@ -395,7 +475,8 @@ mod tests {
             let raw_instance: RawJavaClassInstance = read_generic(&core, native_date.ptr_raw)?;
             let ptr_class: u32 = read_generic(&core, raw_instance.ptr_dispatch_table)?;
             assert_eq!(ptr_class, native_date.class()?.ptr_raw);
-            assert_eq!(raw_instance.unk1, 0);
+            // header unk1 carries the extension block that holds Date's own (wie-defined) fields
+            assert_eq!(raw_instance.unk1 != 0, native_date.class()?.extension_word_count()? > 0);
             let raw_class: RawJavaClass = read_generic(&core, ptr_class)?;
             assert_eq!(raw_class.unk1, raw_instance.ptr_dispatch_table);
             assert_eq!(raw_class.unk2, 0);
@@ -475,7 +556,7 @@ mod tests {
                 .await
                 .unwrap_err();
             match error {
-                WieError::Unimplemented(message) => assert_eq!(message, "java/lang/Object vtable index 0"),
+                WieError::Unimplemented(message) => assert!(message.starts_with("java/lang/Object vtable index 0 (called from"), "{message}"),
                 error => panic!("unexpected missing vtable error: {error}"),
             }
 
@@ -908,7 +989,9 @@ mod tests {
                 .await
                 .unwrap();
             let field_child_definition = field_child.as_any().downcast_ref::<super::JavaClassDefinition>().unwrap().clone();
-            assert_eq!(field_child_definition.instance_field_word_count()?, 8);
+            // wie-defined fields live in the extension block, so the app-visible storage stays empty
+            assert_eq!(field_child_definition.instance_field_word_count()?, 0);
+            assert_eq!(field_child_definition.extension_word_count()?, 8);
             let own0 = ClassDefinition::field(&field_child_definition, "own0", "I", false).unwrap();
             let own1 = ClassDefinition::field(&field_child_definition, "own1", "I", false).unwrap();
             let static0 = ClassDefinition::field(&field_child_definition, "static0", "I", true).unwrap();
@@ -917,19 +1000,23 @@ mod tests {
             let static0 = static0.as_any().downcast_ref::<super::JavaField>().unwrap();
             assert_eq!(own0.word_index()?, 6);
             assert_eq!(own1.word_index()?, 7);
-            write_generic(&mut core, own0.ptr_raw + offset_of!(RawJavaField, word_index) as u32, 0u32)?;
-            write_generic(&mut core, own1.ptr_raw + offset_of!(RawJavaField, word_index) as u32, 1u32)?;
-            field_child_definition.patch_declared_instance_field_word_indices()?;
+            assert!(own0.is_extension()?);
+            assert!(!static0.is_extension()?);
+            // extension fields are never relocated by the generated-class index patcher
             field_child_definition.patch_declared_instance_field_word_indices()?;
             assert_eq!(own0.word_index()?, 6);
             assert_eq!(own1.word_index()?, 7);
             assert_eq!(static0.word_index()?, 0);
 
             let mut field_child_instance: Box<dyn ClassInstance> = Box::new(JavaClassInstance::new(&mut core, &field_child_definition)?);
-            let ptr_fields = field_child_instance.as_any().downcast_ref::<JavaClassInstance>().unwrap().ptr_fields()?;
+            let extension = field_child_instance
+                .as_any()
+                .downcast_ref::<JavaClassInstance>()
+                .unwrap()
+                .extension_address(&field_child_definition)?;
             jvm.put_field(&mut field_child_instance, "own0", "I", 0x1234_5678i32).await.unwrap();
-            assert_eq!(read_generic::<u32, _>(&core, ptr_fields + 6 * size_of::<u32>() as u32)?, 0x1234_5678);
-            write_generic(&mut core, ptr_fields + 7 * size_of::<u32>() as u32, 0x7654_3210u32)?;
+            assert_eq!(read_generic::<u32, _>(&core, extension + 6 * size_of::<u32>() as u32)?, 0x1234_5678);
+            write_generic(&mut core, extension + 7 * size_of::<u32>() as u32, 0x7654_3210u32)?;
             let own1: i32 = jvm.get_field(&field_child_instance, "own1", "I").await.unwrap();
             assert_eq!(own1, 0x7654_3210);
 

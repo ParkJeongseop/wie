@@ -26,7 +26,7 @@ async fn handle_init_svc(core: &mut ArmCore, ptr_jar_path: &mut u32, id: SvcId) 
     let (_, lr) = core.read_pc_lr()?;
     match InitSvcId::try_from(id)? {
         InitSvcId::ImportTable => EmulatedFunction::call(&get_import_table, core, &mut ()).await?.write(core, lr)?,
-        InitSvcId::ImportFunction => get_import_function(core, core.read_param(0)?, core.read_param(1)?)
+        InitSvcId::ImportFunction => get_import_function(core, core.read_param(0)?, core.read_param(1)?, lr)
             .await?
             .write(core, lr)?,
         InitSvcId::SetDisplayProperty => EmulatedFunction::call(&super::wipi_c::graphics::set_display_property, core, &mut ())
@@ -94,8 +94,8 @@ async fn get_import_table(_core: &mut ArmCore, _: &mut (), import_table: u32) ->
     Ok(import_table)
 }
 
-async fn get_import_function(core: &mut ArmCore, import_table: u32, function_index: u32) -> Result<u32> {
-    tracing::debug!("get_import_function({import_table:#x}, {function_index})");
+async fn get_import_function(core: &mut ArmCore, import_table: u32, function_index: u32, lr: u32) -> Result<u32> {
+    tracing::debug!("get_import_function({import_table:#x}, {function_index}) from {lr:#x}");
 
     if import_table == 0x1fb {
         return core.make_svc_stub(SVC_CATEGORY_WIPIC, function_index);

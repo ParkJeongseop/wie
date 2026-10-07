@@ -11,7 +11,7 @@ use wipi_types::lgt::java::{
     LgtJavaInterfaceReferences as RawJavaInterfaceReferences,
 };
 
-use wie_core_arm::{Allocator, ArmCore, EmulatedFunction, RegisteredFunction, RegisteredFunctionHolder};
+use wie_core_arm::{Allocator, ArmCore, EmulatedFunction, HEAP_BASE, HEAP_SIZE, RegisteredFunction, RegisteredFunctionHolder};
 use wie_jvm_support::native::NativeJavaValueCodec;
 use wie_util::{
     ByteRead, ByteWrite, Result, WieError, read_generic, read_null_terminated_string_bytes, write_generic, write_null_terminated_string_bytes,
@@ -145,30 +145,36 @@ impl JavaClassDefinition {
                 functions.clone(),
             )?);
         }
+        // Titles subclass wie's classes with layouts the LGT compiler fixed against the handset's
+        // runtime (a subclass of Thread puts its first field at word 2, of Card at word 8..13), so
+        // wie's own instance fields must stay out of the app-visible storage. Only fields pinned by
+        // the ABI table (compiled code reads them at a known word) go there; every other field
+        // lives in the instance's extension block, indexed per native class chain.
         let mut instance_field_word_index = parent_class
             .as_ref()
             .map(|class| class.instance_field_word_count())
             .transpose()?
             .unwrap_or(0);
+        let mut extension_word_index = parent_class.as_ref().map(|class| class.extension_word_count()).transpose()?.unwrap_or(0);
         let mut static_field_word_index = 0usize;
         for (index, field) in field_protos.iter().enumerate() {
             let is_static = field.access_flags.contains(FieldAccessFlags::STATIC);
             let word_count = if field.descriptor == "J" || field.descriptor == "D" { 2 } else { 1 };
-            let word_index = if is_static {
-                static_field_word_index
-            } else if let Some(fixed) = fixed_fields
+            let fixed = fixed_fields
                 .iter()
-                .find(|fixed| fixed.name == field.name && fixed.descriptor == field.descriptor)
-            {
-                fixed.index as usize
-            } else {
-                instance_field_word_index
-            };
-            if is_static {
+                .find(|fixed| fixed.name == field.name && fixed.descriptor == field.descriptor);
+            let (word_index, extension) = if is_static {
+                let word_index = static_field_word_index;
                 static_field_word_index += word_count;
+                (word_index, false)
+            } else if let Some(fixed) = fixed {
+                instance_field_word_index = instance_field_word_index.max(fixed.index as usize + word_count);
+                (fixed.index as usize, false)
             } else {
-                instance_field_word_index = instance_field_word_index.max(word_index + word_count);
-            }
+                let word_index = extension_word_index;
+                extension_word_index += word_count;
+                (word_index, true)
+            };
 
             let ptr_field = ptr_fields + size_of::<u32>() as u32 + (index * size_of::<RawJavaField>()) as u32;
             JavaField::new(
@@ -179,6 +185,7 @@ impl JavaClassDefinition {
                 &field.descriptor,
                 field.access_flags,
                 word_index as u32,
+                extension,
             )?;
         }
         for (offset, field) in additional_fixed_fields.iter().enumerate() {
@@ -192,6 +199,7 @@ impl JavaClassDefinition {
                 &field.descriptor,
                 FieldAccessFlags::PRIVATE,
                 field.index,
+                false,
             )?;
             let word_count = if field.descriptor == "J" || field.descriptor == "D" { 2 } else { 1 };
             instance_field_word_index = instance_field_word_index.max(field.index as usize + word_count);
@@ -216,7 +224,7 @@ impl JavaClassDefinition {
                 ptr_interface_references: 0,
                 instance_field_word_count: instance_field_word_index as u16,
                 link_state: 0,
-                unk7: 0,
+                unk7: extension_word_index as u32,
                 ptr_instance_reference_bitmap: 0,
                 flags: 0,
                 unk10: 0,
@@ -414,6 +422,12 @@ impl JavaClassDefinition {
 
     pub fn instance_field_word_count(&self) -> Result<usize> {
         Ok(self.descriptor()?.instance_field_word_count as usize)
+    }
+
+    /// Words of wie-defined instance fields kept in the instance's extension block (descriptor
+    /// `unk7`, which titles leave at zero; generated classes inherit their parent's count).
+    pub fn extension_word_count(&self) -> Result<usize> {
+        Ok(self.descriptor()?.unk7 as usize)
     }
 
     pub async fn prepare_generated(&mut self, core: &mut ArmCore, jvm: &Jvm, generated_classes: u32) -> Result<()> {
@@ -617,6 +631,7 @@ impl JavaClassDefinition {
         JavaVtable::write(core, ptr_vtable, self.ptr_raw, &virtual_methods)?;
         descriptor.ptr_class_fields = ptr_class_fields;
         descriptor.vtable_count = virtual_methods.len() as u16;
+        descriptor.unk7 = parent_class.as_ref().map(|class| class.extension_word_count()).transpose()?.unwrap_or(0) as u32;
         write_generic(core, self.raw()?.ptr_descriptor, descriptor)?;
         let mut raw = self.raw()?;
         raw.unk1 = ptr_vtable;
@@ -625,12 +640,22 @@ impl JavaClassDefinition {
 
     pub fn set_vtable_entries(&self, entries: &[JavaVtableEntry]) -> Result<()> {
         let mut core = self.core.clone();
-        let ptr_vtable = JavaVtable::allocate(&mut core, entries.len())?;
-        JavaVtable::write(&mut core, ptr_vtable, self.ptr_raw, entries)?;
+        let mut raw = self.raw()?;
         let mut descriptor = self.descriptor()?;
+        // Grow in place while the table wie allocated has room, so instances that already point
+        // at it keep dispatching (and keep passing the live-object header check). A table the
+        // compiler laid out inside the module image has exactly `vtable_count` slots and whatever
+        // follows it is other data, so it is never grown in place.
+        let wie_allocated = (HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&raw.unk1);
+        let in_place = wie_allocated && entries.len() <= JavaVtable::capacity_for(descriptor.vtable_count as usize);
+        let ptr_vtable = if in_place {
+            raw.unk1
+        } else {
+            JavaVtable::allocate(&mut core, entries.len())?
+        };
+        JavaVtable::write(&mut core, ptr_vtable, self.ptr_raw, entries)?;
         descriptor.vtable_count = entries.len() as u16;
         write_generic(&mut core, self.raw()?.ptr_descriptor, descriptor)?;
-        let mut raw = self.raw()?;
         raw.unk1 = ptr_vtable;
         write_generic(&mut core, self.ptr_raw, raw)
     }
@@ -644,7 +669,11 @@ impl JavaClassDefinition {
     }
 
     pub fn patch_declared_instance_field_word_indices(&self) -> Result<()> {
-        let fields = self.fields()?;
+        let fields = self
+            .fields()?
+            .into_iter()
+            .filter(|field| !field.is_extension().unwrap_or(false))
+            .collect::<Vec<_>>();
         let own_word_count = fields
             .iter()
             .filter(|field| !field.access_flags().contains(FieldAccessFlags::STATIC))
@@ -816,9 +845,15 @@ impl ClassDefinition for JavaClassDefinition {
     }
 
     async fn instantiate(&self, jvm: &Jvm) -> JvmResult<Box<dyn ClassInstance>> {
-        match JavaClassInstance::new(&mut self.core.clone(), self) {
+        let mut instance = JavaClassInstance::new(&mut self.core.clone(), self);
+        if matches!(instance, Err(WieError::AllocationFailure)) {
+            // Titles that never call System.gc() otherwise fill the guest heap with garbage.
+            jvm.collect_garbage()?;
+            instance = JavaClassInstance::new(&mut self.core.clone(), self);
+        }
+        match instance {
             Ok(instance) => Ok(Box::new(instance)),
-            Err(error) => Err(jvm.exception("net/wie/WieError", &format!("Failed to instantiate class: {error}")).await),
+            Err(error) => Err(super::error::raise_instantiation_failure(jvm, &format!("class {}", ClassDefinition::name(self)), error).await),
         }
     }
 

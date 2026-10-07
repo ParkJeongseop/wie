@@ -6,7 +6,11 @@ use jvm::{
     runtime::{JavaLangClass, JavaLangClassLoader, JavaLangString},
 };
 use rustjava_runtime::classes::java::util::Vector;
-use wipi_types::lgt::java::{LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor as RawJavaClassDescriptor, LgtJavaClassLink as RawJavaClassLink};
+use wipi_types::lgt::java::{
+    LGT_JAVA_CLASS_SUPER_CLASS_IS_NAME, LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor as RawJavaClassDescriptor,
+    LgtJavaClassInstance as RawJavaClassInstance, LgtJavaClassLink as RawJavaClassLink, LgtJavaInterfaceReference as RawJavaInterfaceReference,
+    LgtJavaInterfaceReferences as RawJavaInterfaceReferences,
+};
 
 use wie_core_arm::{ArmCore, EmulatedFunction, JumpTo, ResultWriter, SvcId};
 use wie_util::{Result, WieError, read_generic, read_null_terminated_string_bytes, write_generic};
@@ -27,6 +31,7 @@ pub fn get_java_interface_method(core: &mut ArmCore, function_index: u32) -> Res
         0x06 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::DestroyRuntimeContext)?,
         0x07 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::CreateRuntimeContext)?,
         0x09 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StringLiteral)?,
+        // 0x0a in older titles, 0x64 in those built with the newer compiler (턴): (instance, interface name)
         0x0a => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetInterfaceDispatchTable)?,
         0x0b => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::RegisterClass)?,
         0x0c => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::ResolveClass)?,
@@ -49,11 +54,13 @@ pub fn get_java_interface_method(core: &mut ArmCore, function_index: u32) -> Res
         0x56 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::MonitorEnter)?,
         0x57 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::MonitorExit)?,
         0x61 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StoreReferenceArray)?,
+        0x64 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetInterfaceDispatchTable)?,
         0x82 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::SetJarPath)?,
         0x83 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StartApplication)?,
         0xe1 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetStringClass)?,
         0xe2 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetStringArrayClass)?,
         0xfa => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StoreReferenceArrayUnchecked)?,
+        0x5b => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::LoadLongArray)?,
         0xfd => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StoreLongArray)?,
         _ => return Err(WieError::FatalError(format!("Unknown lgt java import: {function_index:#x}"))),
     })
@@ -100,6 +107,7 @@ async fn handle_java_system_svc(core: &mut ArmCore, (jvm, ptr_jar_path): &mut (J
                 .await?
                 .write(core, lr),
             JavaSystemSvcId::StoreLongArray => EmulatedFunction::call(&java_store_long_array, core, jvm).await?.write(core, lr),
+            JavaSystemSvcId::LoadLongArray => EmulatedFunction::call(&java_load_long_array, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::LinkPublicClass => EmulatedFunction::call(&java_link_public_class, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::IsClassAssignable => java_is_class_assignable(core, jvm, core.read_param(0)?, core.read_param(1)?, core.read_param(2)?)
                 .await?
@@ -198,10 +206,56 @@ async fn java_string_literal(core: &mut ArmCore, jvm: &mut Jvm, _runtime_context
     Ok(value)
 }
 
-async fn java_get_interface_dispatch_table(core: &mut ArmCore, jvm: &mut Jvm, _ptr_instance: u32, ptr_interface_name: u32) -> Result<u32> {
+async fn java_get_interface_dispatch_table(core: &mut ArmCore, jvm: &mut Jvm, ptr_instance: u32, ptr_interface_name: u32) -> Result<u32> {
     let interface_name = String::from_utf8(read_null_terminated_string_bytes(core, ptr_interface_name)?)
         .map_err(|error| WieError::FatalError(format!("Invalid LGT interface class name: {error}")))?;
+    if ptr_instance != 0
+        && let Some(ptr_table) = compiler_interface_dispatch_table(core, ptr_instance, &interface_name)?
+    {
+        return Ok(ptr_table);
+    }
+
     LgtJvmSupport::interface_dispatch_table(jvm, &interface_name).await
+}
+
+/// The compiler's dispatch table for `interface_name` on the receiver's class: an interface reference
+/// cell `{ptr_class, target of method 0, target of method 1, ...}` of the receiver's class or one of
+/// its generated ancestors (턴 calls method 0 through `[cell + 4]` and the others through the linked
+/// interface method indices). A wie-defined ancestor ends the search: its cells carry no targets.
+fn compiler_interface_dispatch_table(core: &ArmCore, ptr_instance: u32, interface_name: &str) -> Result<Option<u32>> {
+    let instance: RawJavaClassInstance = read_generic(core, ptr_instance)?;
+    let mut ptr_class: u32 = read_generic(core, instance.ptr_dispatch_table)?;
+    while ptr_class != 0 {
+        let class: RawJavaClass = read_generic(core, ptr_class)?;
+        let descriptor: RawJavaClassDescriptor = read_generic(core, class.ptr_descriptor)?;
+        if descriptor.fn_get_class == 0 {
+            return Ok(None);
+        }
+        if descriptor.ptr_interface_references != 0 {
+            let references: RawJavaInterfaceReferences = read_generic(core, descriptor.ptr_interface_references)?;
+            for index in 0..references.count {
+                let ptr_reference: u32 = read_generic(
+                    core,
+                    descriptor.ptr_interface_references + size_of::<RawJavaInterfaceReferences>() as u32 + index * size_of::<u32>() as u32,
+                )?;
+                let reference: RawJavaInterfaceReference = read_generic(core, ptr_reference)?;
+                if reference.ptr_class_or_name == 0 {
+                    continue;
+                }
+                let interface: RawJavaClass = read_generic(core, reference.ptr_class_or_name)?;
+                let interface_descriptor: RawJavaClassDescriptor = read_generic(core, interface.ptr_descriptor)?;
+                if read_null_terminated_string_bytes(core, interface_descriptor.ptr_name)? == interface_name.as_bytes() {
+                    return Ok(Some(ptr_reference));
+                }
+            }
+        }
+        if descriptor.flags & LGT_JAVA_CLASS_SUPER_CLASS_IS_NAME != 0 {
+            return Ok(None);
+        }
+        ptr_class = descriptor.ptr_super_class;
+    }
+
+    Ok(None)
 }
 
 async fn java_push_exception_frame(core: &mut ArmCore, _: &mut ()) -> Result<()> {
@@ -274,6 +328,31 @@ async fn java_store_long_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32
     jvm.store_array(&mut array, index as usize, [jvm::JavaValue::Long(value)])
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))
+}
+
+/// `array[index]` for a `long[]`, the load half of 0xfd; the value comes back as the ARM EABI
+/// 64-bit return (r0 low word, r1 high word), which is how LGT 슈퍼액션히어로 and 메이플스토리2007
+/// spill it to the stack afterwards (low word at the lower address).
+async fn java_load_long_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32) -> Result<u64> {
+    if ptr_array == 0 {
+        let JavaError::JavaException(exception) = jvm.exception("java/lang/NullPointerException", "long array load").await;
+        return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
+    }
+    let array = LgtJvmSupport::class_instance_from_raw(core, ptr_array);
+    let length = jvm
+        .array_length(&array)
+        .await
+        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
+    if index as usize >= length {
+        let JavaError::JavaException(exception) = jvm.exception("java/lang/ArrayIndexOutOfBoundsException", &index.to_string()).await;
+        return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
+    }
+    let values: Vec<i64> = jvm
+        .load_array(&array, index as usize, 1)
+        .await
+        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
+
+    Ok(values[0] as u64)
 }
 
 async fn java_store_reference_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32, ptr_value: u32) -> Result<()> {
@@ -423,6 +502,7 @@ async fn java_instantiate(core: &mut ArmCore, jvm: &mut Jvm, ptr_class_object: u
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     let ptr_instance = LgtJvmSupport::class_instance_raw(&*instance);
+    tracing::trace!("instantiated {} at {ptr_instance:#x}", ClassDefinition::name(&*definition));
 
     let mut initializer_callbacks = Vec::new();
     let mut current = Some(definition);
@@ -543,6 +623,7 @@ fn log_imported_members(core: &ArmCore, class_name: &str, kind: &str, table: u32
 }
 
 /// Links one field-import range, giving a wide-field placeholder the word after its low word.
+#[allow(clippy::too_many_arguments)]
 fn link_field_imports(
     core: &mut ArmCore,
     jvm: &Jvm,
@@ -658,7 +739,7 @@ async fn java_link_public_class(
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     tracing::debug!(
-        "Linking public class {class_name}: instance {}+{} @{instance_field_imports:#x}, static {}+{} @{static_field_imports:#x}, virtual {}+{} @{virtual_method_imports:#x}, interface {}+{} @{interface_method_imports:#x}, direct {}+{} @{non_virtual_method_imports:#x}",
+        "Linking public class {class_name}: instance {}+{} @{instance_field_imports:#x}, static {}+{} @{static_field_imports:#x}, virtual {}+{} @{virtual_method_imports:#x}, interface {}+{} @{interface_method_imports:#x}, direct {}+{} @{non_virtual_method_imports:#x}; results @{instance_field_word_indices:#x}/{static_field_word_indices:#x}/{virtual_method_indices:#x}/{interface_method_indices:#x}/{non_virtual_method_targets:#x}",
         link.instance_field_offset,
         link.instance_field_count,
         link.static_field_offset,

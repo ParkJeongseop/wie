@@ -8,6 +8,11 @@ use wipi_types::lgt::java::LgtJavaClassField as RawJavaField;
 use wie_core_arm::{Allocator, ArmCore};
 use wie_util::{Result, read_generic, read_null_terminated_string_bytes, write_generic, write_null_terminated_string_bytes};
 
+/// Set in `RawJavaField::unk2` of fields wie defines whose words live in the instance's extension
+/// block (see `JavaClassInstance`) rather than in the app-visible field storage. Titles never
+/// set `unk2` in their own field records.
+pub const EXTENSION_FIELD: u16 = 1;
+
 #[derive(Clone)]
 pub struct JavaField {
     pub ptr_raw: u32,
@@ -19,6 +24,7 @@ impl JavaField {
         Self { ptr_raw, core: core.clone() }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         core: &mut ArmCore,
         ptr_raw: u32,
@@ -27,6 +33,7 @@ impl JavaField {
         descriptor: &str,
         access_flags: FieldAccessFlags,
         word_index: u32,
+        extension: bool,
     ) -> Result<Self> {
         let ptr_name = Allocator::alloc(core, (name.len() + 1) as u32)?;
         write_null_terminated_string_bytes(core, ptr_name, name.as_bytes())?;
@@ -42,7 +49,7 @@ impl JavaField {
                 ptr_name,
                 ptr_descriptor,
                 flags: access_flags.bits(),
-                unk2: 0,
+                unk2: if extension { EXTENSION_FIELD } else { 0 },
                 word_index,
             },
         )?;
@@ -56,6 +63,11 @@ impl JavaField {
 
     pub fn word_index(&self) -> Result<u32> {
         Ok(self.raw()?.word_index)
+    }
+
+    /// Whether the field's words live in the instance's extension block instead of its storage.
+    pub fn is_extension(&self) -> Result<bool> {
+        Ok(self.raw()?.unk2 & EXTENSION_FIELD != 0)
     }
 }
 

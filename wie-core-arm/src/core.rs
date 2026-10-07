@@ -17,7 +17,8 @@ use crate::{
 
 const GLOBAL_DATA_BASE: u32 = 0x7fff0000;
 const FUNCTIONS_BASE: u32 = 0x71000000;
-const FUNCTIONS_SIZE: usize = 0x10000;
+/// Room for 65536 SVC stubs: every Rust-implemented Java method the guest can call gets one.
+const FUNCTIONS_SIZE: usize = 0x100000;
 const SVC_STUB_SIZE: u32 = 16;
 const INSTRUCTIONS_PER_YIELD: u32 = 10_000;
 pub const RUN_FUNCTION_LR: u32 = 0x7f000000;
@@ -40,8 +41,18 @@ pub(crate) struct ArmCoreInner {
     pub(crate) engine: Box<dyn ArmEngine>,
     instructions_remaining: u32,
     last_thread_id: ThreadId,
+    /// Registers of every guest caller that is waiting for a nested `run_function` to return.
+    /// `run_function` keeps the caller's registers in a Rust local while the callee runs, so the
+    /// engine no longer shows them; anything that scans guest registers (a GC root scan) needs
+    /// them from here.
+    suspended_callers: BTreeMap<u64, ArmCoreContext>,
+    next_suspended_caller_id: u64,
     svc_handlers: BTreeMap<u32, Arc<Box<dyn RegisteredFunction>>>,
     next_stub_address: u32,
+    /// Stubs handed out by `shared_svc_stub`, keyed by `(category, id)`. A stub only encodes those
+    /// two numbers, so callers that need the same one many times (every vtable's missing-entry
+    /// slots) share a single copy instead of consuming the stub space.
+    shared_svc_stubs: BTreeMap<(u32, u32), u32>,
     profile: Option<ProfileState>,
 }
 
@@ -89,9 +100,12 @@ impl ArmCore {
         let inner = ArmCoreInner {
             engine,
             instructions_remaining: INSTRUCTIONS_PER_YIELD,
+            suspended_callers: BTreeMap::new(),
+            next_suspended_caller_id: 0,
             last_thread_id: 0,
             svc_handlers: BTreeMap::new(),
             next_stub_address: FUNCTIONS_BASE,
+            shared_svc_stubs: BTreeMap::new(),
             profile,
         };
 
@@ -175,6 +189,17 @@ impl ArmCore {
         self.threads.lock().keys().cloned().collect()
     }
 
+    /// Every thread's saved registers with its stack bounds `(base, size)`, for callers that need
+    /// to look at what guest code currently holds (for example a conservative GC root scan). The
+    /// running thread's saved copy is stale; pair this with `save_context` for the live registers.
+    pub fn thread_contexts_with_stacks(&self) -> Vec<(ArmCoreContext, u32, u32)> {
+        self.threads
+            .lock()
+            .values()
+            .map(|state| (state.context.clone(), state.stack_base as u32, state.stack_size as u32))
+            .collect()
+    }
+
     fn sample_profile(&self) {
         let mut inner = self.inner.lock();
         if inner.profile.is_none() {
@@ -219,9 +244,22 @@ impl ArmCore {
     {
         // we don't need to save r0-r3, but to make it simple, we save all registers
         let previous_context = self.save_context();
+        let caller_id = {
+            let mut inner = self.inner.lock();
+            let id = inner.next_suspended_caller_id;
+            inner.next_suspended_caller_id += 1;
+            inner.suspended_callers.insert(id, previous_context.clone());
+            id
+        };
         let result = self.run_function_inner(address, params).await;
+        self.inner.lock().suspended_callers.remove(&caller_id);
         self.restore_context(&previous_context);
         result
+    }
+
+    /// Registers of every guest caller currently waiting on a nested `run_function`.
+    pub fn suspended_caller_contexts(&self) -> Vec<ArmCoreContext> {
+        self.inner.lock().suspended_callers.values().cloned().collect()
     }
 
     async fn run_function_inner<R>(&mut self, address: u32, params: &[u32]) -> Result<R>
@@ -342,8 +380,26 @@ impl ArmCore {
 
     pub fn make_svc_stub(&mut self, category: u32, id: impl Into<u32>) -> Result<u32> {
         let mut inner = self.inner.lock();
+
+        Self::make_svc_stub_locked(&mut inner, category, id.into())
+    }
+
+    /// Like `make_svc_stub`, but the same `(category, id)` always yields the same stub.
+    pub fn shared_svc_stub(&mut self, category: u32, id: impl Into<u32>) -> Result<u32> {
+        let mut inner = self.inner.lock();
         let id = id.into();
 
+        if let Some(address) = inner.shared_svc_stubs.get(&(category, id)) {
+            return Ok(*address);
+        }
+
+        let address = Self::make_svc_stub_locked(&mut inner, category, id)?;
+        inner.shared_svc_stubs.insert((category, id), address);
+
+        Ok(address)
+    }
+
+    fn make_svc_stub_locked(inner: &mut ArmCoreInner, category: u32, id: u32) -> Result<u32> {
         if !inner.svc_handlers.contains_key(&category) {
             return Err(WieError::FatalError(format!("Unknown SVC handler category: {category}")));
         }
@@ -1004,6 +1060,10 @@ mod tests {
         let second = core.make_svc_stub(1, 1u32).unwrap();
         assert_eq!(first, FUNCTIONS_BASE + 1);
         assert_eq!(second, FUNCTIONS_BASE + SVC_STUB_SIZE + 1);
+        let shared = core.shared_svc_stub(1, 7u32).unwrap();
+        assert_eq!(shared, FUNCTIONS_BASE + 2 * SVC_STUB_SIZE + 1);
+        assert_eq!(core.shared_svc_stub(1, 7u32).unwrap(), shared);
+        assert_eq!(core.make_svc_stub(1, 7u32).unwrap(), FUNCTIONS_BASE + 3 * SVC_STUB_SIZE + 1);
 
         let result = {
             let mut inner = core.inner.lock();
