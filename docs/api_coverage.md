@@ -586,6 +586,28 @@ Not API-crate surface, but blockers found while running real games:
 - **`DataInputStream` around null** (2026-10-07, RustJava): reading from one
   panicked the host; it is the NullPointerException titles catch around a
   missing resource (first frame of several ez-java titles).
+- **KTF database slot 4 is a seek, slot 6 by name deletes** (2026-10-08, user
+  report on 이노티아 연대기 (KTF, 루오네의 방랑자): plays, but after saving and
+  restarting "저장 공간이 부족합니다" every time). Disassembly of the title's
+  data check (`0x10bc00`, found through the caller address the WIPI-C
+  dispatcher now logs at trace level): it measures a database as
+  `slot4(h, 0, 2) - slot4(h, 0, 0)`, so slot 4 is `seek(handle, offset,
+  whence)` returning the new position, with the C `SEEK_SET/CUR/END` values.
+  The earlier reading (`(h, 0, 2)` as a rewind returning 0) made every size 0:
+  the title took its 600 KB of map/monster/tile data for missing, asked to
+  download it, and could not get past the title screen without a server.
+  `select_record_ktf` now is `seek_record_single`. Its save path deletes the
+  slot by name through slot 6 `(name, 1)`, checks it is gone and writes anew;
+  the name-keyed form was a no-op, so every save after the first reported
+  "에러 발생". It now deletes the database. Storage: the title demands 10 KB
+  free (`0x11fa6c`) to continue or start, and the data size to download; with
+  the 1 MB limit and 623 KB of data it has 425 KB. Verified: data present →
+  menu → new game → village → save → save again → restart → 이어하기 loads the
+  slot (the message in the report was not reproduced with the library's
+  archive, where the released build never gets past the download prompt).
+  With sizes no longer 0, 영웅서기3 went on to slot 15 on an opened save after
+  seeking to its end and before seeking back: `tell(handle)`, now implemented
+  as the stream position.
 - **`ClassLoader.loadClass` is synchronized** (2026-10-07, RustJava): our loader
   of native classes takes a class's prototype out of its table when it defines
   the class, and registering the class yields. A second thread needing the same

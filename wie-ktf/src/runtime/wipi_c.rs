@@ -65,6 +65,7 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
             .write(core, lr);
     }
 
+    tracing::trace!("WIPIC {}:{function_id} from {lr:#x}", id.0 >> 16);
     let body = method_table::get_method_body(table_id, function_id)
         .ok_or_else(|| WieError::FatalError(alloc::format!("Unknown KTF WIPIC SVC id {:#x}", id.0)))?;
 

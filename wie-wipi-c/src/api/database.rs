@@ -446,21 +446,20 @@ pub async fn delete_record(context: &mut dyn WIPICContext, db_id: i32, rec_id: i
 /// KTF reuses slot 6 with two call shapes that share the same SVC signature:
 ///
 ///  - standard WIPI: `delete_record(handle, rec_id)`
-///  - KTF custom:    `(name_ptr, type)` — used as a name-keyed cleanup
+///  - KTF custom:    `(name_ptr, type)` — deletes the database of that name
 ///
 /// Both pass two ints, so we disambiguate by reading the magic field at
 /// `a0`. A real handle starts with `DATABASE_HANDLE_MAGIC`; a name pointer
-/// (or anything else) does not, and we fall back to a no-op.
+/// does not. 이노티아 연대기 overwrites a save by deleting it by name, checking
+/// that it is gone and writing it anew; with the deletion ignored, the check
+/// failed and the title reported an error for every save after the first.
 pub async fn delete_record_ktf(context: &mut dyn WIPICContext, a0: i32, a1: i32) -> Result<i32> {
     if load_handle(context, a0)?.is_some() {
         return delete_record(context, a0, a1).await;
     }
 
-    // Not a real handle — KTF name-keyed form. No-op preserves saves; the
-    // bytes of a name string would otherwise round-trip into the standard
-    // path and silently delete record 1 of the just-saved DB.
-    tracing::debug!("MC_dbDeleteRecord(name-keyed @ {a0:#x}, {a1}) -> 0 (no-op)");
-    Ok(0)
+    tracing::debug!("MC_dbDeleteRecord(name-keyed @ {a0:#x}, {a1}) -> delete database");
+    delete_database(context, a0 as u32, a1).await
 }
 
 pub async fn delete_database(context: &mut dyn WIPICContext, ptr_name: WIPICWord, flags: i32) -> Result<i32> {
@@ -557,38 +556,27 @@ pub async fn stream_read(context: &mut dyn WIPICContext, db_id: i32, buf_ptr: WI
     Ok(take as _)
 }
 
-/// KTF custom slot 4 — repurposed from standard `MC_dbSelectRecord` into a
-/// stream-control op `(handle, offset, mode)` that seeks both read/write
-/// cursors. The standard WIPI signature `(db_id, rec_id, buf_ptr, buf_len)`
-/// is not implemented; LGT routes do not use this slot.
-pub async fn select_record_ktf(context: &mut dyn WIPICContext, db_id: i32, rec_id: i32, mode: WIPICWord, _buf_len: WIPICWord) -> Result<i32> {
-    tracing::debug!("MC_dbSelectRecord({db_id:#x}, {rec_id}, mode={mode:#x}, {_buf_len})");
+/// KTF slot 4 is a seek on the stream, `(handle, offset, whence)` with the C `SEEK_SET`/`SEEK_CUR`/
+/// `SEEK_END` values, and it returns the resulting position. Titles measure a database with
+/// `seek(h, 0, 2) - seek(h, 0, 0)` (이노티아 연대기 decides from that whether its downloaded data
+/// is present; with 0 it asks to download again) and position multi-slot saves with
+/// `seek(h, slot_offset, 0)`.
+pub async fn select_record_ktf(context: &mut dyn WIPICContext, db_id: i32, offset: i32, whence: WIPICWord, _unused: WIPICWord) -> Result<i32> {
+    tracing::debug!("MC_dbSeek({db_id:#x}, {offset}, {whence})");
 
-    let Some(mut handle) = load_handle(context, db_id)? else {
+    seek_record_single(context, db_id, offset, whence as i32).await
+}
+
+/// KTF slot 15 reports the stream position, `tell(handle)`: 영웅서기3 opens a save, seeks to
+/// its end, asks this, and seeks back to the start, keeping the answer as the save's size.
+pub async fn tell_ktf(context: &mut dyn WIPICContext, db_id: i32) -> Result<i32> {
+    tracing::debug!("MC_dbTell({db_id:#x})");
+
+    let Some(handle) = load_handle(context, db_id)? else {
         return Ok(-25); // M_E_INVALIDHANDLE
     };
 
-    // KTF reuses slot 4 as a stream-control op `(handle, offset, mode)`. The
-    // shapes observed across games:
-    //
-    //   - `(handle, slot_offset, 0)` — multi-slot save files store each
-    //     slot at a known byte offset within record 1; this seeks both
-    //     cursors so the next read/write hits the right slot while
-    //     preserving the bytes belonging to the other slots.
-    //   - `(handle, 0, 0)` and `(handle, 0, 2)` — rewinds both cursors.
-    //     mode=0 vs 2 isn't a length and isn't truncate (truncating on
-    //     mode=2 on the read path destroys a prefetched buffer during a
-    //     subsequent re-open and wipes the saved record). Both are treated
-    //     as plain seek-and-rewind.
-    if rec_id >= 0 {
-        let offset = rec_id as u32;
-        handle.read_cursor = offset;
-        handle.write_cursor = offset;
-        write_generic(context, db_id as _, handle)?;
-        return Ok(0);
-    }
-
-    Ok(-22) // M_E_BADRECID
+    Ok(handle.read_cursor as i32)
 }
 
 /// Slot 5 — KTF custom `db_stat_by_name`. From observed call shape:
@@ -784,9 +772,29 @@ mod tests {
     use crate::context::test::TestContext;
 
     use super::{
-        KTF_DATABASE_STORAGE_LIMIT, delete_database, exists_database, list_databases, list_record_info, open_database, select_record, stream_read,
-        stream_write, update_record,
+        KTF_DATABASE_STORAGE_LIMIT, delete_database, delete_record_ktf, exists_database, list_databases, list_record_info, open_database,
+        select_record, select_record_ktf, stream_read, stream_write, tell_ktf, update_record,
     };
+
+    #[futures_test::test]
+    async fn ktf_seek_tell_and_delete_by_name() {
+        let mut context = database_test_context();
+        let db_id = open_test_database(&mut context).await;
+        context.write_bytes(0x2000, &[7; 320]).unwrap();
+        assert_eq!(stream_write(&mut context, db_id, 0x2000, 320).await.unwrap(), 320);
+
+        // a title measures a database as seek(end) - seek(start), and asks the position in between
+        assert_eq!(select_record_ktf(&mut context, db_id, 0, 0, 0).await.unwrap(), 0);
+        assert_eq!(select_record_ktf(&mut context, db_id, 0, 2, 0).await.unwrap(), 320);
+        assert_eq!(tell_ktf(&mut context, db_id).await.unwrap(), 320);
+        assert_eq!(select_record_ktf(&mut context, db_id, -44, 2, 0).await.unwrap(), 276);
+        assert_eq!(select_record_ktf(&mut context, db_id, 0, 0, 0).await.unwrap(), 0);
+
+        // slot 6 given a name instead of a handle deletes that database
+        assert_eq!(exists_database(&mut context, 0x1000, 1).await.unwrap(), 0);
+        assert_eq!(delete_record_ktf(&mut context, 0x1000, 1).await.unwrap(), 0);
+        assert_eq!(exists_database(&mut context, 0x1000, 1).await.unwrap(), -12);
+    }
 
     #[futures_test::test]
     async fn ktf_available_database_storage_tracks_app_usage() {
