@@ -695,7 +695,7 @@ mod test {
                     "()J",
                     false,
                     vec![JavaValue::from(runtime)],
-                    vec![0x100000, 0],
+                    vec![16 * 1024 * 1024, 0], // the heap Runtime reports (RustJava)
                 ),
                 ("java/lang/System", "currentTimeMillis", "()J", true, vec![], vec![0x9abcdef0, 0x12345678]),
                 (
