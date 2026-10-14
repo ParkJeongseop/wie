@@ -37,10 +37,24 @@ impl HandsetProperty {
 
     async fn get_system_property(jvm: &Jvm, _: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<ClassInstanceRef<String>> {
         let name = JavaLangString::to_rust_string(jvm, &name).await?;
-        tracing::warn!("stub org.kwis.msp.handset.HandsetProperty::getSystemProperty({name})");
+        tracing::debug!("org.kwis.msp.handset.HandsetProperty::getSystemProperty({name})");
 
+        // The values a Korean handset answers (wfeature's table). VOLUMELEVEL and VIBRATORLEVEL are the
+        // number of steps the hardware has, not a setting: titles divide by them or parse them in
+        // startApp (요구르팅, 2006월드올림픽, 드래곤나이트2, 메이플스토리 궁수편, 알바_전설_편의점2 died
+        // on Integer.parseInt("")). PHONENUMBER and MIN stay empty on purpose (see the DRM note in
+        // docs/api_coverage.md); PHONEMODEL too, since titles compare it against handset names.
         let value = match name.as_ref() {
+            "VOLUMELEVEL" => "5",
             "VIBRATORLEVEL" => "0",
+            "RSSILEVEL" => "30",
+            "MAXRSSILEVEL" => "100",
+            "BATTERYLEVEL" => "100",
+            "MAXBATTLEVEL" => "100",
+            "TIMEZONE" => "GMT+09:00",
+            "ESN" => "00000000",
+            "ANNUN_CALL" | "ANNUN_SMS" | "ANNUN_SILENT" | "ANNUN_ALARM" | "ANNUN_SECURITY" => "0",
+            "CURRENTCH" | "AIRPLANE_MODE" | "ROAMING_AREA" | "DS_LOCK" => "0",
             _ => "",
         };
 

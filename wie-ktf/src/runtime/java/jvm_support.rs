@@ -827,6 +827,41 @@ mod test {
     }
 
     #[test]
+    fn test_exception_to_string_resolves_through_throwable() -> Result<()> {
+        let mut system = System::new(Box::new(TestPlatform::new()), "", "", DefaultTaskRunner);
+
+        let done = Arc::new(AtomicBool::new(false));
+
+        let done_clone = done.clone();
+        let mut system_clone = system.clone();
+        system.spawn(async move || {
+            let (jvm, _core) = init_jvm(&mut system_clone).await?;
+
+            let exception = jvm.exception("org/kwis/msp/db/DataBaseException", "database x does not exist").await;
+            let jvm::JavaError::JavaException(exception) = exception;
+            let string: jvm::ClassInstanceRef<rustjava_runtime::classes::java::lang::String> = jvm
+                .invoke_virtual(&exception, "java/lang/Object", "toString", "()Ljava/lang/String;", ())
+                .await
+                .unwrap();
+            let string = jvm::runtime::JavaLangString::to_rust_string(&jvm, &string).await.unwrap();
+            assert_eq!(string, "org.kwis.msp.db.DataBaseException: database x does not exist");
+
+            done_clone.store(true, Ordering::Relaxed);
+
+            Ok(())
+        });
+
+        loop {
+            system.tick()?;
+            if done.load(Ordering::Relaxed) {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_long_array_store_load() -> Result<()> {
         let mut system = System::new(Box::new(TestPlatform::new()), "", "", DefaultTaskRunner);
 

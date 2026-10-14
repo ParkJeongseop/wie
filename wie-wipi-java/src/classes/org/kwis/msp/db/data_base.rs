@@ -1,6 +1,6 @@
-use alloc::vec;
+use alloc::{format, vec};
 
-use jvm::{Array, ClassInstanceRef, JavaError, Jvm, Result as JvmResult};
+use jvm::{Array, ClassInstanceRef, JavaError, Jvm, Result as JvmResult, runtime::JavaLangString};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::String;
@@ -138,17 +138,26 @@ impl DataBase {
     ) -> JvmResult<ClassInstanceRef<DataBase>> {
         tracing::debug!("org.kwis.msp.db.DataBase::openDataBase({data_base_name:?}, {record_size}, {create}, {flags})");
 
-        // TODO a missing database is created even without `create`. It should be a DataBaseException,
-        // but titles that catch it go on to print it, which the KTF runtime cannot do yet
-        // (미니게임파티: AbstractMethodError for its toString).
-        let record_store: ClassInstanceRef<RecordStore> = jvm
+        // Without `create`, a missing database is a DataBaseException (the specification; 모바일크래프트2
+        // and 전국호텔왕plus catch it to decide between a first start and a saved game).
+        let record_store: JvmResult<ClassInstanceRef<RecordStore>> = jvm
             .invoke_static(
                 "javax/microedition/rms/RecordStore",
                 "openRecordStore",
                 "(Ljava/lang/String;Z)Ljavax/microedition/rms/RecordStore;",
-                (data_base_name, true),
+                (data_base_name.clone(), create),
             )
-            .await?;
+            .await;
+        let record_store = match record_store {
+            Ok(record_store) => record_store,
+            Err(JavaError::JavaException(exception)) if jvm.is_instance(&*exception, "javax/microedition/rms/RecordStoreNotFoundException") => {
+                let name = JavaLangString::to_rust_string(jvm, &data_base_name).await?;
+                return Err(jvm
+                    .exception("org/kwis/msp/db/DataBaseException", &format!("database {name} does not exist"))
+                    .await);
+            }
+            Err(error) => return Err(error),
+        };
 
         let mut instance: ClassInstanceRef<DataBase> = jvm
             .new_class("org/kwis/msp/db/DataBase", "(Ljavax/microedition/rms/RecordStore;)V", (record_store,))
@@ -292,13 +301,18 @@ impl DataBase {
                 "javax/microedition/rms/RecordStore",
                 "deleteRecordStore",
                 "(Ljava/lang/String;)V",
-                (data_base_name,),
+                (data_base_name.clone(),),
             )
             .await;
 
-        // deleting a database that is not there stays silent, for the same reason as opening one
+        // deleting a database that is not there is a DataBaseException, as the specification says
         match result {
-            Err(JavaError::JavaException(exception)) if jvm.is_instance(&*exception, "javax/microedition/rms/RecordStoreNotFoundException") => Ok(()),
+            Err(JavaError::JavaException(exception)) if jvm.is_instance(&*exception, "javax/microedition/rms/RecordStoreNotFoundException") => {
+                let name = JavaLangString::to_rust_string(jvm, &data_base_name).await?;
+                Err(jvm
+                    .exception("org/kwis/msp/db/DataBaseException", &format!("database {name} does not exist"))
+                    .await)
+            }
             result => result,
         }
     }

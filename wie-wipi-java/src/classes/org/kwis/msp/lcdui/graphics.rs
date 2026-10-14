@@ -217,6 +217,13 @@ impl Graphics {
         tracing::debug!("org.kwis.msp.lcdui.Graphics::setFont({this:?}, {font:?})");
 
         let midp_graphics = jvm.get_field(&this, "midpGraphics", "Ljavax/microedition/lcdui/Graphics;").await?;
+        // A null font selects the default one, as in MIDP (서든어택 and 절묘한타이밍 pass null).
+        let font = if font.is_null() {
+            jvm.invoke_static("org/kwis/msp/lcdui/Font", "getDefaultFont", "()Lorg/kwis/msp/lcdui/Font;", ())
+                .await?
+        } else {
+            font
+        };
         let midp_font = Font::midp_font(jvm, &font).await?;
 
         jvm.invoke_virtual(

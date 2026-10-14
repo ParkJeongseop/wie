@@ -341,13 +341,16 @@ fn gen_unk_stub(id: u32, index: u32) -> WIPICMethodBody {
     body.into_body()
 }
 
+// Table 4 is the input-method block (MC_im*): entries 3 and 4 are the mode count and the mode
+// table, identified from the call sites that walk the answer comparing "KO", "EN/S", "EN/L",
+// "N123"; entries 0..2 are the mode set/get and handleInput in an order no title has shown yet.
 pub fn get_unk3_method_table() -> Vec<WIPICMethodBody> {
     vec![
         gen_unk_stub(3, 0),
         gen_unk_stub(3, 1),
         gen_unk_stub(3, 2),
-        gen_unk_stub(3, 3),
-        gen_unk_stub(3, 4),
+        im::get_supported_mode_count.into_body(),
+        im::get_supported_modes.into_body(),
     ]
 }
 
@@ -493,13 +496,24 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICGraphicsMethodId::GetImageInfo => Some(gen_stub(59, "OEMC_grpGetImageInfo")),
         },
         WIPICTableId::Interface3 => get_unk3_method_table().into_iter().nth(function_id as usize),
-        WIPICTableId::Interface4 => {
-            if function_id < 64 {
-                Some(gen_stub(4, "stub"))
-            } else {
-                None
-            }
-        }
+        // Table 5 is the record database (the specification's MC_db* section in its own order:
+        // open, close, delete, insert, select, update, delete-record, list, then the count, the
+        // record size and, at 12, what titles read as the storage still available).
+        WIPICTableId::Interface4 => match function_id {
+            0 => Some(database::open_record_database_ktf.into_body()),
+            1 => Some(database::close_database.into_body()),
+            2 => Some(database::delete_database.into_body()),
+            3 => Some(database::insert_record.into_body()),
+            4 => Some(database::select_record.into_body()),
+            5 => Some(database::update_record.into_body()),
+            6 => Some(database::delete_record_ktf.into_body()),
+            7 => Some(database::list_record.into_body()),
+            10 => Some(database::get_number_of_records.into_body()),
+            11 => Some(database::get_record_size.into_body()),
+            12 => Some(database::list_databases.into_body()),
+            8 | 9 => Some(gen_unk_stub(5, function_id as u32)),
+            _ => None,
+        },
         WIPICTableId::Interface5 => {
             if function_id < 64 {
                 Some(gen_stub(5, "stub"))
@@ -516,7 +530,9 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICDatabaseMethodId::UpdateRecord => Some(database::stat_by_name_ktf.into_body()),
             WIPICDatabaseMethodId::DeleteRecord => Some(database::delete_record_ktf.into_body()),
             WIPICDatabaseMethodId::ListRecord => Some(database::list_record.into_body()),
-            WIPICDatabaseMethodId::SortRecords => Some(gen_stub(8, "MC_dbSortRecords")),
+            // Slot 8 of this table is MC_fsMkDir(name): nothing here holds a directory, so making
+            // one succeeds (겟앰프드 and 티어즈오브메탈 make one before their first save).
+            WIPICDatabaseMethodId::SortRecords => Some(database::make_directory_ktf.into_body()),
             WIPICDatabaseMethodId::GetAccessMode => Some(gen_stub(9, "MC_dbGetAccessMode")),
             WIPICDatabaseMethodId::GetNumberOfRecords => Some(database::get_number_of_records_ktf.into_body()),
             WIPICDatabaseMethodId::GetRecordSize => Some(database::get_record_size_ktf.into_body()),

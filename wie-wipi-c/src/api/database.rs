@@ -39,6 +39,8 @@ struct DatabaseHandle {
     buffer_ptr: u32,
     buffer_len: u32,
     buffer_capacity: u32,
+    /// The record size a KTF record database was opened with (table 5); 0 for a stream handle.
+    record_size: u32,
 }
 
 const MIN_BUFFER_CAPACITY: u32 = 64;
@@ -130,6 +132,7 @@ async fn open_database_impl(context: &mut dyn WIPICContext, ptr_name: WIPICWord,
         buffer_ptr: 0,
         buffer_len: 0,
         buffer_capacity: 0,
+        record_size: 0,
     };
     handle.name[..name_bytes.len()].copy_from_slice(name_bytes);
 
@@ -569,6 +572,101 @@ pub async fn select_record_ktf(context: &mut dyn WIPICContext, db_id: i32, offse
 
 /// KTF slot 15 reports the stream position, `tell(handle)`: 영웅서기3 opens a save, seeks to
 /// its end, asks this, and seeks back to the start, keeping the answer as the save's size.
+/// KTF's table 5 is the record database of the specification's `MC_db*` section, opened as
+/// `(name, record_size, create)`: a numbered set of records addressed by id, unlike the
+/// stream-style file API of table 7 above. Without `create` a missing database is M_E_NOENT.
+pub async fn open_record_database_ktf(context: &mut dyn WIPICContext, ptr_name: WIPICWord, record_size: i32, create: i32) -> Result<i32> {
+    tracing::debug!("MC_dbOpenDataBase({ptr_name:#x}, {record_size}, {create}) [record database]");
+
+    let Ok(name) = String::from_utf8(read_null_terminated_string_bytes(context, ptr_name)?) else {
+        return Ok(-22);
+    };
+    if name.len() > MAX_NAME_LEN {
+        return Ok(-22);
+    }
+
+    let system = context.system();
+    let pid = system.pid().to_owned();
+    if !system.platform().database_repository().exists(&name, &pid).await {
+        if create == 0 {
+            return Ok(-12); // M_E_NOENT
+        }
+        system.platform().database_repository().open(&name, &pid).await;
+    }
+
+    let mut handle = DatabaseHandle {
+        magic: DATABASE_HANDLE_MAGIC,
+        name: [0; 32],
+        read_cursor: 0,
+        write_cursor: 0,
+        buffer_ptr: 0,
+        buffer_len: 0,
+        buffer_capacity: 0,
+        record_size: record_size.max(0) as u32,
+    };
+    handle.name[..name.len()].copy_from_slice(name.as_bytes());
+
+    let ptr_handle = context.alloc_raw(size_of::<DatabaseHandle>() as _)?;
+    write_generic(context, ptr_handle, handle)?;
+
+    Ok(ptr_handle as _)
+}
+
+pub async fn insert_record(context: &mut dyn WIPICContext, db_id: i32, buf_ptr: WIPICWord, buf_len: WIPICWord) -> Result<i32> {
+    tracing::debug!("MC_dbInsertRecord({db_id:#x}, {buf_ptr:#x}, {buf_len})");
+
+    let Some(handle) = load_handle(context, db_id)? else {
+        return Ok(-25); // M_E_INVALIDHANDLE
+    };
+    let Some(mut db) = open_db_for_handle(context, &handle).await else {
+        return Ok(-25);
+    };
+
+    let mut buf = vec![0; buf_len as usize];
+    context.read_bytes(buf_ptr, &mut buf)?;
+
+    Ok(db.add(&buf).await as i32)
+}
+
+pub async fn get_number_of_records(context: &mut dyn WIPICContext, db_id: i32) -> Result<i32> {
+    tracing::debug!("MC_dbGetNumberOfRecords({db_id:#x})");
+
+    let Some(db) = get_database_from_db_id(context, db_id).await? else {
+        return Ok(-25);
+    };
+
+    Ok(db.get_record_ids().await.len() as i32)
+}
+
+/// The size a record database was opened with; a handle opened without one answers its first
+/// record's length.
+pub async fn get_record_size(context: &mut dyn WIPICContext, db_id: i32) -> Result<i32> {
+    tracing::debug!("MC_dbGetRecordSize({db_id:#x})");
+
+    let Some(handle) = load_handle(context, db_id)? else {
+        return Ok(-25);
+    };
+    if handle.record_size != 0 {
+        return Ok(handle.record_size as i32);
+    }
+    let Some(db) = open_db_for_handle(context, &handle).await else {
+        return Ok(-25);
+    };
+    let first = db.get_record_ids().await.into_iter().next();
+    Ok(match first {
+        Some(id) => db.get(id).await.map(|data| data.len() as i32).unwrap_or(0),
+        None => 0,
+    })
+}
+
+/// KTF's table-7 slot 8 is `MC_fsMkDir(name)`; the store is flat, so a directory costs nothing.
+pub async fn make_directory_ktf(context: &mut dyn WIPICContext, ptr_name: WIPICWord) -> Result<i32> {
+    let name = String::from_utf8_lossy(&read_null_terminated_string_bytes(context, ptr_name)?).into_owned();
+    tracing::debug!("MC_fsMkDir({name})");
+
+    Ok(0)
+}
+
 pub async fn tell_ktf(context: &mut dyn WIPICContext, db_id: i32) -> Result<i32> {
     tracing::debug!("MC_dbTell({db_id:#x})");
 

@@ -116,7 +116,7 @@ Device, SISImage and 3D are thin.
 - **IMPL**: XFile / FileInputStream / FileOutputStream (file I/O), Vibration,
   MathFP, ProgressBar, Graphics2D (`drawImage`, `createMaskableImage`, pixel
   access, `invertRect`), Toolkit (fonts, images, `splitString`), XDisplay
-  `drawImageEx` (masked blit) / `clear`, `WieAudioClip` playback
+  `drawImageEx` (a Graphics2D draw of its fifth argument) / `clear`, `WieAudioClip` playback
   (open/play/loop/stop/close via backend SMAF audio), ByteToCharEUC_KR on its
   `ByteToCharConverter` base (undocumented xce EUC-KR decoder; games construct
   it for Korean text), **TextComponentHandler + TextComponent** (the handset's
@@ -218,6 +218,15 @@ Device, SISImage and 3D are thin.
     포트리스's `g.class` has `C0 80` in its strings and was a ClassFormatError
     on load. `System.exec` (택티컬퀘스트 hands over to "XCE") is logged and
     ignored, `PrintStream.println([B)` prints the bytes as text.
+  - `XDisplay.drawImageEx(g, image, tx, ty, src, sx, sy, sw, sh, mode)` draws
+    its **fifth** argument — `Graphics2D.getGraphics2D(g).drawImage(tx, ty, src,
+    sx, sy, sw, sh, mode)` in the vendor's own Java (sktemu's copy of it) — and
+    the second image is unused. It had been read the other way round, with the
+    second image as the source and the fifth as a mask; 다크슬레이어2, the one
+    title in the library that calls it, passes null second and a 240x1 strip
+    fifth, so every row of its screen transition threw NullPointerException
+    (swallowed) and the title sat on a black screen behind 400 refreshes.
+    Result: both copies go from a black screen to 36 distinct frames in 40 s (SK-VM 82 to 84 of 90).
   - Result: 82 of the 90 titles progress in a 40 s run with OK every 3 s, 70 before and none worse. 디지몬 RPG II, 코인마스터, 포켓올림픽, 바운티블루스, 어스토니시아ep3, 드래곤아이즈, 센티멘탈러브 and 포트리스 no longer fail at start, 테일즈 오브 히어로즈 gets past the screen it sat on, 미니고치 (both copies) and 서울타이쿤 reach their name entry, 택티컬퀘스트 its character-name screen (one swallowed ArrayIndexOutOfBoundsException in its paint). Every changed title was looked at on contact sheets. The 44-title KTF / LGT WIPI / ez-java sample (16 s) is identical to the baseline, so the shared MIDP and RustJava changes cost nothing there.
   - Still failing: 다크슬레이어2 (both copies: draws its logo, then a black screen and no further drawing — open, see NEXT_SESSION), 크레이지버스 (`m.V3` / `m.A3`, a vector package the jar does not ship and no reference names), 메이플스토리 전사편 J2ME 호환판 (a bare J2ME jar without an .msd, "Unknown archive format"); 어스토니시아ep1 / ep2, 레스토랑타이쿤2006 and 불멸의용병 sit on a title or menu that OK does not advance (digit keys), which is the key script, not the runtime.
 
@@ -672,13 +681,23 @@ Not API-crate surface, but blockers found while running real games:
   NoClassDefFoundError for `org.kwis.msp.lcdui.Graphics` in 한게임신맞고1 (KTF),
   whose timer thread and the event thread now both paint early. Java declares
   the method synchronized; with that the second thread waits.
-- **WIPI `DataBase.openDataBase(…, create=false)` still creates** (2026-10-07):
-  it sits on the MIDP RecordStore, which now refuses to open a missing store
-  without `createIfNecessary`. Passing that on as DataBaseException is what the
-  specification says and 모바일크래프트2 and 전국호텔왕plus catch it, but
-  미니게임파티 goes on to print the exception and the KTF runtime answers its
-  `toString` with AbstractMethodError, so `DataBase` keeps creating (and
-  `deleteDataBase` of a missing database stays silent) until that is fixed.
+- ~~**WIPI `DataBase.openDataBase(…, create=false)` still creates** (2026-10-07)~~
+  — fixed 2026-10-15: a missing database is a DataBaseException without
+  `create`, and `deleteDataBase` of a missing one throws too, as the
+  specification says (모바일크래프트2 and 전국호텔왕plus catch it to tell a first
+  start from a saved game). What stopped this before was not `toString` but
+  **the KTF catch block never getting the object**: a KTF method's prologue
+  registers an exception-handler record on its stack and saves its registers
+  with a setjmp (`stm r0!, {r4-r11, ip, sp, lr}`); on a throw, `handle_exception`
+  longjmps through the record's restore function with the matching table
+  entry's `target` in r0, the method compares r0 against its handler ids, and
+  the catch block loads the thrown object **from the record's word at +16**
+  (`JavaExceptionHandler.unk3`) before using it — 미니게임파티's `… + e` read a
+  stale word there, passed it to `StringBuffer.append(Object)` and got the
+  AbstractMethodError for `Object.toString` on a non-object. The word is now
+  written before the unwind. Read from the title's code: method `o.*()V`,
+  handler at fn_body+0x104, `ldr r3, [sp, #0x18]` right after `cmp r0, #0x104`.
+  Sweeps against the previous build: KTF 321 titles at 16 s: 241 to 244 progress, none worse — 루빅스큐브, 물가에돌튕기기2 and 시네마타이쿤 (the "Invalid memory access / NullPointerException in startApp" cases above, which were catch blocks working on a stale word) now start, 해적왕2007 gets to its next layer (`wec/DMInfo`); LGT WIPI 79 at 40 s and SK-VM 90 at 40 s identical.
 - **What the ez-java work did to the other platforms** (2026-10-07, sweeps
   against the build before it; 40 s, KTF 16 s): none of the above is ez-java
   specific. SK-VM: 70 of 90 titles progress, 58 before, none worse — (SKT)
@@ -719,8 +738,9 @@ Not API-crate surface, but blockers found while running real games:
   missing class the loader tries to resolve (e.g. 멋지다김밥군 needed
   org.kwis.msp.lwc.GrabKeyListener, now added). Other apps crash in
   startApp itself (루빅스큐브: Invalid memory access; 시네마타이쿤:
-  NullPointerException) — some API returns a bad value/null that the game
-  then dereferences; needs per-game investigation.
+  NullPointerException) — both were catch blocks reading the thrown object
+  from a word the runtime never wrote (see the KTF catch-record note of
+  2026-10-15 above); they start now.
 - **KTF bytecode-only apps** — some KTF jars ship a Java-bytecode main
   class instead of ARM AOT code (셔터-영혼의울림, 헬싱). KTF classes live as
   ARM structures and interpreter instances cannot cross the value boundary
@@ -735,13 +755,50 @@ Not API-crate surface, but blockers found while running real games:
   `unk != 0 => Ok(1)` fallback despite its "is it correct?" TODO. KTF uses
   a vtable-based custom class hierarchy that jvm.is_instance cannot resolve,
   so replacing the fallback with a "correct" instanceof regressed most KTF
-  games (28->16 in the sample) — verified and reverted. 루빅스큐브's
-  Invalid memory access in startApp is downstream of this and is NOT
-  fixable by tightening the check.
+  games (28->16 in the sample) — verified and reverted. (루빅스큐브's
+  Invalid memory access in startApp was the catch-record word, not this
+  check; fixed 2026-10-15.)
 - **Thread context class loading** — Class.forName from app threads can fail
   to see app classes ("No such class: i"); blocks some SKT games after boot.
 - **Guest heap pressure** — one LGT app exhausts the guest heap after long
   runs ("Allocation failure"); leak vs. heap size not yet determined.
+
+- **KTF boot failures by signature** (2026-10-15, after the catch-record fix, 52
+  of 321 titles failed in a 16 s run; grouped by their first error):
+  - 10 × "Unknown archive format": the files sit under one directory
+    (`W/apps/<id>/…` handset dumps, `이노티아연대기1-wipi1.2/`, `fifa07/`, EUC-KR
+    folder names) and the loaders look for `__adf__` at the root. The app
+    (`wipi_core::normalize_archive`) now strips the directory that holds the
+    platform marker (`__adf__`, `.msd`, `.jad`) when no platform recognises
+    the archive as it is.
+  - 5 × `NumberFormatException: For input string: ""` in startApp (요구르팅,
+    2006월드올림픽, 드래곤나이트2, 메이플스토리 궁수편, 알바_전설_편의점2):
+    `HandsetProperty.getSystemProperty("VOLUMELEVEL")` answered "" and the
+    titles parse it (the number of volume steps, which they divide by). The
+    property table now carries a handset's answers (wfeature's values:
+    VOLUMELEVEL 5, VIBRATORLEVEL 0, RSSI/battery levels, TIMEZONE, ESN, the
+    ANNUN_* flags); PHONENUMBER, MIN and PHONEMODEL stay empty on purpose.
+  - 4 × `Unimplemented: 4: stub` (sega미니게임6, 마법상점타이쿤2 ×2, 컴투스포춘골프3D):
+    WIPI-C table 5, which the method table only stubbed. It is the
+    **record database** of the specification's `MC_db*` section in that
+    section's order (0 open `(name, record_size, create)`, 1 close, 2 delete,
+    3 insert, 4 select, 5 update, 6 delete-record or delete-by-name, 7 list,
+    10 count, 11 record size, 12 the storage still available) — what table 7,
+    wie's stream-style "database", is not: that one is the `MC_fs*` file API
+    (open/read/write/close/seek, the attributes at 5, remove at 6, **`MC_fsMkDir`
+    at 8** — previously the fatal "MC_dbSortRecords" stub 겟앰프드 and 티어즈오브메탈
+    died on; a directory now costs nothing — list at 10, tell at 15, exists at
+    16). Table 4 is the input-method block; entries 3 and 4 answer the mode
+    count and the mode table the way LGT's block does. Both identifications
+    are wfeature's, from call sites and the specification's section order.
+  - 3 × a host panic in `Graphics.setFont` (서든어택 ×2, 절묘한타이밍): the titles
+    pass a null font; it now selects the default font as MIDP does.
+  - Left: 셔터/헬싱/코에이 삼국지 영걸전 (bytecode main class, structural),
+    영웅전설3_하얀마녀 (an undefined ARM instruction while loading a class),
+    3 × "Allocation failure" (붕어빵타이쿤3 KTF: guest heap), 3 × `memory fault`
+    (테일즈판타지 …), MC_grpEncodeImage (마스터오브소드3 ×2), MC_knlReserved4
+    (액션히어로3D), 강호동맞고2 (`com.ktf.kfc.GTextField`), two broken zips.
+  - Result: KTF 321 at 16 s: 244 to 261 progress (52 to 31 failing), none worse. 요구르팅, 드래곤나이트2, 메이플스토리 궁수편, 알바_전설_편의점2 (the VOLUMELEVEL parse), 겟앰프드 (MkDir), 마법상점타이쿤2 ×2 (the record database), 서든어택 ×2, 치킨타이쿤 ×2 (the null font), 이노티아1 ×2, 피파7, 하베스트타이쿤 ×2, 헬로우닌자 (the wrapped archives) start and were looked at on contact sheets (in-game, menus, story). Moved to a next layer: 2006월드올림픽 and 티어즈오브메탈 fault after nine frames, sega미니게임6 faults at address 0 right after its first MC_dbInsertRecord, 컴투스포춘골프3D at address 4, 리얼싸커2009 ×2 show "Data 인스톨에 실패했습니다" (their packaged `P/` data is not found by the record database yet), 이노티아연대기2 ×2 "메모리에러".
 
 ## Carrier Extensions (not implemented)
 

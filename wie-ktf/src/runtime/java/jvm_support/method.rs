@@ -263,6 +263,16 @@ impl JavaMethod {
                     exception_handler.ptr_method
                 );
 
+                // The catch block takes the thrown object from the handler record: the method's
+                // setjmp returns the entry's target, the block compares it and loads the object
+                // from this word (미니게임파티 `catch (DataBaseException e) { ... + e }` read a
+                // stale word here and called toString on it).
+                write_generic(
+                    core,
+                    current_java_exception_handler + offset_of!(RawJavaExceptionHandler, unk3) as u32,
+                    KtfJvmSupport::class_instance_raw(&exception),
+                )?;
+
                 return Err(WieError::JavaExceptionUnwind {
                     context_base: contexts_base,
                     target: entry.target,
