@@ -397,6 +397,54 @@ runs them on `wie_midp` + `wie_mmpp`.
   13 — wie's `Interface12`, three slots — is not the cause: its slot 1 is
   called once per tick between graphics slots 10 and 21 at 0x10a212 and the
   answer is discarded.)
+- **A null or screen framebuffer is nothing to destroy** (2026-10-15):
+  `MC_grpDestroyOffScreenFrameBuffer` dereferenced whatever it was handed, and
+  컴투스포춘골프3D hands it null when its five-second notice ends ("Invalid
+  memory access; address: 4" before any frame). Null and the screen's own
+  framebuffer are now no-ops (the specification says so of the screen), and a
+  record that is destroyed gives back its pixel buffer with it, which
+  `MC_knlGetFreeMemory` counts. What the title then shows is "첫 실행시 메모리
+  최적화를 위해 게임을 종료 합니다. 다시 실행해 주세요" and `MC_knlExit`: a
+  first-launch exit like the LGT ones, so a 16 s single launch stays FAIL ("no
+  frame painted"); launched twice it reads its record database and faults in
+  its 3D model loader (a resource name table entry it never filled; open).
+  KTF 273 of 321 unchanged, none worse.
+- **A guest memory fault now logs the registers** (2026-10-15): the ARM core's
+  "memory fault accessing" line carries `sp` and `r0-r12`, the way the
+  "jump to unmapped pc" line already did. A fault that reaches the Java
+  `EventQueue` has lost that context by then (the dump there is all zero), so
+  this line is where the faulting state is. It is what showed 2006월드올림픽
+  faulting on an object that was the integer 0xa — its `java_jump_3` second
+  argument — and 티어즈오브메탈 reading into a pointer it had just loaded from
+  its packaged `P/res/save.sav`: that file is the archived handset's memory
+  structure with the handset's heap address inside, so it cannot be read on
+  any other device (without the two `.sav` files the title reaches its mode
+  selection). Both are written up in NEXT_SESSION.md.
+- **LGT `MC_fsList` (0x19a), partially** (2026-10-15): `MC_fsList(dir, buffer,
+  size, access_level)` lists a directory's children as NUL-terminated names
+  ended by an empty one, 0 on success, M_E_SHORTBUF when they do not fit
+  (wfeature's reading of its one caller). 뮤직팩토리 lists its folder of song
+  folders at start and stopped at "Unknown LGT WIPIC SVC id 410". The store
+  cannot be walked here yet, so the listing is empty: what a title wrote is
+  not listed back (open; a repository listing is the missing piece).
+- **`org.kwis.msf.io.Message` and `wec.SYSTheme`, `wec.DMInfo`** (2026-10-15):
+  LGT links every class a module imports at load, so a missing one is a
+  NoClassDefFoundError before the first frame. 간호사타이쿤2 imports
+  `Message.<init>(String, byte[])` and `getData()`, the message framework's
+  datagram, now a holder of the two. 월드장기체스 imports `wec/SYSTheme`
+  (`FORMAT_SOUND_MA3`, `ITEM_GROUP_SOUND_DEFAULT`, `saveItem(IILString;[BI)I`),
+  LG's theme store where a title offers a sound as a ringtone: the class
+  exists, `OEMDevice.getSYSTheme()` answers an instance instead of null, and
+  `saveItem` refuses (-1). 해적왕2007 (KTF) asks `wec/DMInfo.getDMInfo()` and
+  then `gethandsetMIN()`, which answers what `HandsetProperty` answers for
+  `MIN` (empty: a subscriber number is the user's decision, see 당신은골프왕);
+  the title reported "플랫폼 예외 … Error" on the missing class, and now
+  registers its consent over a connection that fails four times, then plays
+  its intro (39 frames at 40 s). Result: LGT launched twice 68 to 70 of 79
+  (간호사타이쿤2 to its town map, 뮤직팩토리 to its character; 월드장기체스 from
+  FAIL to a white screen it repaints without drawing — an online game whose
+  native module ends right after linking, open), none worse; KTF 273 to 274 of
+  321 at 16 s (해적왕2007 from SHALLOW to OK), none worse.
 - **LGT titles ask for a restart on their first launch** (2026-10-15): 10 of the
   11 LGT WIPI titles a 40 s sweep classed STUCK or SHALLOW sit on the same
   screen — "게임이 정상적으로 다운로드 되었습니다. 안정적인 메모리 확보를 위해

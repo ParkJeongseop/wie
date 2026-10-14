@@ -283,6 +283,23 @@ pub async fn list_database_names(context: &mut dyn WIPICContext, ptr_buf: WIPICW
     Ok(0)
 }
 
+/// LGT's `MC_fsList(dir, buffer, size, access_level)` (0x19a) answers the immediate children of a
+/// directory, NUL-terminated names ended by an empty one, 0 on success and M_E_SHORTBUF for a
+/// buffer that cannot hold them (wfeature's reading of the one caller). 뮤직팩토리 lists its folder
+/// of song folders at start and stopped at the unknown id. The store here cannot be walked yet, so
+/// the listing is empty: what the title wrote is not listed back (open).
+pub async fn fs_list_lgt(context: &mut dyn WIPICContext, ptr_dir: WIPICWord, ptr_buf: WIPICWord, len: i32, access_level: i32) -> Result<i32> {
+    let dir = String::from_utf8_lossy(&read_null_terminated_string_bytes(context, ptr_dir)?).into_owned();
+    tracing::warn!("partial MC_fsList({dir:?}, {ptr_buf:#x}, {len}, {access_level}): empty listing");
+
+    if len < 1 {
+        return Ok(-18); // M_E_SHORTBUF
+    }
+    context.write_bytes(ptr_buf, &[0])?;
+
+    Ok(0)
+}
+
 pub async fn seek_record_single(context: &mut dyn WIPICContext, db_id: i32, offset: i32, origin: i32) -> Result<i32> {
     tracing::debug!("MC_dbSeekRecordSingle({db_id:#x}, {offset}, {origin})");
 

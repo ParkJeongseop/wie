@@ -78,7 +78,9 @@ impl ArmEngine for Arm32CpuEngine {
 
             if let Some(x) = arm32cpu_memory.memory_error {
                 let lr = self.cpu.reg_get(Mode::User, reg::LR);
-                tracing::error!("memory fault accessing {x:#x} at pc {pc:#x} (lr {lr:#x})");
+                let regs: [u32; 13] = core::array::from_fn(|index| self.cpu.reg_get(Mode::User, index as u8));
+                let sp = self.cpu.reg_get(Mode::User, reg::SP);
+                tracing::error!("memory fault accessing {x:#x} at pc {pc:#x} (lr {lr:#x}, sp {sp:#x}; r0-r12 {regs:x?})");
                 return Err(WieError::InvalidMemoryAccess(x));
             }
         };

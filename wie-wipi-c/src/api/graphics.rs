@@ -454,9 +454,22 @@ pub async fn create_offscreen_framebuffer(context: &mut dyn WIPICContext, w: i32
     Ok(memory)
 }
 
+/// Destroying a null framebuffer or the screen's is nothing to do: the specification says so
+/// of the screen, and 컴투스포춘골프3D hands a null one when its five-second wait ends (a
+/// dereference here was its "Invalid memory access; address: 4" before any frame). The record's
+/// pixel buffer goes back with the record, since `MC_knlGetFreeMemory` answers from what is held.
 pub async fn destroy_offscreen_framebuffer(context: &mut dyn WIPICContext, framebuffer: WIPICIndirectPtr) -> Result<()> {
     tracing::debug!("MC_grpDestroyOffScreenFrameBuffer({:#x})", framebuffer.0);
 
+    let screen: u32 = read_generic(context, SCREEN_FRAMEBUFFER_PTR)?;
+    if framebuffer.0 == 0 || framebuffer.0 == screen {
+        return Ok(());
+    }
+
+    let record: WIPICFramebuffer = read_generic(context, context.data_ptr(framebuffer)?)?;
+    if record.buf.0 != 0 {
+        context.free(record.buf)?;
+    }
     context.free(framebuffer)?;
 
     Ok(())

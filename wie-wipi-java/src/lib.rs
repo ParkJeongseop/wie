@@ -6,8 +6,9 @@ pub mod classes;
 
 use wie_jvm_support::WieJavaClassProto;
 
-pub fn get_protos() -> [WieJavaClassProto; 55] {
+pub fn get_protos() -> [WieJavaClassProto; 58] {
     [
+        crate::classes::org::kwis::msf::io::Message::as_proto(),
         crate::classes::org::kwis::msf::io::Network::as_proto(),
         crate::classes::org::kwis::msf::io::SchemeNotFoundException::as_proto(),
         crate::classes::org::kwis::msf::io::Socket::as_proto(),
@@ -19,7 +20,9 @@ pub fn get_protos() -> [WieJavaClassProto; 55] {
         crate::classes::org::kwis::msp::db::DataBaseRecordException::as_proto(),
         crate::classes::org::kwis::msp::handset::BackLight::as_proto(),
         crate::classes::org::kwis::msp::handset::LED::as_proto(),
+        crate::classes::wec::DMInfo::as_proto(),
         crate::classes::wec::OEMDevice::as_proto(),
+        crate::classes::wec::SYSTheme::as_proto(),
         crate::classes::com::ktf::kfc::GForm::as_proto(),
         crate::classes::com::ktf::kfc::GFormBase::as_proto(),
         crate::classes::com::ktf::kfc::GMenubarForm::as_proto(),
