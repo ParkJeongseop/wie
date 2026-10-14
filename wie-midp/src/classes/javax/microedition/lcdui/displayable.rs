@@ -65,6 +65,7 @@ impl Displayable {
                     MethodAccessFlags::PUBLIC,
                 ),
                 JavaMethodProto::new("isShown", "()Z", Self::is_shown, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("repaintIM", "()V", Self::repaint_im, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getWidth", "()I", Self::get_width, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getHeight", "()I", Self::get_height, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new(
@@ -508,6 +509,14 @@ impl Displayable {
         tracing::debug!("javax.microedition.lcdui.Displayable::itemStateChanged({_this:?}, {_item:?})");
 
         Err(jvm.exception("java/lang/IllegalStateException", "Item is not owned by a Form").await)
+    }
+
+    // SK-VM: repaints the input-method indicator the platform draws beside a text field. The titles
+    // that have a field of their own (com.xce.lcdui.TextComponent) override it; nothing is drawn here.
+    async fn repaint_im(_jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Displayable::repaintIM({this:?})");
+
+        Ok(())
     }
 
     async fn get_width(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {

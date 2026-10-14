@@ -117,6 +117,8 @@ impl SktEmulator {
             ("m.CARRIER", "SKT"),
             ("m.SK_VM", "10"),
             ("m.SKT_API", "1.2"),
+            // the handset's extended software version; 택티컬퀘스트 scans its characters at start
+            ("m.EXT_SW", ""),
             ("com.xce.wipi.version", ""),
         ];
         let properties = properties

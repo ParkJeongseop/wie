@@ -33,6 +33,8 @@ pub(super) const READ_RESOURCE: i32 = 8;
 pub struct XFile;
 
 impl XFile {
+    const FREE_SPACE: i32 = 10 * 1024 * 1024;
+
     pub fn as_proto() -> WieJavaClassProto {
         WieJavaClassProto {
             name: "com/xce/io/XFile",
@@ -620,10 +622,13 @@ impl XFile {
         Ok(0)
     }
 
+    // Free space of the handset's file system, in bytes. Titles refuse to start below a threshold
+    // (택티컬퀘스트 wants 1 KB and shows "공간이 없습니다" otherwise); storage here is unbounded, so
+    // a comfortable constant is reported.
     async fn fs_available(_jvm: &Jvm, _context: &mut WieJvmContext) -> JvmResult<i32> {
-        tracing::warn!("stub com.xce.io.XFile::fsavail()");
+        tracing::debug!("com.xce.io.XFile::fsavail()");
 
-        Ok(0)
+        Ok(Self::FREE_SPACE)
     }
 
     pub async fn raf(jvm: &Jvm, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<RandomAccessFile>> {

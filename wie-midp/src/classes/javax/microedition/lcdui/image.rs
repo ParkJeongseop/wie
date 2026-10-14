@@ -28,6 +28,7 @@ impl Image {
             parent_class: Some("java/lang/Object"),
             interfaces: vec![],
             methods: vec![
+                JavaMethodProto::new("<init>", "()V", Self::init_empty, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("<init>", "(II[BI)V", Self::init, MethodAccessFlags::empty()),
                 JavaMethodProto::new("getWidth", "()I", Self::get_width, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getHeight", "()I", Self::get_height, MethodAccessFlags::PUBLIC),
@@ -89,6 +90,23 @@ impl Image {
         jvm.put_field(&mut this, "h", "I", height).await?;
         jvm.put_field(&mut this, "imgData", "[B", img_data).await?;
         jvm.put_field(&mut this, "bpl", "I", bpl).await?;
+
+        Ok(())
+    }
+
+    // The SK-VM Image has a public no-argument constructor and the titles use it: for a placeholder a
+    // field holds until a real image is loaded, or (디지몬 RPG II) to touch the class. It is an empty
+    // image, 0 by 0, which draws nothing.
+    async fn init_empty(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Image::<init>({this:?})");
+
+        let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
+
+        let img_data = jvm.instantiate_array("B", 0).await?;
+        jvm.put_field(&mut this, "w", "I", 0).await?;
+        jvm.put_field(&mut this, "h", "I", 0).await?;
+        jvm.put_field(&mut this, "imgData", "[B", img_data).await?;
+        jvm.put_field(&mut this, "bpl", "I", 0).await?;
 
         Ok(())
     }
@@ -194,7 +212,7 @@ impl Image {
         let width: i32 = jvm.get_field(this, "w", "I").await?;
         let bpl: i32 = jvm.get_field(this, "bpl", "I").await?;
 
-        let bytes_per_pixel = bpl / width;
+        let bytes_per_pixel = Self::bytes_per_pixel(width, bpl);
 
         Ok(match bytes_per_pixel {
             1 => Box::new(JavaImageBuffer::<Rgb332Pixel>::new(jvm, this).await?) as _,
@@ -208,7 +226,7 @@ impl Image {
         let width: i32 = jvm.get_field(this, "w", "I").await?;
         let bpl: i32 = jvm.get_field(this, "bpl", "I").await?;
 
-        let bytes_per_pixel = bpl / width;
+        let bytes_per_pixel = Self::bytes_per_pixel(width, bpl);
 
         Ok(match bytes_per_pixel {
             1 => Box::new(ImageBufferCanvas::new(JavaImageBuffer::<Rgb332Pixel>::new(jvm, this).await?)) as _,
@@ -216,6 +234,11 @@ impl Image {
             4 => Box::new(ImageBufferCanvas::new(JavaImageBuffer::<ArgbPixel>::new(jvm, this).await?)) as _,
             _ => unimplemented!("Unsupported pixel format: {bytes_per_pixel}"),
         })
+    }
+
+    // An empty image (the no-argument constructor) has no row to measure; treat it as ARGB.
+    fn bytes_per_pixel(width: i32, bpl: i32) -> i32 {
+        if width > 0 { bpl / width } else { 4 }
     }
 
     async fn create_image_instance(jvm: &Jvm, width: u32, height: u32, data: &[u8], bytes_per_pixel: u32) -> JvmResult<ClassInstanceRef<Image>> {

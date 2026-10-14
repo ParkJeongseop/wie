@@ -14,7 +14,7 @@ impl ByteToCharEUC_KR {
     pub fn as_proto() -> WieJavaClassProto {
         WieJavaClassProto {
             name: "com/xce/io/ByteToCharEUC_KR",
-            parent_class: Some("java/lang/Object"),
+            parent_class: Some("com/xce/io/ByteToCharConverter"),
             interfaces: vec![],
             methods: vec![
                 JavaMethodProto::new("<init>", "()V", Self::init, Default::default()),
@@ -37,7 +37,7 @@ impl ByteToCharEUC_KR {
     async fn init(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("com.xce.io.ByteToCharEUC_KR::<init>({this:?})");
 
-        let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
+        let _: () = jvm.invoke_special(&this, "com/xce/io/ByteToCharConverter", "<init>", "()V", ()).await?;
 
         Ok(())
     }

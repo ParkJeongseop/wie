@@ -4,7 +4,7 @@ use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 
-use wie_backend::canvas::Clip;
+use wie_backend::canvas::{Clip, Color};
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 use wie_midp::classes::javax::microedition::lcdui::{Graphics, Image};
 
@@ -20,6 +20,12 @@ impl XDisplay {
             methods: vec![
                 JavaMethodProto::new("<clinit>", "()V", Self::cl_init, MethodAccessFlags::STATIC),
                 JavaMethodProto::new("refresh", "(IIII)V", Self::refresh, MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC),
+                JavaMethodProto::new(
+                    "clear",
+                    "(Ljavax/microedition/lcdui/Graphics;Ljavax/microedition/lcdui/Image;II)V",
+                    Self::clear,
+                    MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC,
+                ),
                 JavaMethodProto::new(
                     "copyLCD",
                     "(Ljavax/microedition/lcdui/Graphics;Ljavax/microedition/lcdui/Image;IIII)V",
@@ -59,6 +65,52 @@ impl XDisplay {
         let platform = context.system().platform();
         let screen = platform.screen();
         screen.request_redraw().unwrap();
+
+        Ok(())
+    }
+
+    // clear(g, image, x, y): blacks out what the graphics draws on from (x, y), over the size of the
+    // image when one is given. The one caller (코인마스터) passes a null image and the origin, then
+    // draws white text on what it cleared.
+    async fn clear(
+        jvm: &Jvm,
+        _context: &mut WieJvmContext,
+        graphics: ClassInstanceRef<Graphics>,
+        image: ClassInstanceRef<Image>,
+        x: i32,
+        y: i32,
+    ) -> JvmResult<()> {
+        tracing::debug!("com.xce.lcdui.XDisplay::clear({graphics:?}, {image:?}, {x}, {y})");
+
+        if graphics.is_null() {
+            return Err(jvm.exception("java/lang/NullPointerException", "graphics is null").await);
+        }
+
+        let mut graphics = graphics;
+        let target = Graphics::image(jvm, &mut graphics).await?;
+        let mut canvas = Image::canvas(jvm, &target).await?;
+        let (target_width, target_height) = (canvas.image().width(), canvas.image().height());
+
+        let (width, height) = if image.is_null() {
+            (target_width, target_height)
+        } else {
+            let image = Image::image(jvm, &image).await?;
+            (image.width(), image.height())
+        };
+
+        canvas.fill_rect(
+            x,
+            y,
+            width,
+            height,
+            Color { a: 0xff, r: 0, g: 0, b: 0 },
+            Clip {
+                x: 0,
+                y: 0,
+                width: target_width,
+                height: target_height,
+            },
+        );
 
         Ok(())
     }

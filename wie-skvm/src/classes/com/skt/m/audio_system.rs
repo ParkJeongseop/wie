@@ -13,6 +13,8 @@ use crate::classes::com::skt::m::audio_clip::AudioClip;
 pub struct AudioSystem;
 
 impl AudioSystem {
+    const MAX_VOLUME: i32 = 10;
+
     pub fn as_proto() -> WieJavaClassProto {
         WieJavaClassProto {
             name: "com/skt/m/AudioSystem",
@@ -73,14 +75,16 @@ impl AudioSystem {
         Ok(jvm.instantiate_array("Ljava/lang/String;", 0).await?.into())
     }
 
+    // The handset's volume scale, 0..=10. A title divides by it to map its own volume steps onto
+    // the handset's (센티멘탈러브 divided by zero while this answered 0).
     async fn get_max_volume(jvm: &Jvm, _context: &mut WieJvmContext, format: ClassInstanceRef<String>) -> JvmResult<i32> {
-        tracing::warn!("stub com.skt.m.AudioSystem::getMaxVolume({format:?})");
+        tracing::debug!("com.skt.m.AudioSystem::getMaxVolume({format:?})");
 
         if format.is_null() {
             return Err(jvm.exception("java/lang/NullPointerException", "format is null").await);
         }
 
-        Ok(0)
+        Ok(Self::MAX_VOLUME)
     }
 
     async fn get_volume(jvm: &Jvm, _context: &mut WieJvmContext, format: ClassInstanceRef<String>) -> JvmResult<i32> {

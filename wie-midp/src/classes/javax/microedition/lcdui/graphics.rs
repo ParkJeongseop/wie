@@ -8,7 +8,7 @@ use jvm_class_proto::{JavaFieldProto, JavaMethodProto, TypeConverter};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::String;
 
-use wie_backend::canvas::{ArgbPixel, Canvas as BackendCanvas, Clip, PixelType, Rgb8Pixel, TextAlignment, VecImageBuffer};
+use wie_backend::canvas::{ArgbPixel, Canvas as BackendCanvas, Clip, Color, PixelType, Rgb8Pixel, Rgb565Pixel, TextAlignment, VecImageBuffer};
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
 use crate::classes::javax::microedition::lcdui::{Font, Image};
@@ -112,6 +112,22 @@ impl Graphics {
                 JavaMethodProto::new("translate", "(II)V", Self::translate, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("drawRGB", "([IIIIIIIZ)V", Self::draw_rgb, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("setGrayScale", "(I)V", Self::set_gray_scale, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("getGrayScale", "()I", Self::get_gray_scale, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("getRedComponent", "()I", Self::get_red_component, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("getGreenComponent", "()I", Self::get_green_component, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("getBlueComponent", "()I", Self::get_blue_component, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("getStrokeStyle", "()I", Self::get_stroke_style, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("setStrokeStyle", "(I)V", Self::set_stroke_style, MethodAccessFlags::PUBLIC),
+                // SK-VM extensions: the target image, and 16-bit pixel access by linear offset.
+                JavaMethodProto::new(
+                    "getImage",
+                    "()Ljavax/microedition/lcdui/Image;",
+                    Self::get_image,
+                    MethodAccessFlags::PUBLIC,
+                ),
+                JavaMethodProto::new("getPixel16", "(I)I", Self::get_pixel16, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("setPixel16", "(II)V", Self::set_pixel16, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("dumpRGB565", "([SIIII)V", Self::dump_rgb565, MethodAccessFlags::PUBLIC),
             ],
             fields: vec![
                 JavaFieldProto::new("img", "Ljavax/microedition/lcdui/Image;", FieldAccessFlags::PRIVATE),
@@ -128,6 +144,7 @@ impl Graphics {
                 // Opacity of everything drawn, 0..=255; OEM subclasses (LG MMPP GraphicsX) expose it.
                 JavaFieldProto::new("alpha", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("font", "Ljavax/microedition/lcdui/Font;", FieldAccessFlags::PRIVATE),
+                JavaFieldProto::new("strokeStyle", "I", FieldAccessFlags::PRIVATE),
             ],
             access_flags: ClassAccessFlags::PUBLIC,
         }
@@ -907,6 +924,141 @@ impl Graphics {
         jvm.put_field(&mut this, "color", "I", color).await?;
 
         Ok(())
+    }
+
+    async fn get_gray_scale(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::getGrayScale({this:?})");
+
+        let color: i32 = jvm.get_field(&this, "color", "I").await?;
+        let (r, g, b) = ((color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
+
+        Ok((r + g + b) / 3)
+    }
+
+    async fn get_red_component(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::getRedComponent({this:?})");
+
+        let color: i32 = jvm.get_field(&this, "color", "I").await?;
+
+        Ok((color >> 16) & 0xff)
+    }
+
+    async fn get_green_component(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::getGreenComponent({this:?})");
+
+        let color: i32 = jvm.get_field(&this, "color", "I").await?;
+
+        Ok((color >> 8) & 0xff)
+    }
+
+    async fn get_blue_component(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::getBlueComponent({this:?})");
+
+        let color: i32 = jvm.get_field(&this, "color", "I").await?;
+
+        Ok(color & 0xff)
+    }
+
+    async fn get_stroke_style(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::getStrokeStyle({this:?})");
+
+        jvm.get_field(&this, "strokeStyle", "I").await
+    }
+
+    // SOLID (0) or DOTTED (1). Lines are drawn solid either way; the style is kept for getStrokeStyle.
+    async fn set_stroke_style(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, style: i32) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::setStrokeStyle({this:?}, {style})");
+
+        if style != 0 && style != 1 {
+            return Err(jvm.exception("java/lang/IllegalArgumentException", "Invalid stroke style").await);
+        }
+
+        jvm.put_field(&mut this, "strokeStyle", "I", style).await
+    }
+
+    async fn get_image(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Image>> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::getImage({this:?})");
+
+        Self::image(jvm, &mut this).await
+    }
+
+    // The pixel at a linear offset into the target, as RGB565; -1 when the offset is outside it.
+    async fn get_pixel16(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, offset: i32) -> JvmResult<i32> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::getPixel16({this:?}, {offset})");
+
+        let canvas = Self::canvas(jvm, &mut this).await?;
+        let width = canvas.image().width() as i32;
+        if width == 0 || offset < 0 {
+            return Ok(-1);
+        }
+
+        Ok(match canvas.get_pixel(offset % width, offset / width) {
+            Some(color) => Rgb565Pixel::from_color(color) as i32,
+            None => -1,
+        })
+    }
+
+    async fn set_pixel16(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, offset: i32, rgb565: i32) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::setPixel16({this:?}, {offset}, {rgb565})");
+
+        let mut canvas = Self::canvas(jvm, &mut this).await?;
+        let (width, height) = (canvas.image().width() as i32, canvas.image().height() as i32);
+        if width == 0 || offset < 0 {
+            return Ok(());
+        }
+
+        let color = Rgb565Pixel::to_color(rgb565 as u16);
+        canvas.put_pixel(
+            offset % width,
+            offset / width,
+            color,
+            Clip {
+                x: 0,
+                y: 0,
+                width: width as _,
+                height: height as _,
+            },
+        );
+
+        Ok(())
+    }
+
+    // Copies the (x, y, width, height) region of the target into the array as RGB565, row by row.
+    async fn dump_rgb565(
+        jvm: &Jvm,
+        _: &mut WieJvmContext,
+        mut this: ClassInstanceRef<Self>,
+        data: ClassInstanceRef<Array<i16>>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Graphics::dumpRGB565({this:?}, {data:?}, {x}, {y}, {width}, {height})");
+
+        if data.is_null() {
+            return Err(jvm.exception("java/lang/NullPointerException", "data is null").await);
+        }
+        if width <= 0 || height <= 0 {
+            return Ok(());
+        }
+        let length = jvm.array_length(&data).await? as i32;
+        if width.checked_mul(height).is_none_or(|count| count > length) {
+            return Err(jvm.exception("java/lang/ArrayIndexOutOfBoundsException", "data is too short").await);
+        }
+
+        let canvas = Self::canvas(jvm, &mut this).await?;
+        let black = Color { a: 0xff, r: 0, g: 0, b: 0 };
+        let mut pixels = Vec::with_capacity((width * height) as usize);
+        for row in 0..height {
+            for column in 0..width {
+                let color = canvas.get_pixel(x + column, y + row).unwrap_or(black);
+                pixels.push(Rgb565Pixel::from_color(color) as i16);
+            }
+        }
+
+        let mut data = data;
+        jvm.store_array(&mut data, 0, pixels).await
     }
 
     async fn canvas(jvm: &Jvm, this: &mut ClassInstanceRef<Graphics>) -> JvmResult<Box<dyn BackendCanvas>> {

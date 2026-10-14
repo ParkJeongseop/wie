@@ -29,7 +29,7 @@ See also `CONTRIBUTING.md`.
 |-------|---------|-------------|--------------|
 | `wie_wipi_c` | WIPI-C (104 fns) | ~66% | fonts, audio control, network, UIC widgets |
 | `wie_wipi_java` | `org.kwis.*` | ~62% | LWC widgets (20 classes missing), `msf.core`/`msf.io` networking, Display capability queries |
-| `wie_skvm` | `com.skt.m.*`, `com.xce.*` | ~30% | audio volume, Device control, 3D, SMS, 10 classes missing |
+| `wie_skvm` | `com.skt.m.*`, `com.xce.*` | ~65% of 262 methods; every class, method and field the 90 SKT titles link against | audio volume, Device control, SISImage, 3D, SMS |
 | `wie_midp` | `javax.microedition.*` | ~60% | Alert/Form/Command, media.control |
 | `wie_mmpp` | LGT `mmpp.*` (LG MMPP) | 8 of 14 classes; everything the 105 ez-java titles link against | TextFieldX Hangul/symbol input, MathFP trigonometry, `mmpp.media.phrase`, Beep, LED |
 | carrier ext | KTF `kfc`/`wec` | 0% | entire namespaces unimplemented |
@@ -107,23 +107,28 @@ defined at all (measured against WIPI Java API 1.1.1).
 
 ## SKVM / SKT (`wie_skvm`)
 
-Measured against the SKVM API archive (24 classes). File I/O and Vibration are
-complete; audio and device control are weak.
+Measured against the SKVM API archive (24 classes) and the bytecode of the 90
+SKT titles in the library (`tools/scan`): every class, method and field those
+titles link against is defined (2026-10-15) and the static scan reports nothing
+missing. File I/O, the input method and the Toolkit are complete; audio control,
+Device, SISImage and 3D are thin.
 
 - **IMPL**: XFile / FileInputStream / FileOutputStream (file I/O), Vibration,
-  MathFP, Graphics2D (`drawImage`, `createMaskableImage`), Toolkit,
-  `WieAudioClip` playback (open/play/loop/stop/close via backend SMAF audio),
-  ByteToCharEUC_KR (undocumented xce EUC-KR decoder; games construct it for
-  Korean text).
-- **STUB**: AudioSystem volume, Device (setColorMode/backlight/keytone/…;
-  isKeyToneEnabled exists but returns a constant), BackLight, ProgressBar,
-  XTextField (input/paint), XDisplay (copyLCD/refresh), Graphics2D.captureLCD,
-  XFile.fsavail (reports a constant 10MB free).
-- XDisplay.drawImageEx (masked-image blit) is now IMPL — draws a source
-  region skipping pixels whose mask pixel is black.
-- **MISSING** (10, in the spec but not implemented): Graphics3D, Object3D
-  (3D), SMS, SMSListener, SMSMessage (messaging), Call, PhoneBook, SISImage,
-  ResourceAllocException, UserStopException.
+  MathFP, ProgressBar, Graphics2D (`drawImage`, `createMaskableImage`, pixel
+  access, `invertRect`), Toolkit (fonts, images, `splitString`), XDisplay
+  `drawImageEx` (masked blit) / `clear`, `WieAudioClip` playback
+  (open/play/loop/stop/close via backend SMAF audio), ByteToCharEUC_KR on its
+  `ByteToCharConverter` base (undocumented xce EUC-KR decoder; games construct
+  it for Korean text), **TextComponentHandler + TextComponent** (the handset's
+  keypad input method: 천지인 Hangul, English multi-tap, digits — see below),
+  XEventHandler, InputMethodHandler, XTextField (text state, keypad input,
+  paint), AudioSystem.getMaxVolume.
+- **STUB**: AudioSystem get/setVolume, Device (setColorMode/backlight/keytone/…;
+  isKeyToneEnabled exists but returns a constant), BackLight, Call, PhoneBook,
+  SISImage, SMS (partly), Graphics3D / Object3D (3D), Graphics2D.captureLCD,
+  XDisplay copyLCD / refresh (refresh requests a redraw), XFile.fsavail /
+  fsused (constants: 10 MB free, 0 used), `com.xce.net.Socket` PPP controls
+  and `XBrowser.setNetworkMode` (no network), Toolkit.paintPopup.
 
 - **LBMP image format** (2026-09-28): the SKVM LCD bitmap decoder now covers the
   whole format. Header is six LE u32s (`LBMP`, type, width, height, size, mask).
@@ -166,14 +171,67 @@ complete; audio and device control are weak.
   already carries `MIDlet-Key`/`Key2`/`Key4` from the original download, so no
   key derivation is needed for these packages (미니고치 has neither).
 
+- **SK-VM link gaps** (2026-10-15, static scan of the 90 titles, then 40 s
+  sweeps with OK every 3 s): everything the titles reference and nothing defined
+  is now defined, and `tools/scan/missing.py` (which now also checks the
+  superclass and interfaces a title's own class declares, and sees the
+  methods Toolkit registers through a macro) reports nothing missing.
+  - `com.xce.lcdui.TextComponentHandler` (15 titles) and the `TextComponent`
+    interface ten of them implement: the platform's keypad input method. A title
+    fetches the one handler, registers its component, forwards its key presses
+    and receives the characters through the component's `insert` / `replace` /
+    `delete`. `wie_skvm::ime` is that automata as a pure state machine, kept in
+    the handler's fields: 천지인 Hangul (keys 1/2/3 are the strokes ㅣㆍㅡ, 4..0
+    the consonants with multi-tap, a 받침 moves to the next syllable before a
+    vowel), English lower/upper multi-tap (the SPH-W8300 tables), digits; `*`
+    cycles the mode and `#` is a space. `getInputMode` answers the bit the
+    titles switch on for their indicator — 16 Hangul, 1 capitals, 2 small
+    letters, 8 digits, 4 symbols, the order 웰루시아 draws them in — and the
+    handler starts in Hangul. A key the method does not take ends the
+    composition and is reported untaken so the title's own key handling runs;
+    releases are untaken and repeats swallowed (a held key must not spray
+    glyphs). 미니고치 and 서울타이쿤 reach their name-entry screens.
+  - `javax.microedition.lcdui.Image.<init>()` (6 titles, 5 of them dead at
+    start): the SK-VM Image is constructible. The titles make placeholders
+    (포켓올림픽 fills fields with them) or touch the class (디지몬 RPG II). It is a
+    0×0 image; `Image::image` / `canvas` no longer divide by a zero width.
+  - `XDisplay.clear` (코인마스터: blacks the target from the given origin, over
+    the given image's size), `XEventHandler.eventHandler.restoreDisplay` (a
+    redraw request), `com.xce.net.Socket.setPPPPreserveTime` / `PPPClose` and
+    `com.xce.jam.XBrowser.setNetworkMode` (nothing to keep or close),
+    `com.xce.io.ByteToCharConverter` (the abstract base a title's field is
+    typed as; the NoClassDefFoundError 다크슬레이어2 swallowed on every text
+    decode), `com.sun.midp.lcdui.InputMethodHandler` (a mode number
+    댄스배틀오디션 sets and reads back), `Displayable.repaintIM` (a no-op the
+    TextComponent titles override), `TextField` (7 titles `getstatic` its
+    constants, which javac did not inline for them) as a real Item, and the
+    Graphics methods 어스토니시아ep3's Graphics wrapper mirrors: stroke style,
+    colour components, `getImage`, `getPixel16` / `setPixel16` / `dumpRGB565`
+    (16-bit pixel access by linear offset).
+  - Values the titles divide by or scan: `AudioSystem.getMaxVolume` answers
+    10 (was 0 — 센티멘탈러브 divided by it at start), `XFile.fsavail` 10 MB
+    (was 0 — 택티컬퀘스트 showed "공간이 없습니다" and asked to exit), and the
+    property `m.EXT_SW` is "" (드래곤아이즈 `equals("600")` and 택티컬퀘스트's
+    character scan NPE'd on null).
+  - RustJava: a `CONSTANT_Utf8` holds modified UTF-8 (`C0 80` for NUL, a
+    supplementary character as its two surrogates in three bytes each);
+    포트리스's `g.class` has `C0 80` in its strings and was a ClassFormatError
+    on load. `System.exec` (택티컬퀘스트 hands over to "XCE") is logged and
+    ignored, `PrintStream.println([B)` prints the bytes as text.
+  - Result: 82 of the 90 titles progress in a 40 s run with OK every 3 s, 70 before and none worse. 디지몬 RPG II, 코인마스터, 포켓올림픽, 바운티블루스, 어스토니시아ep3, 드래곤아이즈, 센티멘탈러브 and 포트리스 no longer fail at start, 테일즈 오브 히어로즈 gets past the screen it sat on, 미니고치 (both copies) and 서울타이쿤 reach their name entry, 택티컬퀘스트 its character-name screen (one swallowed ArrayIndexOutOfBoundsException in its paint). Every changed title was looked at on contact sheets. The 44-title KTF / LGT WIPI / ez-java sample (16 s) is identical to the baseline, so the shared MIDP and RustJava changes cost nothing there.
+  - Still failing: 다크슬레이어2 (both copies: draws its logo, then a black screen and no further drawing — open, see NEXT_SESSION), 크레이지버스 (`m.V3` / `m.A3`, a vector package the jar does not ship and no reference names), 메이플스토리 전사편 J2ME 호환판 (a bare J2ME jar without an .msd, "Unknown archive format"); 어스토니시아ep1 / ep2, 레스토랑타이쿤2006 and 불멸의용병 sit on a title or menu that OK does not advance (digit keys), which is the key script, not the runtime.
+
 ## MIDP (`wie_midp`, `javax.microedition.*`)
 
 `wie_wipi_java` is built on top of this layer, so its gaps affect WIPI too.
 
-- **IMPL**: Graphics (drawing; honors the current Font size in draw/metrics),
-  Font (the point size and line height of the three sizes are platform data,
-  `wie.midp.font.sizes`; `getDefaultFont` is one shared instance), Image,
-  Canvas / GameCanvas (repaint is null-safe before the canvas is shown;
+- **IMPL**: Graphics (drawing; honors the current Font size in draw/metrics;
+  the SK-VM extras stroke style, colour components, `getImage` and 16-bit
+  pixel access), Font (the point size and line height of the three sizes are
+  platform data, `wie.midp.font.sizes`; `getDefaultFont` is one shared
+  instance), Image (with the SK-VM's public no-argument constructor: an empty
+  image), TextField (text, constraints, keypad digits and CLR, painted as a
+  box), Canvas / GameCanvas (repaint is null-safe before the canvas is shown;
   `showNotify` / `hideNotify`; `serviceRepaints` services a pending repaint and
   nothing else), Displayable.isShown, Display lifecycle (`isColor`, `numColors`),
   RecordStore CRUD with `enumerateRecords`, `deleteRecordStore` and
@@ -184,8 +242,7 @@ complete; audio and device control are weak.
   RecordStore close/list, Font face/style rendering (size only),
   `javax.microedition.io`: the Generic Connection interfaces and `Connector`
   exist, every `open` throws `ConnectionNotFoundException` (no network).
-- **MISSING / thin**: `media.control`, `pki`, `lcdui.TextField` (7 SK-VM titles
-  reference it); Manager only handles SMAF.
+- **MISSING / thin**: `media.control`, `pki`; Manager only handles SMAF.
 - **Platform data**: what a platform's handsets report differs, and the platform
   crate hands it to this layer as system properties instead of this layer knowing
   platforms. `wie.midp.keymap` lists `internal=application[:action]` key codes
