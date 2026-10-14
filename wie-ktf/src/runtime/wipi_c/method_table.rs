@@ -367,7 +367,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
         WIPICTableId::Kernel => match WIPICKernelMethodId::try_from(function_id).ok()? {
             WIPICKernelMethodId::Printk => Some(kernel::printk.into_body()),
             WIPICKernelMethodId::Sprintk => Some(kernel::sprintk.into_body()),
-            WIPICKernelMethodId::GetExecNames => Some(gen_stub(2, "MC_knlGetExecNames")),
+            WIPICKernelMethodId::GetExecNames => Some(kernel::get_exec_names.into_body()),
             WIPICKernelMethodId::Execute => Some(gen_stub(3, "MC_knlExecute")),
             WIPICKernelMethodId::Mexecute => Some(gen_stub(4, "MC_knlMExecute")),
             WIPICKernelMethodId::Load => Some(gen_stub(5, "MC_knlLoad")),
@@ -378,7 +378,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICKernelMethodId::GetParentProgramId => Some(gen_stub(10, "MC_knlGetParentProgramID")),
             WIPICKernelMethodId::GetAppManagerId => Some(gen_stub(11, "MC_knlGetAppManagerID")),
             WIPICKernelMethodId::GetProgramInfo => Some(gen_stub(12, "MC_knlGetProgramInfo")),
-            WIPICKernelMethodId::GetAccessLevel => Some(gen_stub(13, "MC_knlGetAccessLevel")),
+            WIPICKernelMethodId::GetAccessLevel => Some(kernel::get_access_level.into_body()),
             WIPICKernelMethodId::GetProgramName => Some(kernel::get_program_name.into_body()),
             WIPICKernelMethodId::CreateSharedBuf => Some(gen_stub(15, "MC_knlCreateSharedBuf")),
             WIPICKernelMethodId::DestroySharedBuf => Some(gen_stub(16, "MC_knlDestroySharedBuf")),
@@ -469,7 +469,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICGraphicsMethodId::CreateImage => Some(graphics::create_image.into_body()),
             WIPICGraphicsMethodId::DestroyImage => Some(graphics::destroy_image.into_body()),
             WIPICGraphicsMethodId::DecodeNextImage => Some(gen_stub(34, "MC_grpDecodeNextImage")),
-            WIPICGraphicsMethodId::EncodeImage => Some(gen_stub(35, "MC_grpEncodeImage")),
+            WIPICGraphicsMethodId::EncodeImage => Some(graphics::encode_image.into_body()),
             WIPICGraphicsMethodId::PostEvent => Some(graphics::post_event.into_body()),
             WIPICGraphicsMethodId::HandleInput => Some(gen_stub(37, "MC_imHandleInput")),
             WIPICGraphicsMethodId::SetCurrentMode => Some(im::set_current_mode.into_body()),
@@ -529,7 +529,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICDatabaseMethodId::SelectRecord => Some(database::select_record_ktf.into_body()),
             WIPICDatabaseMethodId::UpdateRecord => Some(database::stat_by_name_ktf.into_body()),
             WIPICDatabaseMethodId::DeleteRecord => Some(database::delete_record_ktf.into_body()),
-            WIPICDatabaseMethodId::ListRecord => Some(database::list_record.into_body()),
+            WIPICDatabaseMethodId::ListRecord => Some(database::rename_or_list_ktf.into_body()),
             // Slot 8 of this table is MC_fsMkDir(name): nothing here holds a directory, so making
             // one succeeds (겟앰프드 and 티어즈오브메탈 make one before their first save).
             WIPICDatabaseMethodId::SortRecords => Some(database::make_directory_ktf.into_body()),
