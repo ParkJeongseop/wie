@@ -122,6 +122,20 @@ impl BucketAllocator {
         Ok(())
     }
 
+    /// Bytes held by allocated slots: a cleared header bit is an allocated slot.
+    pub fn used_size(core: &ArmCore, base_address: u32) -> Result<u32> {
+        let mut used = 0u32;
+        for (i, &(slot_size, _)) in BUCKETS.iter().enumerate() {
+            let header_address = base_address + region_offset(i) as u32;
+            let mut header = vec![0u8; header_length(i)];
+            core.read_bytes(header_address, &mut header)?;
+            let allocated = header.iter().map(|byte| byte.count_zeros()).sum::<u32>();
+            used = used.saturating_add(allocated.saturating_mul(slot_size as u32));
+        }
+
+        Ok(used)
+    }
+
     pub fn is_allocated(core: &ArmCore, base_address: u32, address: u32, size: u32) -> Result<bool> {
         let bucket_index = Self::find_bucket_index(size);
         let (slot_size, slot_count) = BUCKETS[bucket_index];

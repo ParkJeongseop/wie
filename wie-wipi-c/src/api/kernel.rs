@@ -261,16 +261,24 @@ pub async fn sprintk(
     Ok(result.len() as _)
 }
 
-pub async fn get_total_memory(_context: &mut dyn WIPICContext) -> Result<i32> {
-    tracing::warn!("stub MC_knlGetTotalMemory()");
+/// The heap size a title is told about. The emulated heap is far larger than a handset's, and a
+/// title sizes caches by what it is told, so the figure is a handset's; what is free is that less
+/// what the guest actually holds (블레이드마스터3 refused to run while this answered 1 MB: it
+/// asks thirteen times at start and needs more).
+const REPORTED_HEAP_SIZE: u32 = 16 * 1024 * 1024;
 
-    Ok(0x100000) // TODO hardcoded
+pub async fn get_total_memory(_context: &mut dyn WIPICContext) -> Result<i32> {
+    tracing::debug!("MC_knlGetTotalMemory()");
+
+    Ok(REPORTED_HEAP_SIZE as i32)
 }
 
-pub async fn get_free_memory(_context: &mut dyn WIPICContext) -> Result<i32> {
-    tracing::warn!("stub MC_knlGetFreeMemory()");
+pub async fn get_free_memory(context: &mut dyn WIPICContext) -> Result<i32> {
+    let used = context.used_memory()?;
+    let free = REPORTED_HEAP_SIZE.saturating_sub(used);
+    tracing::debug!("MC_knlGetFreeMemory() = {free} (used {used})");
 
-    Ok(0x100000) // TODO hardcoded
+    Ok(free as i32)
 }
 
 pub async fn exit(context: &mut dyn WIPICContext, code: i32) -> Result<()> {

@@ -102,6 +102,26 @@ impl ListAllocator {
         Ok(())
     }
 
+    /// Bytes held by in-use blocks. The walk stops at the first header that does not read as a
+    /// block (a guest overflow scribbled it); what was summed until then is answered.
+    pub fn used_size(core: &ArmCore, base_address: u32, base_size: u32) -> Result<u32> {
+        let end = base_address + base_size;
+        let mut cursor = base_address;
+        let mut used = 0u32;
+        while cursor < end {
+            let header: ListAllocationHeader = read_generic(core, cursor)?;
+            if !is_plausible_size(cursor, header.size(), end) {
+                break;
+            }
+            if header.in_use() {
+                used = used.saturating_add(header.size());
+            }
+            cursor += header.size();
+        }
+
+        Ok(used)
+    }
+
     pub fn is_allocated(core: &ArmCore, base_address: u32, base_size: u32, address: u32, size: u32) -> Result<bool> {
         let Some(header_address) = address.checked_sub(size_of::<ListAllocationHeader>() as u32) else {
             return Ok(false);

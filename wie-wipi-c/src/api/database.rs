@@ -44,7 +44,10 @@ struct DatabaseHandle {
 }
 
 const MIN_BUFFER_CAPACITY: u32 = 64;
-const KTF_DATABASE_STORAGE_LIMIT: u64 = 1024 * 1024;
+// What MC_dbListDataBases reports as the storage still available, less what the app uses. A KTF
+// handset had several megabytes; 이노티아연대기2 ships 2.1 MB of packaged data and refuses to start
+// ("메모리에러") when the figure is below what it needs, so the budget is 4 MB (wfeature's too).
+const KTF_DATABASE_STORAGE_LIMIT: u64 = 4 * 1024 * 1024;
 // "MCDB" — sentinel at the start of the handle struct so we can distinguish
 // a real DB handle pointer from an unrelated guest pointer (e.g. a C-string
 // name pointer that KTF's slot 6 passes through the same SVC argument slot).

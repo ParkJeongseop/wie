@@ -31,6 +31,10 @@ impl WIPICContext for KtfWIPICContext {
         Allocator::alloc(&mut self.core, size)
     }
 
+    fn used_memory(&self) -> Result<WIPICWord> {
+        Allocator::used_size(&self.core)
+    }
+
     fn alloc(&mut self, size: WIPICWord) -> Result<WIPICIndirectPtr> {
         let ptr = Allocator::alloc(&mut self.core, size + 12)?; // all allocation has indirect pointer
         write_generic(&mut self.core, ptr, ptr + 4)?;

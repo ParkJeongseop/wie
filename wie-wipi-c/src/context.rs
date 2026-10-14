@@ -23,6 +23,9 @@ pub trait WIPICContext: ByteRead + ByteWrite + Send + Sync {
     async fn get_resource_size(&self, name: &str) -> Result<Option<usize>>;
     async fn read_resource(&self, name: &str) -> Result<Vec<u8>>;
     fn set_timer(&mut self, due: Instant, callback: WIPICMethodBody);
+    /// Bytes the guest holds on its heap; what MC_knlGetFreeMemory reports is the reported heap size
+    /// less this.
+    fn used_memory(&self) -> Result<WIPICWord>;
 }
 
 pub struct WIPICResult {
@@ -157,6 +160,10 @@ pub mod test {
 
         fn system(&mut self) -> &mut System {
             self.system.as_mut().unwrap()
+        }
+
+        fn used_memory(&self) -> Result<WIPICWord> {
+            Ok((self.last_alloc - TEST_ALLOC_START) as WIPICWord)
         }
 
         fn spawn(&mut self, _callback: WIPICMethodBody) -> Result<()> {

@@ -41,6 +41,12 @@ impl Allocator {
         }
     }
 
+    /// Bytes the guest currently holds, over both halves of the heap. What a title is told when it
+    /// asks the kernel how much memory is free is derived from this.
+    pub fn used_size(core: &ArmCore) -> Result<u32> {
+        Ok(ListAllocator::used_size(core, HEAP_BASE, HEAP_SIZE / 2)? + BucketAllocator::used_size(core, HEAP_BASE + HEAP_SIZE / 2)?)
+    }
+
     pub fn is_allocated(core: &ArmCore, address: u32, size: u32) -> Result<bool> {
         if size > BUCKET_MAX as _ {
             ListAllocator::is_allocated(core, HEAP_BASE, HEAP_SIZE / 2, address, size)

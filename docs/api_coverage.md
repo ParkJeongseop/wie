@@ -307,6 +307,32 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **Memory figures** (2026-10-15): `MC_knlGetTotalMemory` / `MC_knlGetFreeMemory`
+  answered a hard-coded 1 MB each. 53 KTF and 31 LGT titles ask, and
+  블레이드마스터3 asks thirteen times at start and refuses to run ("메모리 부족 …
+  단말기를 리셋"). The kernel now reports a handset-sized 16 MB heap and, as
+  free, that less what the guest actually holds (`Allocator::used_size`: in-use
+  blocks of the list half, cleared bits of the bucket half, through
+  `WIPICContext::used_memory`) — wfeature's shape, with its 16 MB ceiling.
+  RustJava's `Runtime.totalMemory` / `freeMemory` (which the JVM cannot
+  measure) answer 16 MB and 12 MB instead of 1 MB. The KTF storage budget that
+  `MC_dbListDataBases` reports against is 4 MB instead of 1 MB: 이노티아연대기2
+  ships 2.1 MB of packaged data and showed "메모리에러". Result: KTF 261 to 262 of 321 (드래곤로드 starts; 이노티아연대기2 ×2 go from "메모리에러" to an install bar that stalls on an open with mode 8, an open mode this implementation does not know), none worse; LGT WIPI, launched twice (`RUNS=2`), 68 of 79 (블레이드마스터3 plays on its second launch), none worse.
+- **LGT titles ask for a restart on their first launch** (2026-10-15): 10 of the
+  11 LGT WIPI titles a 40 s sweep classed STUCK or SHALLOW sit on the same
+  screen — "게임이 정상적으로 다운로드 되었습니다. 안정적인 메모리 확보를 위해
+  재부팅/재시작해 주세요" — and exit on a key. At start they `MC_dbExistsDataBase`
+  a marker database, create it (open mode 4) when it is missing and show the
+  message: the handset's first launch after a download. Every launch in a fresh
+  directory is that first launch. Launched a second time in the same directory
+  (`tools/sweep/smoke.sh` with `RUNS=2`), 9 of the 11 play: 라그나로크 바이올렛
+  (story, then the village), 레이카르나, 붉은보석, 얍 (character creation),
+  에바스토, 이터널사가3, 이터니티, 2008베이징올림픽 (options), 2010밴쿠버올림픽
+  (in-game) — 58 + 9 = 67 of 79 on a second launch. The app keeps saves, so a
+  user sees the message once. Still stuck after the second launch:
+  블레이드마스터3 ("메모리 부족 … 단말기를 리셋해 주시기 바랍니다") and 학교가는길
+  (black; the slot-12 call on an array element noted above).
+
 Not API-crate surface, but blockers found while running real games:
 
 - **LGT stdlib imports** — the C library import table is partially identified.

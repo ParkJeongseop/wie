@@ -31,6 +31,10 @@ impl WIPICContext for LgtWIPICContext {
         Allocator::alloc(&mut self.core, size)
     }
 
+    fn used_memory(&self) -> Result<WIPICWord> {
+        Allocator::used_size(&self.core)
+    }
+
     fn alloc(&mut self, size: WIPICWord) -> Result<WIPICIndirectPtr> {
         let address = Allocator::alloc(&mut self.core, size + size_of::<WIPICWord>() as WIPICWord)?;
         write_generic(&mut self.core, address, size)?;
