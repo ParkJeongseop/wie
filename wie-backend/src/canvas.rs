@@ -995,6 +995,46 @@ pub fn decode_image(data: &[u8]) -> Result<Box<dyn Image>> {
     )) as Box<_>)
 }
 
+/// Encodes one region of an image as an uncompressed 24-bit BMP, the format the WIPI specification
+/// names for `MC_grpEncodeImage` and `Graphics.encodeImage`: a title keeps the bytes and hands them
+/// back to image creation later, so this writes what [`decode_image`] reads. The region has to lie
+/// inside the image; callers clip first.
+pub fn encode_bmp(image: &dyn Image, x: u32, y: u32, width: u32, height: u32) -> Vec<u8> {
+    const HEADER_SIZE: u32 = 14 + 40; // BITMAPFILEHEADER + BITMAPINFOHEADER
+
+    let row_stride = (width * 3).div_ceil(4) * 4; // rows are padded to four bytes
+    let image_size = row_stride * height;
+    let file_size = HEADER_SIZE + image_size;
+    let mut result = vec![0u8; file_size as usize];
+
+    result[0] = b'B';
+    result[1] = b'M';
+    result[2..6].copy_from_slice(&file_size.to_le_bytes());
+    result[10..14].copy_from_slice(&HEADER_SIZE.to_le_bytes()); // pixel data offset
+    result[14..18].copy_from_slice(&40u32.to_le_bytes()); // DIB header size
+    result[18..22].copy_from_slice(&(width as i32).to_le_bytes());
+    result[22..26].copy_from_slice(&(height as i32).to_le_bytes()); // positive: bottom-up
+    result[26..28].copy_from_slice(&1u16.to_le_bytes()); // planes
+    result[28..30].copy_from_slice(&24u16.to_le_bytes()); // bits per pixel
+    result[34..38].copy_from_slice(&image_size.to_le_bytes());
+    result[38..42].copy_from_slice(&2835u32.to_le_bytes()); // 72 DPI
+    result[42..46].copy_from_slice(&2835u32.to_le_bytes());
+
+    for row in 0..height {
+        let source_y = y + height - 1 - row; // bottom-up: the last image row comes first
+        let base = (HEADER_SIZE + row * row_stride) as usize;
+        for column in 0..width {
+            let color = image.get_pixel((x + column) as i32, source_y as i32);
+            let offset = base + column as usize * 3;
+            result[offset] = color.b;
+            result[offset + 1] = color.g;
+            result[offset + 2] = color.r;
+        }
+    }
+
+    result
+}
+
 pub fn encode_png(image: &dyn Image) -> Result<Vec<u8>> {
     extern crate std;
 

@@ -33,7 +33,9 @@ use crate::context::WIPICContext;
 #[repr(C)]
 struct DatabaseHandle {
     magic: u32,
-    name: [u8; 32], // TODO hardcoded max size
+    /// The name the handle was opened under, null-terminated; file names are paths up to
+    /// `MAX_FILE_NAME_LEN` bytes.
+    name: [u8; MAX_FILE_NAME_LEN + 1],
     read_cursor: u32,
     write_cursor: u32,
     buffer_ptr: u32,
@@ -53,21 +55,27 @@ const KTF_DATABASE_STORAGE_LIMIT: u64 = 4 * 1024 * 1024;
 // name pointer that KTF's slot 6 passes through the same SVC argument slot).
 const DATABASE_HANDLE_MAGIC: u32 = 0x4D434442;
 const MAX_NAME_LEN: usize = 31; // leave a byte for null terminator inside the 32-byte field
+/// KTF's table 7 is a file API whose names are paths (리얼싸커2009 opens
+/// `/recordStore/rms_KOR_RMS_DATA.sav`, 33 bytes); the reference implementation does not bound
+/// them, so only something absurd is refused there.
+const MAX_FILE_NAME_LEN: usize = 255;
 
 pub async fn open_database(context: &mut dyn WIPICContext, ptr_name: WIPICWord, mode: i32, r#type: i32) -> Result<i32> {
     open_database_impl(context, ptr_name, mode, r#type, false).await
 }
 
-/// KTF's `MC_dbOpenDataBase` opens a missing database as an empty one even in
-/// read mode: 데몬헌터 checks `MC_dbExists` (gets "missing"), still calls
-/// open(mode 1), and uses the returned handle without checking for an error —
-/// so on real handsets that call must have succeeded. Keep the strict NOENT
-/// behaviour for LGT (제노니아-family games probe with open and handle the -12).
+/// KTF's table-7 open is `MC_fsOpen(name, mode, perm)`: names are paths, what a name starts from
+/// is a file the archive ships beside the jar (never a jar resource), and a missing name opened
+/// for reading (mode 1) is M_E_NOENT, which is how a title finds out it is on its first launch.
+/// 데몬헌터 checks `MC_dbExists`, still opens Config.dat in mode 1 and uses the handle unchecked:
+/// its archive ships `P/Config.dat`, so that open is of a packaged file. 이노티아연대기2 opens
+/// `i_pack.dat` in mode 1 before installing itself; a handle to an empty file there, instead of
+/// the -12, had it parse a pack header of zeros and fault at address 0.
 pub async fn open_database_ktf(context: &mut dyn WIPICContext, ptr_name: WIPICWord, mode: i32, r#type: i32) -> Result<i32> {
     open_database_impl(context, ptr_name, mode, r#type, true).await
 }
 
-async fn open_database_impl(context: &mut dyn WIPICContext, ptr_name: WIPICWord, mode: i32, r#type: i32, open_missing: bool) -> Result<i32> {
+async fn open_database_impl(context: &mut dyn WIPICContext, ptr_name: WIPICWord, mode: i32, r#type: i32, ktf_file_api: bool) -> Result<i32> {
     tracing::debug!("MC_dbOpenDataBase({ptr_name:#x}, {mode}, {type})");
 
     // Guest-provided C string — invalid UTF-8 must not bring down the
@@ -82,18 +90,23 @@ async fn open_database_impl(context: &mut dyn WIPICContext, ptr_name: WIPICWord,
     // Validate before any repository side effects. Mode 4 deletes record 1
     // up front, so a too-long name reaching that path would wipe data we
     // can't open a handle for anyway.
-    if name.len() > MAX_NAME_LEN {
-        tracing::warn!("MC_dbOpenDataBase: name {name:?} too long ({} > {MAX_NAME_LEN})", name.len());
+    let limit = if ktf_file_api { MAX_FILE_NAME_LEN } else { MAX_NAME_LEN };
+    if name.len() > limit {
+        tracing::warn!("MC_dbOpenDataBase: name {name:?} too long ({} > {limit})", name.len());
         return Ok(-22); // M_E_BADRECID — closest WIPI parameter-error idiom in this file
     }
 
-    let packaged = read_packaged_database(context, &name).await?;
+    let packaged = if ktf_file_api {
+        read_packaged_file_ktf(context, &name).await?
+    } else {
+        read_packaged_database(context, &name).await?
+    };
 
     let system = context.system();
     let pid = system.pid().to_owned();
     let exists = system.platform().database_repository().exists(&name, &pid).await;
 
-    if !exists && packaged.is_none() && mode == 1 && !open_missing {
+    if !exists && packaged.is_none() && mode == 1 {
         return Ok(-12); // M_E_NOENT
     }
 
@@ -129,7 +142,7 @@ async fn open_database_impl(context: &mut dyn WIPICContext, ptr_name: WIPICWord,
 
     let mut handle = DatabaseHandle {
         magic: DATABASE_HANDLE_MAGIC,
-        name: [0; 32],
+        name: [0; MAX_FILE_NAME_LEN + 1],
         read_cursor: 0,
         write_cursor: 0,
         buffer_ptr: 0,
@@ -217,7 +230,7 @@ pub async fn get_number_of_records_ktf(context: &mut dyn WIPICContext, arg: i32)
         Some(count) => count,
         // A database only packaged in the archive holds its single record.
         None => {
-            if read_packaged_database(context, &name).await?.is_some() {
+            if read_packaged_file_ktf(context, &name).await?.is_some() {
                 1
             } else {
                 0
@@ -599,7 +612,7 @@ pub async fn open_record_database_ktf(context: &mut dyn WIPICContext, ptr_name: 
 
     let mut handle = DatabaseHandle {
         magic: DATABASE_HANDLE_MAGIC,
-        name: [0; 32],
+        name: [0; MAX_FILE_NAME_LEN + 1],
         read_cursor: 0,
         write_cursor: 0,
         buffer_ptr: 0,
@@ -662,6 +675,49 @@ pub async fn get_record_size(context: &mut dyn WIPICContext, db_id: i32) -> Resu
     })
 }
 
+/// KTF's table-7 slot 7 is `MC_fsRename(old, new, mode)` in the specification's `MC_fs*` order
+/// (open, read, write, close, seek, attribute, remove, rename, mkdir, …). 리얼싸커2009 renames a
+/// name it built on its stack to a packaged one while installing its data. A caller that hands a
+/// handle in the first slot instead is listing records, which is what the slot used to mean here.
+pub async fn rename_or_list_ktf(context: &mut dyn WIPICContext, a0: WIPICWord, a1: WIPICWord, a2: WIPICWord) -> Result<i32> {
+    if load_handle(context, a0 as i32)?.is_some() {
+        return list_record(context, a0 as i32, a1, a2).await;
+    }
+
+    let (Ok(old), Ok(new)) = (
+        String::from_utf8(read_null_terminated_string_bytes(context, a0)?),
+        String::from_utf8(read_null_terminated_string_bytes(context, a1)?),
+    ) else {
+        return Ok(-22);
+    };
+    tracing::debug!("MC_fsRename({old}, {new}, {a2})");
+    if old.len() > MAX_FILE_NAME_LEN || new.len() > MAX_FILE_NAME_LEN {
+        return Ok(-22);
+    }
+
+    let system = context.system();
+    let pid = system.pid().to_owned();
+    if !system.platform().database_repository().exists(&old, &pid).await {
+        return Ok(-12); // M_E_NOENT
+    }
+
+    let source = system.platform().database_repository().open(&old, &pid).await;
+    let mut target = system.platform().database_repository().open(&new, &pid).await;
+    for id in target.get_record_ids().await {
+        target.delete(id).await;
+    }
+    // Files are read back by record id (`get(1)`), so the copy keeps the source's ids.
+    for id in source.get_record_ids().await {
+        if let Some(data) = source.get(id).await {
+            target.set(id, &data).await;
+        }
+    }
+    drop((source, target));
+    system.platform().database_repository().delete(&old, &pid).await;
+
+    Ok(0)
+}
+
 /// KTF's table-7 slot 8 is `MC_fsMkDir(name)`; the store is flat, so a directory costs nothing.
 pub async fn make_directory_ktf(context: &mut dyn WIPICContext, ptr_name: WIPICWord) -> Result<i32> {
     let name = String::from_utf8_lossy(&read_null_terminated_string_bytes(context, ptr_name)?).into_owned();
@@ -715,7 +771,7 @@ pub async fn stat_by_name_ktf(context: &mut dyn WIPICContext, name_ptr: WIPICWor
     };
     let record_size = match record_size {
         Some(size) => size,
-        None => match read_packaged_database(context, &name).await? {
+        None => match read_packaged_file_ktf(context, &name).await? {
             // A database only packaged in the archive (P/<name>) also exists.
             Some(data) => data.len() as u32,
             None => {
@@ -769,7 +825,7 @@ pub async fn exists_database_ktf(context: &mut dyn WIPICContext, name_ptr: WIPIC
     let size = match size {
         Some(size) => Some(size),
         // A database only packaged in the archive (P/<name>) also "exists".
-        None => read_packaged_database(context, &name).await?.map(|data| data.len() as u32),
+        None => read_packaged_file_ktf(context, &name).await?.map(|data| data.len() as u32),
     };
 
     // 데몬헌터 passes an out pointer here and reads word 2 back as the record
@@ -832,14 +888,23 @@ async fn get_database_from_db_id(context: &mut dyn WIPICContext, db_id: i32) -> 
     Ok(open_db_for_handle(context, &handle).await)
 }
 
+/// What the WIPI record database API starts a name from: a jar resource of that name, or a file
+/// the archive ships beside the jar.
 async fn read_packaged_database(context: &mut dyn WIPICContext, name: &str) -> Result<Option<Vec<u8>>> {
     if context.get_resource_size(name).await?.is_some() {
         return Ok(Some(context.read_resource(name).await?));
     }
 
-    // KTF archives ship preloaded databases as P/<name> files, mounted on the
-    // virtual filesystem (with the P/ prefix trimmed) rather than on the jar
-    // classpath — 데몬헌터 stats and opens its bundled Config.dat this way.
+    read_packaged_file_ktf(context, name).await
+}
+
+/// What KTF's file API (table 7) starts a name from: archives ship preloaded files as `P/<name>`,
+/// mounted on the virtual filesystem with the prefix trimmed (데몬헌터 stats and opens its bundled
+/// Config.dat this way). A jar resource of the same name is not a file: 이노티아연대기2 installs
+/// itself by reading each `*.dat` resource, inflating it and writing the result to a file of the
+/// same name after a seek to the end, so a file seeded with the resource's bytes came out as the
+/// compressed copy with the inflated one appended, and the title sat on its install bar.
+async fn read_packaged_file_ktf(context: &mut dyn WIPICContext, name: &str) -> Result<Option<Vec<u8>>> {
     let filesystem = context.system().filesystem();
     if filesystem.exists(name).await {
         let mut data = Vec::new();

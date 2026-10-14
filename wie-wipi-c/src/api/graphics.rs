@@ -10,7 +10,7 @@ use core::mem::size_of;
 
 use wie_backend::{
     Event,
-    canvas::{Clip, Color, PixelType, Rgb565Pixel, string_width},
+    canvas::{Clip, Color, PixelType, Rgb565Pixel, encode_bmp, string_width},
 };
 use wie_util::{Result, read_generic, write_generic};
 
@@ -243,6 +243,56 @@ pub async fn create_image(
     write_generic(context, context.data_ptr(memory)?, image)?;
 
     Ok(1) // MC_GRP_IMAGE_DONE
+}
+
+/// `MC_grpEncodeImage(framebuffer, x, y, w, h, *len)` answers with a region of a framebuffer as BMP
+/// bytes in a buffer the caller owns and frees with `MC_knlFree`: the specification says the bytes
+/// come from `MC_knlCalloc`. 리얼싸커2009 and 마스터오브소드3 snapshot the screen with it. The region
+/// is clipped to the framebuffer, and an empty one answers 0 with a length of 0.
+pub async fn encode_image(
+    context: &mut dyn WIPICContext,
+    framebuffer: WIPICIndirectPtr,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    ptr_len: WIPICWord,
+) -> Result<WIPICIndirectPtr> {
+    tracing::debug!("MC_grpEncodeImage({:#x}, {x}, {y}, {width}, {height}, {ptr_len:#x})", framebuffer.0);
+
+    if ptr_len != 0 {
+        write_generic(context, ptr_len, 0u32)?;
+    }
+    if framebuffer.0 == 0 {
+        return Ok(WIPICIndirectPtr(0));
+    }
+
+    let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(framebuffer)?)?);
+    let (mut x, mut y, mut width, mut height) = (x as i64, y as i64, width as i64, height as i64);
+    if x < 0 {
+        width += x;
+        x = 0;
+    }
+    if y < 0 {
+        height += y;
+        y = 0;
+    }
+    width = width.min(framebuffer.0.width as i64 - x);
+    height = height.min(framebuffer.0.height as i64 - y);
+    if width <= 0 || height <= 0 {
+        return Ok(WIPICIndirectPtr(0));
+    }
+
+    let image = framebuffer.image(context)?;
+    let encoded = encode_bmp(&*image, x as u32, y as u32, width as u32, height as u32);
+
+    let memory = context.alloc(encoded.len() as WIPICWord)?;
+    context.write_bytes(context.data_ptr(memory)?, &encoded)?;
+    if ptr_len != 0 {
+        write_generic(context, ptr_len, encoded.len() as u32)?;
+    }
+
+    Ok(memory)
 }
 
 pub async fn destroy_image(context: &mut dyn WIPICContext, image: WIPICIndirectPtr) -> Result<()> {

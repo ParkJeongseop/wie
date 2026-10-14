@@ -2,6 +2,7 @@ pub mod sprintf;
 
 use alloc::{
     boxed::Box,
+    format,
     string::{String, ToString},
     vec::Vec,
 };
@@ -291,6 +292,54 @@ pub async fn exit(context: &mut dyn WIPICContext, code: i32) -> Result<()> {
 
 pub async fn get_cur_program_id(_context: &mut dyn WIPICContext) -> Result<WIPICWord> {
     tracing::warn!("stub MC_knlGetCurProgramID()");
+
+    Ok(1)
+}
+
+/// `MC_knlGetAccessLevel()` is a bitmask of the API groups the program may use, and every group
+/// is granted: the question is what the handset permitted, not what this runtime then does about
+/// a call. 이노티아연대기2 reads it after its install and stops otherwise.
+pub async fn get_access_level(_context: &mut dyn WIPICContext) -> Result<WIPICWord> {
+    tracing::debug!("MC_knlGetAccessLevel()");
+
+    Ok(0xff)
+}
+
+/// `MC_knlGetExecNames(program, version, vendor, out, out_len)` lists the executables a program
+/// installed on this handset carries, and the handset holds one program: the archive that is
+/// running. Nothing documents the listing, so its layout is the one the reference implementation
+/// reconstructed from its caller: an entry is `<AID>\t<AID>\t000`, the program id and the name of
+/// its executable, which a KTF archive names alike. The caller reads the last 21 characters and
+/// keeps the eight-character token that appears there twice as the program's identity (이노티아연대기2
+/// does this after its install). Asking about another program answers that nothing is installed
+/// under that name, which is a count of 0 rather than an error.
+pub async fn get_exec_names(
+    context: &mut dyn WIPICContext,
+    ptr_program: WIPICWord,
+    ptr_version: WIPICWord,
+    ptr_vendor: WIPICWord,
+    ptr_out: WIPICWord,
+    out_len: i32,
+) -> Result<i32> {
+    tracing::debug!("MC_knlGetExecNames({ptr_program:#x}, {ptr_version:#x}, {ptr_vendor:#x}, {ptr_out:#x}, {out_len})");
+
+    let installed = context.system().aid().to_string();
+    if installed.is_empty() || ptr_out == 0 {
+        return Ok(0);
+    }
+    if ptr_program != 0 {
+        let wanted = String::from_utf8_lossy(&read_null_terminated_string_bytes(context, ptr_program)?).into_owned();
+        if !wanted.is_empty() && !wanted.eq_ignore_ascii_case(&installed) {
+            return Ok(0);
+        }
+    }
+
+    let listing = format!("{installed}\t{installed}\t000");
+    if out_len < listing.len() as i32 + 1 {
+        return Ok(-18); // M_E_SHORTBUF
+    }
+    context.write_bytes(ptr_out, listing.as_bytes())?;
+    context.write_bytes(ptr_out + listing.len() as u32, &[0])?;
 
     Ok(1)
 }

@@ -29,6 +29,7 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
         let mut spec = String::from("%");
         let mut flag = None;
         let mut width = None;
+        let mut precision: Option<usize> = None;
         let mut longs = 0u32;
         loop {
             let Some(c) = chars.next() else {
@@ -43,7 +44,7 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
                     result.push('%');
                     break;
                 }
-                'd' | 'u' => {
+                'd' | 'i' | 'u' => {
                     // ILP32 ABI: long is one word; only long long occupies two
                     let long = longs >= 2;
                     let raw = if long {
@@ -53,17 +54,39 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
                     };
                     // core::fmt panics on width >= 65536; guest-controlled width must be clamped
                     let width = width.unwrap_or(0).min(MAX_WIDTH);
-                    if c == 'd' {
-                        let arg = if long { raw as i64 } else { raw as u32 as i32 as i64 };
-                        if let Some('0') = flag {
-                            result += &format!("{arg:0width$}");
-                        } else {
-                            result += &format!("{arg:width$}");
-                        }
-                    } else if let Some('0') = flag {
-                        result += &format!("{raw:0width$}");
+                    // a precision on an integer is the least number of digits
+                    let digits = precision.unwrap_or(0).min(MAX_WIDTH);
+                    let number = if c == 'u' {
+                        format!("{raw:0digits$}")
                     } else {
-                        result += &format!("{raw:width$}");
+                        let arg = if long { raw as i64 } else { raw as u32 as i32 as i64 };
+                        if arg < 0 {
+                            format!("-{:0digits$}", arg.unsigned_abs())
+                        } else {
+                            format!("{arg:0digits$}")
+                        }
+                    };
+                    if let (Some('0'), None) = (flag, precision) {
+                        let (sign, magnitude) = match number.strip_prefix('-') {
+                            Some(magnitude) => ("-", magnitude),
+                            None => ("", number.as_str()),
+                        };
+                        let pad = width.saturating_sub(sign.len());
+                        result += &format!("{sign}{magnitude:0>pad$}");
+                    } else {
+                        result += &format!("{number:>width$}");
+                    }
+                    break;
+                }
+                'f' => {
+                    // a double takes two words, low word first
+                    let value = f64::from_bits(next_arg64(&mut arg_iter));
+                    let width = width.unwrap_or(0).min(MAX_WIDTH);
+                    let decimals = precision.unwrap_or(6).min(MAX_WIDTH);
+                    if let Some('0') = flag {
+                        result += &format!("{value:0width$.decimals$}");
+                    } else {
+                        result += &format!("{value:width$.decimals$}");
                     }
                     break;
                 }
@@ -74,30 +97,44 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
                         break;
                     }
 
-                    result += &read_string(ptr)?;
+                    let string = read_string(ptr)?;
+                    let string = match precision {
+                        Some(precision) => string.chars().take(precision).collect(),
+                        None => string,
+                    };
+                    let width = width.unwrap_or(0).min(MAX_WIDTH);
+                    result += &format!("{string:>width$}");
                     break;
                 }
                 'c' => {
                     result.push(next_arg(&mut arg_iter) as u8 as char);
                     break;
                 }
-                'x' => {
+                'x' | 'X' => {
                     let arg = if longs >= 2 {
                         next_arg64(&mut arg_iter)
                     } else {
                         next_arg(&mut arg_iter) as u64
                     };
                     let width = width.unwrap_or(0).min(MAX_WIDTH);
+                    let hex = if c == 'x' { format!("{arg:x}") } else { format!("{arg:X}") };
                     if let Some('0') = flag {
-                        result += &format!("{arg:0width$x}");
+                        result += &format!("{hex:0>width$}");
                     } else {
-                        result += &format!("{arg:width$x}");
+                        result += &format!("{hex:>width$}");
                     }
                     break;
                 }
                 'l' => longs += 1,
-                '0' if width.is_none() => flag = Some('0'),
-                '0'..='9' => width = Some(width.unwrap_or(0).saturating_mul(10).saturating_add(c.to_digit(10).unwrap() as usize)),
+                '.' => precision = Some(0),
+                '0' if width.is_none() && precision.is_none() => flag = Some('0'),
+                '0'..='9' => {
+                    let digit = c.to_digit(10).unwrap() as usize;
+                    match &mut precision {
+                        Some(precision) => *precision = precision.saturating_mul(10).saturating_add(digit),
+                        None => width = Some(width.unwrap_or(0).saturating_mul(10).saturating_add(digit)),
+                    }
+                }
                 _ => {
                     tracing::warn!("unsupported format specifier: {spec}");
                     result.push_str(&spec);
@@ -242,5 +279,20 @@ mod test {
         assert_eq!(result, encoding_rs::EUC_KR.encode(expected).0.into_owned());
 
         Ok(())
+    }
+
+    #[test]
+    fn integer_precision_float_and_upper_hex() {
+        let mut none = |_: u32| -> Result<String> { unreachable!() };
+        assert_eq!(super::format("ch0%i.mbac", &[3], &mut none).unwrap(), "ch03.mbac");
+        assert_eq!(
+            super::format("%.3d|%5.2d|%-i", &[7, 7, (-7i32) as u32], &mut none).unwrap(),
+            "007|   07|%-i"
+        );
+        assert_eq!(
+            super::format("%.1f %f", &[0x4000_0000, 0x4004_0000, 0, 0x3ff0_0000], &mut none).unwrap(),
+            "2.5 1.000000"
+        );
+        assert_eq!(super::format("%X %04x", &[0xbeef, 0x2a], &mut none).unwrap(), "BEEF 002a");
     }
 }

@@ -62,7 +62,8 @@ defined at all (measured against WIPI Java API 1.1.1).
 ### Stubbed methods on existing classes
 
 - **lcdui.Graphics** — mostly IMPL; STUB: `getPixel`, `get/setPixels`,
-  `getRGBPixels`, `fillPolygon`, `drawPolygon`, `encodeImage` (partial).
+  `getRGBPixels`, `fillPolygon`, `drawPolygon`. `encodeImage` answers the BMP of a
+  region (2026-10-15).
 - **lcdui.Image** — core IMPL; STUB: `loadImage`, `createSubImage`, animation
   (`isAnimated`/`play`/`stop`), `setTransparentColor`.
 - **lcdui.Display** — capability queries now report against the 16bpp RGB565
@@ -318,6 +319,84 @@ runs them on `wie_midp` + `wie_mmpp`.
   measure) answer 16 MB and 12 MB instead of 1 MB. The KTF storage budget that
   `MC_dbListDataBases` reports against is 4 MB instead of 1 MB: 이노티아연대기2
   ships 2.1 MB of packaged data and showed "메모리에러". Result: KTF 261 to 262 of 321 (드래곤로드 starts; 이노티아연대기2 ×2 go from "메모리에러" to an install bar that stalls on an open with mode 8, an open mode this implementation does not know), none worse; LGT WIPI, launched twice (`RUNS=2`), 68 of 79 (블레이드마스터3 plays on its second launch), none worse.
+- **`MC_knlSprintk` formats** (2026-10-15): `%i` was not a specifier the
+  kernel's sprintf knew, so sega미니게임6's `"ch0%i.mbac"` stayed literal, the
+  resource lookup answered -12 and the title dereferenced a null resource
+  ("memory fault accessing 0x0"). The formatter now takes `%i`, a precision
+  (`%.3d` least digits, `%.2f`, `%.5s`), `%f` (a double in two words) and
+  `%X`; 데몬헌터 (KTF and LGT) used a `%.` form too. With the name right,
+  sega미니게임6 no longer faults but sits on a white screen (open). Result: KTF
+  262 of 321 unchanged (sega미니게임6 FAIL to STUCK), none worse; LGT launched
+  twice 68 of 79, identical.
+- **KTF table 7 slot 7 is `MC_fsRename(old, new, mode)`** (2026-10-15), the
+  specification's `MC_fs*` order between remove (6) and mkdir (8). wie had it
+  as "list records"; 리얼싸커2009 calls it with a name it built on its stack and
+  a packaged name while installing its data and reported "Data 인스톨에
+  실패했습니다" on the -25 it got for a non-handle. The slot now renames (every
+  record copied to the new name, the old one deleted) when its first argument
+  is not a handle this runtime issued, and lists records when it is. Result:
+  리얼싸커2009 ×2 pass their install (18 `lo.zNN` resources copied into
+  `lo.dsk`, 1.7 MB) and stop at `MC_grpEncodeImage`, the next entry.
+- **`MC_grpEncodeImage` and `Graphics.encodeImage`** (2026-10-15):
+  `MC_grpEncodeImage(framebuffer, x, y, w, h, *len)` answers a region of a
+  framebuffer as uncompressed 24-bit BMP bytes in a buffer the caller owns and
+  frees with `MC_knlFree` (the specification says the bytes come from
+  `MC_knlCalloc`; wfeature and aram-core agree), clipped to the framebuffer; an
+  empty region answers 0 with a length of 0. `org.kwis.msp.lcdui.Graphics
+  .encodeImage(x, y, w, h)` is the same encoder over the Graphics' target,
+  translated, and answers null for a region it cannot encode (the
+  specification's answer as wfeature reads it); it used to answer a BMP header
+  with no pixels. The encoder, `wie_backend::canvas::encode_bmp`, writes what
+  `decode_image` reads, which is how a title uses it: it keeps the bytes and
+  hands them back to image creation. Result: 마스터오브소드3 ×2 play their intro
+  story (FAIL to OK), 리얼싸커2009 ×2 reach the Gameloft splash; KTF 262 to 266
+  of 321, none worse; LGT launched twice 68 of 79, identical.
+- **KTF file names are paths, and jar resources are not files** (2026-10-15).
+  The 31-byte name limit is the WIPI record database's (its 32-byte field) and
+  applies only there now; KTF's table 7 (`MC_fsOpen`) takes names up to 255
+  bytes, which 리얼싸커2009 needs for `/recordStore/rms_KOR_RMS_DATA.sav` (33
+  bytes: the limit refused it, and the handle's 32-byte name field then
+  overflowed into a host panic). What a KTF file starts from is a file the
+  archive ships beside the jar (`P/<name>`), never a jar resource of the same
+  name — wfeature's `guestFile` reads the outer archive only. 이노티아연대기2
+  installs itself by reading each `*.dat` resource, inflating it and writing
+  the result to a file of the same name after a seek to the end, so a file
+  seeded with the resource's bytes came out as the compressed copy with the
+  inflated one appended, and the title sat on its install bar (not the mode-8
+  open the previous entry suspected; mode 8 is an ordinary open here and in
+  wfeature). And a missing KTF file opened for reading (mode 1) is M_E_NOENT,
+  as in wfeature: the rule that opened it as an empty file was for 데몬헌터's
+  Config.dat, which its archive ships in `P/` and the packaged lookup serves,
+  while 이노티아연대기2 opens `i_pack.dat` in mode 1 before installing and
+  parsed an empty file's header as a pack (fault at address 0). Result: KTF
+  266 to 273 of 321, none worse — 이노티아연대기2 ×2 install and reach the
+  Com2uS splash and rating screen, 럭키당구, 미니게임천국4 and 붕어빵타이쿤3 ×3
+  (speed check, tips, in-game) start; 데몬헌터 unchanged.
+- **`MC_knlGetAccessLevel` and `MC_knlGetExecNames`** (2026-10-15): the access
+  level is a bitmask of API groups and every group is granted (0xff) — a title
+  reads it at startup and requires `& 0xbc`, so withholding a bit ends the game
+  before any call could be refused (wfeature's reasoning). `MC_knlGetExecNames
+  (program, version, vendor, out, out_len)` lists the one installed program as
+  `<AID>\t<AID>\t000` and answers 1; 0 when asked about another program, -18
+  for a short buffer. The layout is wfeature's reconstruction from the only
+  caller: it reads the last 21 characters and requires an eight-character
+  token twice, nine apart, keeping it as the program's identity. 이노티아연대기2
+  asks both after its install (fatal "Unimplemented" otherwise, 19 frames in)
+  and then shows its own "인증오류 (오류번호:3001)": its packaged `cert.c2s`
+  is a certificate sealed to the subscriber number of the handset that first
+  downloaded it (wfeature `docs/ktf.md`, "The certificate behind it"; wfeature
+  re-seals one with a deliberate `provision` command). That is a decision for
+  the user, not a platform answer. KTF 273 of 321 unchanged, none worse.
+- **Under the virtual clock 리얼싸커2009 loads forever** (2026-10-15): with
+  `WIE_VCLOCK=1` the title sits on its Gameloft splash with a spinner, reading
+  one chunk of its `lo.dsk` every couple of virtual seconds; on the real clock
+  it loads in ten seconds and reaches its title and team selection. Its native
+  per-tick loop reads the clock five times and re-arms a 20 ms timer, so a
+  clock that advances 1 ms per call paces it differently. Open, and a caution
+  when reading sweep results for a title that paces work by wall time. (Table
+  13 — wie's `Interface12`, three slots — is not the cause: its slot 1 is
+  called once per tick between graphics slots 10 and 21 at 0x10a212 and the
+  answer is discarded.)
 - **LGT titles ask for a restart on their first launch** (2026-10-15): 10 of the
   11 LGT WIPI titles a 40 s sweep classed STUCK or SHALLOW sit on the same
   screen — "게임이 정상적으로 다운로드 되었습니다. 안정적인 메모리 확보를 위해
