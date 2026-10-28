@@ -1,4 +1,4 @@
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 
 use jvm::{Array, ClassInstanceRef, JavaChar, Jvm, Result as JvmResult};
 
@@ -6,7 +6,7 @@ use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::String;
 
-use wie_backend::canvas::encode_bmp;
+use wie_backend::canvas::{Color, encode_bmp};
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 use wie_midp::classes::javax::microedition::lcdui::{Font as MidpFont, Graphics as MidpGraphics, Image as MidpImage};
 
@@ -784,25 +784,43 @@ impl Graphics {
         Ok(((color.r as i32) << 16) | ((color.g as i32) << 8) | color.b as i32)
     }
 
+    /// The target's pixels in the handset's own format, 16-bit RGB565 little-endian, `bytes_per_line`
+    /// apart. (던파 격투가편 reads one pixel back to learn the format before it draws.)
     async fn get_pixels(
-        _: &Jvm,
+        jvm: &Jvm,
         _: &mut WieJvmContext,
         this: ClassInstanceRef<Self>,
         x: i32,
         y: i32,
         width: i32,
         height: i32,
-        pixels: ClassInstanceRef<Array<i8>>,
+        mut pixels: ClassInstanceRef<Array<i8>>,
         offset: i32,
         bytes_per_line: i32,
     ) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Graphics::getPixels({this:?}, {x}, {y}, {width}, {height}, {pixels:?}, {offset}, {bytes_per_line})");
+        tracing::debug!("org.kwis.msp.lcdui.Graphics::getPixels({this:?}, {x}, {y}, {width}, {height}, {pixels:?}, {offset}, {bytes_per_line})");
+
+        let colors = Self::read_region(jvm, &this, x, y, width, height).await?;
+        let length = jvm.array_length(&pixels).await? as i64;
+        for (index, color) in colors.into_iter().enumerate() {
+            let Some(color) = color else { continue };
+            let (row, column) = (index as i64 / width as i64, index as i64 % width as i64);
+            let position = offset as i64 + row * bytes_per_line as i64 + column * 2;
+            if position < 0 || position + 2 > length {
+                continue;
+            }
+            let pixel = ((color.r as u16 >> 3) << 11) | ((color.g as u16 >> 2) << 5) | (color.b as u16 >> 3);
+            let [low, high] = pixel.to_le_bytes();
+            jvm.store_array(&mut pixels, position as usize, [low as i8, high as i8]).await?;
+        }
 
         Ok(())
     }
 
+    /// Draws pixels given in the handset's own format (16-bit RGB565 little-endian, `bytes_per_line`
+    /// apart), as `setRGBPixels` does with colours.
     async fn set_pixels(
-        _: &Jvm,
+        jvm: &Jvm,
         _: &mut WieJvmContext,
         this: ClassInstanceRef<Self>,
         x: i32,
@@ -813,9 +831,64 @@ impl Graphics {
         offset: i32,
         bytes_per_line: i32,
     ) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Graphics::setPixels({this:?}, {x}, {y}, {width}, {height}, {pixels:?}, {offset}, {bytes_per_line})");
+        tracing::debug!("org.kwis.msp.lcdui.Graphics::setPixels({this:?}, {x}, {y}, {width}, {height}, {pixels:?}, {offset}, {bytes_per_line})");
 
-        Ok(())
+        if width <= 0 || height <= 0 {
+            return Ok(());
+        }
+        let length = jvm.array_length(&pixels).await?;
+        let bytes: Vec<i8> = jvm.load_array(&pixels, 0, length).await?;
+        let mut argb = Vec::with_capacity((width * height) as usize);
+        for row in 0..height as i64 {
+            for column in 0..width as i64 {
+                let position = offset as i64 + row * bytes_per_line as i64 + column * 2;
+                let pixel = if position >= 0 && position + 2 <= length as i64 {
+                    u16::from_le_bytes([bytes[position as usize] as u8, bytes[position as usize + 1] as u8])
+                } else {
+                    0
+                };
+                let (r, g, b) = ((pixel >> 11) as u32 & 0x1f, (pixel >> 5) as u32 & 0x3f, pixel as u32 & 0x1f);
+                argb.push((0xff00_0000 | ((r << 3 | r >> 2) << 16) | ((g << 2 | g >> 4) << 8) | (b << 3 | b >> 2)) as i32);
+            }
+        }
+
+        let mut rgb_pixels = jvm.instantiate_array("I", argb.len()).await?;
+        jvm.store_array(&mut rgb_pixels, 0, argb).await?;
+        let midp_graphics = jvm.get_field(&this, "midpGraphics", "Ljavax/microedition/lcdui/Graphics;").await?;
+        jvm.invoke_virtual(
+            &midp_graphics,
+            "javax/microedition/lcdui/Graphics",
+            "drawRGB",
+            "([IIIIIIIZ)V",
+            (rgb_pixels, 0, width, x, y, width, height, false),
+        )
+        .await
+    }
+
+    /// The colours of a region of the drawing target, row by row, in the translated coordinates the
+    /// other draws use; `None` outside the target.
+    async fn read_region(jvm: &Jvm, this: &ClassInstanceRef<Self>, x: i32, y: i32, width: i32, height: i32) -> JvmResult<Vec<Option<Color>>> {
+        let mut midp_graphics: ClassInstanceRef<MidpGraphics> = jvm.get_field(this, "midpGraphics", "Ljavax/microedition/lcdui/Graphics;").await?;
+        let image = MidpGraphics::image(jvm, &mut midp_graphics).await?;
+        let backend_image = MidpImage::image(jvm, &image).await?;
+        let translate_x: i32 = jvm
+            .invoke_virtual(&midp_graphics, "javax/microedition/lcdui/Graphics", "getTranslateX", "()I", ())
+            .await?;
+        let translate_y: i32 = jvm
+            .invoke_virtual(&midp_graphics, "javax/microedition/lcdui/Graphics", "getTranslateY", "()I", ())
+            .await?;
+
+        let (image_width, image_height) = (backend_image.width() as i64, backend_image.height() as i64);
+        let mut colors = Vec::with_capacity((width.max(0) * height.max(0)) as usize);
+        for row in 0..height.max(0) as i64 {
+            for column in 0..width.max(0) as i64 {
+                let (px, py) = (x as i64 + translate_x as i64 + column, y as i64 + translate_y as i64 + row);
+                let inside = px >= 0 && py >= 0 && px < image_width && py < image_height;
+                colors.push(inside.then(|| backend_image.get_pixel(px as i32, py as i32)));
+            }
+        }
+
+        Ok(colors)
     }
 
     async fn reset(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
@@ -892,19 +965,33 @@ impl Graphics {
         Ok(data_array.into())
     }
 
+    /// The target's colours as `0xAARRGGBB`, `bpl` ints apart.
     async fn get_rgb_pixels(
-        _jvm: &Jvm,
+        jvm: &Jvm,
         _context: &mut WieJvmContext,
         this: ClassInstanceRef<Self>,
         x: i32,
         y: i32,
         width: i32,
         height: i32,
-        pixels: ClassInstanceRef<Array<i32>>,
+        mut pixels: ClassInstanceRef<Array<i32>>,
         offset: i32,
         bpl: i32,
     ) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lcdui.Graphics::getRGBPixels({this:?}, {x}, {y}, {width}, {height}, {pixels:?}, {offset}, {bpl})");
+        tracing::debug!("org.kwis.msp.lcdui.Graphics::getRGBPixels({this:?}, {x}, {y}, {width}, {height}, {pixels:?}, {offset}, {bpl})");
+
+        let colors = Self::read_region(jvm, &this, x, y, width, height).await?;
+        let length = jvm.array_length(&pixels).await? as i64;
+        for (index, color) in colors.into_iter().enumerate() {
+            let Some(color) = color else { continue };
+            let (row, column) = (index as i64 / width as i64, index as i64 % width as i64);
+            let position = offset as i64 + row * bpl as i64 + column;
+            if position < 0 || position >= length {
+                continue;
+            }
+            let value = ((color.a as u32) << 24) | ((color.r as u32) << 16) | ((color.g as u32) << 8) | color.b as u32;
+            jvm.store_array(&mut pixels, position as usize, [value as i32]).await?;
+        }
 
         Ok(())
     }

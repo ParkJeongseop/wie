@@ -308,6 +308,15 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **`Graphics.getPixels`/`setPixels`/`getRGBPixels` read and write the target**
+  (2026-10-29): the three were stubs. `getRGBPixels` now copies the target's
+  colours out as `0xAARRGGBB` (`bpl` ints apart), `getPixels` as the handset's
+  16-bit RGB565 little-endian (`bytes_per_line` apart) and `setPixels` draws
+  such bytes back through the same path as `setRGBPixels`, all in the
+  translated coordinates the other draws use. 던파 격투가편 reads one pixel back
+  after filling the screen white (a format probe); it still shows nothing
+  after it, so something else holds that title. 다크슬레이어2 gains the
+  caption over its opening banner; nothing else in KTF or LGT changes.
 - **KTF `throw e`: the init callbacks' slot 2 throws an object** (2026-10-29):
   the client's init stores the fifth argument, the platform's callback table,
   and calls into it for the runtime's own needs: slot 1 throws by class name
