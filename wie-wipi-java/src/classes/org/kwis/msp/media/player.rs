@@ -6,7 +6,10 @@ use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::org::kwis::msp::media::{BaseClip, Clip};
+use crate::classes::{
+    net::wie::PlayUpdateTask,
+    org::kwis::msp::media::{BaseClip, Clip},
+};
 
 // class org.kwis.msp.media.Player
 pub struct Player;
@@ -125,6 +128,20 @@ impl Player {
         if !player.is_null() {
             let _: () = jvm.invoke_virtual(&player, "net/wie/SmafPlayer", "start", "(Z)V", (repeat,)).await?;
 
+            // A clip played once ends when its sequence does; the sink does not report it, so the
+            // end is scheduled from the duration (microseconds, -1 when unknown). Only the end is
+            // delivered, from the timer thread: a title's handler commonly stops or replays the clip,
+            // and a notification raised from inside play or stop would re-enter it.
+            let generation = Clip::next_generation(jvm, &clip).await?;
+            if !repeat {
+                let duration: i64 = jvm
+                    .invoke_virtual(&player, "javax/microedition/media/Player", "getDuration", "()J", ())
+                    .await?;
+                if duration > 0 {
+                    PlayUpdateTask::schedule(jvm, clip, generation, duration / 1000).await?;
+                }
+            }
+
             Ok(true)
         } else {
             Ok(false)
@@ -141,6 +158,8 @@ impl Player {
 
         if !player.is_null() {
             let _: () = jvm.invoke_virtual(&player, "javax/microedition/media/Player", "stop", "()V", ()).await?;
+
+            Clip::next_generation(jvm, &clip).await?;
 
             return Ok(true);
         }

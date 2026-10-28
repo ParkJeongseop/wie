@@ -28,6 +28,8 @@ impl ShellComponent {
                 JavaMethodProto::new("show", "()V", Self::show, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("hide", "()V", Self::hide, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("serviceRepaints", "()V", Self::service_repaints, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("layout", "()V", Self::layout, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("isShown", "()Z", Self::is_shown, MethodAccessFlags::PUBLIC),
             ],
             fields: vec![],
             access_flags: ClassAccessFlags::PUBLIC,
@@ -81,6 +83,21 @@ impl ShellComponent {
         tracing::warn!("stub org.kwis.msp.lwc.ShellComponent::hide({this:?})");
 
         Ok(())
+    }
+
+    /// Lays the children out again after they changed; nothing is laid out here (미니고치 calls it
+    /// on its form at start).
+    async fn layout(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.ShellComponent::layout({this:?})");
+
+        Ok(())
+    }
+
+    /// Nothing presents a shell, so none is shown (미니고치 asks before showing its form).
+    async fn is_shown(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
+        tracing::debug!("org.kwis.msp.lwc.ShellComponent::isShown({this:?})");
+
+        Ok(false)
     }
 
     async fn service_repaints(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {

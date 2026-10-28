@@ -66,7 +66,13 @@ impl SmafPlayer {
                     MethodAccessFlags::PUBLIC,
                 ),
             ],
-            fields: vec![JavaFieldProto::new("audioHandle", "I", FieldAccessFlags::PRIVATE)],
+            fields: vec![
+                JavaFieldProto::new("audioHandle", "I", FieldAccessFlags::PRIVATE),
+                // A WIPI title's PlayListener for the clip this player plays, and the play it belongs to;
+                // kept here because a title may subclass org.kwis.msp.media.Clip but not this class.
+                JavaFieldProto::new("wipiListener", "Ljava/lang/Object;", FieldAccessFlags::PRIVATE),
+                JavaFieldProto::new("playGeneration", "I", FieldAccessFlags::PRIVATE),
+            ],
             access_flags: ClassAccessFlags::PUBLIC,
         }
     }
@@ -158,10 +164,14 @@ impl SmafPlayer {
         Ok(300)
     }
 
-    async fn get_duration(_jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> Result<i64> {
-        tracing::warn!("stub net.wie.SmafPlayer::getDuration({this:?})");
+    async fn get_duration(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> Result<i64> {
+        tracing::debug!("net.wie.SmafPlayer::getDuration({this:?})");
 
-        Ok(-1)
+        let audio_handle: i32 = jvm.get_field(&this, "audioHandle", "I").await?;
+        let duration = context.system().audio().duration(audio_handle as u32);
+
+        // MIDP media time is in microseconds; TIME_UNKNOWN (-1) when the sequence is not loaded.
+        Ok(duration.map(|x| (x * 1000) as i64).unwrap_or(-1))
     }
 
     async fn get_content_type(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> Result<ClassInstanceRef<String>> {

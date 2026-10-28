@@ -308,6 +308,41 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **KTF widget toolkit, listeners, `instanceof`, mutable images, play events**
+  (2026-10-28): 강호동맞고2 could not load `com/ktf/kfc/GTextField` and then
+  `Component.setEventListener`; 미니고치 wanted `lwc/ButtonComponent`,
+  `ShellComponent.layout` and `isShown`; 생과일타이쿤파이널 stopped on
+  `InputMethodHandler.setInputMethodListener`. The vendor toolkit now has
+  `GMsgBox`, `GFormComponent`, `GTextField`, `GTextListener`, `ChoiceText`,
+  `GMenuBar` and `GProgressBar` beside the `GForm` family (four KTF titles link
+  `com/ktf/kfc`: 강호동맞고2, 미니게임패밀리, 미니고치, 테일즈판타지), and the
+  listeners are taken and dropped (nothing raises widget events yet). **Adding
+  `setEventListener` to `lwc/Component` itself is not possible as things stand**:
+  with one more method on Component, 프리스타일_어택's second launch (saved
+  settings present) enters its own lazy method resolver twice for
+  `Thread.sleep` and faults reading a name table with the resolved pointer as
+  an index; every other change of this set is innocent (bisected build by
+  build). The KTF client is sensitive to the platform class's vtable size in a
+  way not yet understood (a constant slot in the title, or a class-pointer
+  hash), so 강호동맞고2 stays at that lookup and the subclassable platform
+  classes keep no instance fields of their own either (the clip's PlayListener
+  lives on its `net.wie.SmafPlayer`). `java_check_type` (the client's
+  instanceof/checkcast) answered 1 whenever its third argument was non-zero
+  (2006월드올림픽 passes 0xd4 on every call); it now answers from the JVM's
+  subtyping, null being false. (`Image.createImage(int, int)` starting opaque
+  white, as MIDP says, was tried and dropped: 고래사냥2 and 미니고치 on SK-VM
+  draw over a fresh mutable image and expect what they did not draw to stay
+  transparent black, so their dialogs came out as white boxes.) `Clip.setListener` kept
+  nothing: a title's `PlayListener.playUpdate(Clip, int, int)` is now told
+  `END_OF_DATA` (1) when a clip played once has run its SMAF length
+  (`SmafPlayer.getDuration` answers the sequence length in microseconds instead
+  of -1), from a timer so a handler that stops or replays the clip does not
+  re-enter play; 49 titles in the library name `PlayListener`. 월드장기체스
+  (LGT) still stops on the first frame of its publisher intro with its loop
+  running (open: it reads a 15-character system property every tick). Result
+  against 00da45e0: KTF 16 s launched twice 280 to 281 of 321 (생과일타이쿤파이널),
+  none worse; LGT WIPI launched twice 70 of 79 identical; SK-VM 84 of 90
+  identical; ez-java 104 of 105 identical.
 - **Deleted packaged files stayed deleted only until the next run** (2026-10-28):
   a database or file that exists only in the archive (a jar resource, or
   `P/<name>`) is seeded into the store on first open, and a deletion removed the

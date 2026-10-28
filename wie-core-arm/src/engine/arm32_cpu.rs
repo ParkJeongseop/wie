@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, format, vec};
+use alloc::{boxed::Box, format, vec, vec::Vec};
 
 use arm32_cpu::{Cpu, Memory, Mode, reg};
 
@@ -80,7 +80,15 @@ impl ArmEngine for Arm32CpuEngine {
                 let lr = self.cpu.reg_get(Mode::User, reg::LR);
                 let regs: [u32; 13] = core::array::from_fn(|index| self.cpu.reg_get(Mode::User, index as u8));
                 let sp = self.cpu.reg_get(Mode::User, reg::SP);
-                tracing::error!("memory fault accessing {x:#x} at pc {pc:#x} (lr {lr:#x}, sp {sp:#x}; r0-r12 {regs:x?})");
+                // The words under sp at this moment are the only call-stack record there is: the
+                // Java exception the fault turns into unwinds the guest stack before anything else
+                // can look at it.
+                let mut stack = [0u8; 32 * 4];
+                let stack_words: Vec<u32> = match self.mem.read_range(sp, stack.len(), &mut stack) {
+                    Ok(_) => stack.chunks_exact(4).map(|x| u32::from_le_bytes([x[0], x[1], x[2], x[3]])).collect(),
+                    Err(_) => Vec::new(),
+                };
+                tracing::error!("memory fault accessing {x:#x} at pc {pc:#x} (lr {lr:#x}, sp {sp:#x}; r0-r12 {regs:x?}; stack {stack_words:x?})");
                 return Err(WieError::InvalidMemoryAccess(x));
             }
         };

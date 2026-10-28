@@ -389,18 +389,26 @@ pub async fn java_array_new(core: &mut ArmCore, jvm: &mut Jvm, element_type: u32
     Ok(raw)
 }
 
+/// The client's instanceof/checkcast primitive. The third argument is not part of the question
+/// (wfeature ignores it too; 2006월드올림픽 passes 0xd4 on every call) and used to make every answer
+/// "yes", which is not harmless: the title compiles `if (x instanceof T) ((T) x).m()` into this
+/// check and a virtual call through T's slot, so a wrong yes dispatches through another class's
+/// vtable. The answer comes from the JVM's own subtyping; what cannot be decided (a class pointer
+/// that is not a class record) stays permissive.
 pub async fn java_check_type(core: &mut ArmCore, jvm: &mut Jvm, ptr_class: u32, ptr_instance: u32, unk: u32) -> Result<u32> {
-    tracing::warn!("stub java_check_type({ptr_class:#x}, {ptr_instance:#x}, {unk:#x})");
+    tracing::trace!("java_check_type({ptr_class:#x}, {ptr_instance:#x}, {unk:#x})");
 
-    let instance = JavaClassInstance::from_raw(ptr_instance, core);
-
-    // TODO is it correct?
-    if instance.class()?.name()?.starts_with('[') || unk != 0 {
-        return Ok(1);
+    // checkcast guards null in the title's code before coming here: this is instanceof of null.
+    if ptr_instance == 0 {
+        return Ok(0);
     }
 
+    let instance = JavaClassInstance::from_raw(ptr_instance, core);
     let class = JavaClassDefinition::from_raw(ptr_class, core);
-    let result = jvm.is_instance(&instance, &class.name()?);
+    let Ok(class_name) = class.name() else {
+        tracing::warn!("java_check_type({ptr_class:#x}, {ptr_instance:#x}, {unk:#x}): class not readable, answering 1");
+        return Ok(1);
+    };
 
-    Ok(if result { 1 } else { 0 })
+    Ok(if jvm.is_instance(&instance, &class_name) { 1 } else { 0 })
 }

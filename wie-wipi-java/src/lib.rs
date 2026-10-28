@@ -6,7 +6,7 @@ pub mod classes;
 
 use wie_jvm_support::WieJavaClassProto;
 
-pub fn get_protos() -> [WieJavaClassProto; 58] {
+pub fn get_protos() -> [WieJavaClassProto; 67] {
     [
         crate::classes::org::kwis::msf::io::Message::as_proto(),
         crate::classes::org::kwis::msf::io::Network::as_proto(),
@@ -26,6 +26,13 @@ pub fn get_protos() -> [WieJavaClassProto; 58] {
         crate::classes::com::ktf::kfc::GForm::as_proto(),
         crate::classes::com::ktf::kfc::GFormBase::as_proto(),
         crate::classes::com::ktf::kfc::GMenubarForm::as_proto(),
+        crate::classes::com::ktf::kfc::GMsgBox::as_proto(),
+        crate::classes::com::ktf::kfc::GFormComponent::as_proto(),
+        crate::classes::com::ktf::kfc::GTextField::as_proto(),
+        crate::classes::com::ktf::kfc::GTextListener::as_proto(),
+        crate::classes::com::ktf::kfc::ChoiceText::as_proto(),
+        crate::classes::com::ktf::kfc::GMenuBar::as_proto(),
+        crate::classes::com::ktf::kfc::GProgressBar::as_proto(),
         crate::classes::java::io::UnavailableException::as_proto(),
         crate::classes::org::kwis::msp::handset::HandsetProperty::as_proto(),
         crate::classes::org::kwis::msp::io::File::as_proto(),
@@ -44,6 +51,7 @@ pub fn get_protos() -> [WieJavaClassProto; 58] {
         crate::classes::org::kwis::msp::lcdui::JletEventListener::as_proto(),
         crate::classes::org::kwis::msp::lcdui::JletWrapper::as_proto(),
         crate::classes::org::kwis::msp::lwc::Component::as_proto(),
+        crate::classes::org::kwis::msp::lwc::ButtonComponent::as_proto(),
         crate::classes::org::kwis::msp::lwc::ContainerComponent::as_proto(),
         crate::classes::org::kwis::msp::lwc::EventListener::as_proto(),
         crate::classes::org::kwis::msp::lwc::FormComponent::as_proto(),
@@ -64,6 +72,7 @@ pub fn get_protos() -> [WieJavaClassProto; 58] {
         crate::classes::org::kwis::msp::media::Vibrator::as_proto(),
         crate::classes::org::kwis::msp::media::Volume::as_proto(),
         crate::classes::net::wie::CardCanvas::as_proto(),
+        crate::classes::net::wie::PlayUpdateTask::as_proto(),
         crate::classes::net::wie::WIPIFileOutputStream::as_proto(),
         crate::classes::net::wie::WIPIMIDlet::as_proto(),
     ]

@@ -6,6 +6,8 @@ use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
+use crate::classes::org::kwis::msp::lcdui::InputMethodListener;
+
 // class org.kwis.msp.lcdui.InputMethodHandler
 pub struct InputMethodHandler;
 
@@ -20,8 +22,17 @@ impl InputMethodHandler {
                 JavaMethodProto::new("setCurrentMode", "(I)Z", Self::set_current_mode, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("getCurrentMode", "()I", Self::get_current_mode, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("hideSymbolCard", "()V", Self::hide_symbol_card, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new(
+                    "setInputMethodListener",
+                    "(Lorg/kwis/msp/lcdui/InputMethodListener;)V",
+                    Self::set_input_method_listener,
+                    MethodAccessFlags::PUBLIC,
+                ),
             ],
-            fields: vec![JavaFieldProto::new("currentMode", "I", FieldAccessFlags::PRIVATE)],
+            fields: vec![
+                JavaFieldProto::new("currentMode", "I", FieldAccessFlags::PRIVATE),
+                JavaFieldProto::new("listener", "Lorg/kwis/msp/lcdui/InputMethodListener;", FieldAccessFlags::PRIVATE),
+            ],
             access_flags: ClassAccessFlags::PUBLIC,
         }
     }
@@ -46,6 +57,20 @@ impl InputMethodHandler {
         tracing::debug!("org.kwis.msp.lcdui.InputMethodHandler::getCurrentMode({this:?})");
 
         jvm.get_field(&this, "currentMode", "I").await
+    }
+
+    /// Who is told of text the handler composes (`notifyTextChanged`). Nothing composes text here
+    /// yet, so the listener is only kept; 생과일타이쿤파이널 (KTF) sets one when its name entry opens.
+    async fn set_input_method_listener(
+        jvm: &Jvm,
+        _: &mut WieJvmContext,
+        mut this: ClassInstanceRef<Self>,
+        listener: ClassInstanceRef<InputMethodListener>,
+    ) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lcdui.InputMethodHandler::setInputMethodListener({this:?}, {listener:?})");
+
+        jvm.put_field(&mut this, "listener", "Lorg/kwis/msp/lcdui/InputMethodListener;", listener)
+            .await
     }
 
     async fn hide_symbol_card(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {

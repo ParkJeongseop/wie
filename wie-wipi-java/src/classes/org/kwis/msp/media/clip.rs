@@ -5,7 +5,7 @@ use bytemuck::cast_vec;
 use jvm::{Array, ClassInstanceRef, Jvm, Result as JvmResult, runtime::JavaIoInputStream};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
-use rustjava_runtime::classes::java::lang::String;
+use rustjava_runtime::classes::java::lang::{Object, String};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 use wie_midp::classes::javax::microedition::media::Player;
@@ -167,10 +167,62 @@ impl Clip {
         Ok(())
     }
 
-    async fn set_listener(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, listener: ClassInstanceRef<PlayListener>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.media.Clip::setListener({this:?}, {listener:?})");
+    /// The listener is kept on the clip's player (`net.wie.SmafPlayer`), not on the clip: titles
+    /// subclass Clip, and their fields follow the SDK's layout, so Clip cannot grow one.
+    async fn set_listener(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, listener: ClassInstanceRef<PlayListener>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.media.Clip::setListener({this:?}, {listener:?})");
 
-        Ok(())
+        let mut player = Self::player(jvm, &this).await?;
+        if player.is_null() {
+            tracing::warn!("org.kwis.msp.media.Clip::setListener({this:?}): clip has no player, listener dropped");
+            return Ok(());
+        }
+        jvm.put_field(&mut player, "wipiListener", "Ljava/lang/Object;", listener).await
+    }
+
+    /// Tells the clip's listener, if it has one, what the clip did (`PlayListener.playUpdate`).
+    /// 월드장기체스 starts its menu music with a listener and advances only on what it is told.
+    pub async fn notify(jvm: &Jvm, this: &ClassInstanceRef<Self>, event: i32) -> JvmResult<()> {
+        let player = Self::player(jvm, this).await?;
+        if player.is_null() {
+            return Ok(());
+        }
+        let listener: ClassInstanceRef<Object> = jvm.get_field(&player, "wipiListener", "Ljava/lang/Object;").await?;
+        if listener.is_null() {
+            return Ok(());
+        }
+        tracing::debug!("org.kwis.msp.media.Clip::notify({this:?}, {event})");
+
+        jvm.invoke_virtual(
+            &listener,
+            "org/kwis/msp/media/PlayListener",
+            "playUpdate",
+            "(Lorg/kwis/msp/media/Clip;II)V",
+            (this.clone(), event, 0),
+        )
+        .await
+    }
+
+    /// Each play or stop starts a new generation, so the end-of-data the previous play scheduled
+    /// is not delivered for this one.
+    pub async fn next_generation(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<i32> {
+        let mut player = Self::player(jvm, this).await?;
+        if player.is_null() {
+            return Ok(0);
+        }
+        let generation: i32 = jvm.get_field(&player, "playGeneration", "I").await?;
+        let generation = generation.wrapping_add(1);
+        jvm.put_field(&mut player, "playGeneration", "I", generation).await?;
+
+        Ok(generation)
+    }
+
+    pub async fn generation(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<i32> {
+        let player = Self::player(jvm, this).await?;
+        if player.is_null() {
+            return Ok(0);
+        }
+        jvm.get_field(&player, "playGeneration", "I").await
     }
 
     async fn set_buffer(
@@ -239,7 +291,7 @@ mod test {
     use alloc::boxed::Box;
 
     use jvm::{ClassInstanceRef, runtime::JavaLangString};
-    use rustjava_runtime::classes::java::lang::String;
+    use rustjava_runtime::classes::java::lang::{Object, String};
     use test_utils::run_jvm_test;
     use wie_util::Result;
 
