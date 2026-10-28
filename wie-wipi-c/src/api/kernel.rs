@@ -40,6 +40,15 @@ pub async fn get_system_property(context: &mut dyn WIPICContext, ptr_id: WIPICWo
     let value = match id.as_ref() {
         "RSSILEVEL" => "30",
         "BATTERYLEVEL" => "100",
+        "MAXRSSILEVEL" => "100",
+        "MAXBATTLEVEL" => "100",
+        // Steps the hardware's volume and vibrator have (titles divide by them); nothing vibrates.
+        "VOLUMELEVEL" => "5",
+        "VIBRATORLEVEL" => "0",
+        // A Korean handset's zone in the specification's format (이노티아연대기2 stamps its
+        // offline certificate with it).
+        "TIMEZONE" => "GMT+09:00",
+        "ESN" => "00000000",
         "PHONEMODEL" => "Emulator",
         "PHONENUMBER" => "", // putting this cause some game to fail authentication
         "MIN" => "01000000000",

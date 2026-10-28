@@ -308,6 +308,26 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **Deleted packaged files stayed deleted only until the next run** (2026-10-28):
+  a database or file that exists only in the archive (a jar resource, or
+  `P/<name>`) is seeded into the store on first open, and a deletion removed the
+  seeded copy but not the archive's, so the next run was the first run again.
+  이노티아연대기2 ships the handset's own `cert.c2s` (23 bytes, sealed to that
+  subscriber), reads it, deletes it and exits with "인증오류 3001"; only without
+  the file does the next launch ask "인증서를 받으시겠습니까?" and, on 예
+  (LEFT then OK — 아니오 is the default), try `MC_netConnect`, fail, stamp an
+  offline `tcert.c2s` (28 bytes, with `TIMEZONE`) and go on to character
+  creation. The blog the archive came from says as much ("재실행하시고 인증서
+  받기 '예'"). `MC_dbDeleteDataBase` of a packaged name now records it in a
+  ledger database (`.wie-removed`, one name per line, in the title's own
+  repository so clearing the title's data clears it) and the packaged readers
+  skip ledgered names; deleting a packaged name that was never opened succeeds
+  too. The kernel answers `TIMEZONE` ("GMT+09:00"), `MAXRSSILEVEL`,
+  `MAXBATTLEVEL`, `VOLUMELEVEL` (5), `VIBRATORLEVEL` (0) and `ESN` as well.
+  The other kind of handset leftover — 티어즈오브메탈's `P/res/save.sav`, a
+  dump of in-memory save structs with heap pointers the title follows — is not
+  the emulator's to fix: the host drops it when it opens the archive
+  (wie-mobile `HANDSET_FILES`, the library manifest's `strip` column).
 - **Memory figures** (2026-10-15): `MC_knlGetTotalMemory` / `MC_knlGetFreeMemory`
   answered a hard-coded 1 MB each. 53 KTF and 31 LGT titles ask, and
   블레이드마스터3 asks thirteen times at start and refuses to run ("메모리 부족 …

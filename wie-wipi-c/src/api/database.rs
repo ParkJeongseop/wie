@@ -504,11 +504,21 @@ pub async fn delete_database(context: &mut dyn WIPICContext, ptr_name: WIPICWord
     let Ok(name) = String::from_utf8(read_null_terminated_string_bytes(context, ptr_name)?) else {
         return Ok(-22);
     };
-    let system = context.system();
-    let pid = system.pid().to_owned();
+    let (deleted, remains) = {
+        let system = context.system();
+        let pid = system.pid().to_owned();
+        let deleted = system.platform().database_repository().delete(&name, &pid).await;
+        (deleted, system.platform().database_repository().exists(&name, &pid).await)
+    };
 
-    let deleted = system.platform().database_repository().delete(&name, &pid).await;
-    if deleted || !system.platform().database_repository().exists(&name, &pid).await {
+    // The archive's copy would come back on the next open: remember that the title removed it.
+    if read_packaged_database(context, &name).await?.is_some() {
+        tracing::debug!("MC_dbDeleteDataBase: {name:?} is packaged, recording its removal");
+        mark_removed(context, &name).await;
+        return Ok(0);
+    }
+
+    if deleted || !remains {
         Ok(0)
     } else {
         Ok(-12) // M_E_NOENT
@@ -907,7 +917,55 @@ async fn get_database_from_db_id(context: &mut dyn WIPICContext, db_id: i32) -> 
 
 /// What the WIPI record database API starts a name from: a jar resource of that name, or a file
 /// the archive ships beside the jar.
+/// Database holding, one per line, the names of packaged databases and files the title deleted.
+///
+/// A database or file that only exists in the archive (a jar resource, or `P/<name>`) is seeded
+/// into the store on first open. Once the title deletes it, the seed must not come back on the
+/// next run: 이노티아연대기2 ships the handset's own `cert.c2s`, finds it sealed to another
+/// subscriber, deletes it and exits with "인증오류 3001", and only without the file does the next
+/// run offer "인증서 받기" and continue offline. With the deletion forgotten every run was the
+/// first. The ledger lives in the repository, so clearing a title's data clears it too.
+const REMOVED_LEDGER: &str = ".wie-removed";
+
+async fn removed_names(context: &mut dyn WIPICContext) -> Vec<String> {
+    let system = context.system();
+    let pid = system.pid().to_owned();
+    if !system.platform().database_repository().exists(REMOVED_LEDGER, &pid).await {
+        return Vec::new();
+    }
+    let ledger = system.platform().database_repository().open(REMOVED_LEDGER, &pid).await;
+    let Some(data) = ledger.get(1).await else {
+        return Vec::new();
+    };
+
+    String::from_utf8_lossy(&data)
+        .lines()
+        .filter(|x| !x.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+async fn is_removed(context: &mut dyn WIPICContext, name: &str) -> bool {
+    removed_names(context).await.iter().any(|x| x == name)
+}
+
+async fn mark_removed(context: &mut dyn WIPICContext, name: &str) {
+    let mut names = removed_names(context).await;
+    if names.iter().any(|x| x == name) {
+        return;
+    }
+    names.push(name.to_owned());
+
+    let system = context.system();
+    let pid = system.pid().to_owned();
+    let mut ledger = system.platform().database_repository().open(REMOVED_LEDGER, &pid).await;
+    ledger.set(1, names.join("\n").as_bytes()).await;
+}
+
 async fn read_packaged_database(context: &mut dyn WIPICContext, name: &str) -> Result<Option<Vec<u8>>> {
+    if is_removed(context, name).await {
+        return Ok(None);
+    }
     if context.get_resource_size(name).await?.is_some() {
         return Ok(Some(context.read_resource(name).await?));
     }
@@ -922,6 +980,9 @@ async fn read_packaged_database(context: &mut dyn WIPICContext, name: &str) -> R
 /// same name after a seek to the end, so a file seeded with the resource's bytes came out as the
 /// compressed copy with the inflated one appended, and the title sat on its install bar.
 async fn read_packaged_file_ktf(context: &mut dyn WIPICContext, name: &str) -> Result<Option<Vec<u8>>> {
+    if is_removed(context, name).await {
+        return Ok(None);
+    }
     let filesystem = context.system().filesystem();
     if filesystem.exists(name).await {
         let mut data = Vec::new();
@@ -1060,6 +1121,25 @@ mod tests {
         let mut data = [0; 9];
         context.read_bytes(0x2000, &mut data).unwrap();
         assert_eq!(&data, b"seed-data");
+    }
+
+    #[futures_test::test]
+    async fn deleted_packaged_database_stays_deleted() {
+        let mut context = database_test_context().with_resource("cert.c2s", b"sealed");
+        context.write_bytes(0x1000, b"cert.c2s\0").unwrap();
+
+        // never opened, but packaged: deleting it succeeds and it is gone for good
+        assert_eq!(exists_database(&mut context, 0x1000, 1).await.unwrap(), 0);
+        assert_eq!(delete_database(&mut context, 0x1000, 1).await.unwrap(), 0);
+        assert_eq!(exists_database(&mut context, 0x1000, 1).await.unwrap(), -12);
+        assert_eq!(open_database(&mut context, 0x1000, 1, 0).await.unwrap(), -12);
+
+        // the title may write a new one, which is then its own
+        let db_id = open_database(&mut context, 0x1000, 4, 0).await.unwrap();
+        assert!(db_id > 0);
+        context.write_bytes(0x2000, b"mine").unwrap();
+        assert_eq!(stream_write(&mut context, db_id, 0x2000, 4).await.unwrap(), 4);
+        assert_eq!(exists_database(&mut context, 0x1000, 1).await.unwrap(), 0);
     }
 
     fn database_test_context() -> TestContext {
