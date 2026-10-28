@@ -105,7 +105,7 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::GetFontDescent => shared_graphics::get_font_descent.into_body(),
         WIPICSvcId::GetStringWidth => shared_graphics::get_string_width.into_body(),
         WIPICSvcId::CreateImage => graphics::create_image.into_body(),
-        WIPICSvcId::Unk0 => unk0.into_body(),
+        WIPICSvcId::DecodeNextImage => graphics::decode_next_image.into_body(),
         WIPICSvcId::Unk11 => unk11.into_body(),
         WIPICSvcId::GetSupportedModeCount => im::get_supported_mode_count.into_body(),
         WIPICSvcId::GetSupportedModes => im::get_supported_modes.into_body(),
@@ -240,14 +240,6 @@ async fn clet_register(core: &mut ArmCore, (system, jvm): &mut (System, Jvm), fu
     }
 
     Ok(())
-}
-
-async fn unk0(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk0({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
-    // graphics
-
-    Ok(0)
 }
 
 async fn unk1(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {

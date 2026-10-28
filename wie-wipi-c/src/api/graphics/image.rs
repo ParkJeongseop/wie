@@ -28,6 +28,11 @@ pub fn decode_image_framebuffer(context: &mut dyn WIPICContext, buf: WIPICIndire
     let address = context.data_ptr(buf)?.checked_add(offset).ok_or(WieError::AllocationFailure)?;
     let mut data = vec![0; len as usize];
     context.read_bytes(address, &mut data)?;
+    tracing::debug!(
+        "decode_image_framebuffer(buf {:#x} -> {address:#x}, offset {offset:#x}, len {len:#x}): {:02x?}",
+        buf.0,
+        &data[..data.len().min(16)]
+    );
     let image = decode_image(&data)?;
     FrameBuffer::from_image(context, &*image)
 }

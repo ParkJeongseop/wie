@@ -308,6 +308,27 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **LGT images are RGB565, and `MC_grpDecodeNextImage`** (2026-10-29):
+  크로이센 (LGT) decodes its 71 sprites with `MC_grpCreateImage`, asks slot
+  0xeb after each, then blits them itself: it takes the image's framebuffer
+  (`MC_grpGetImageFrameBuffer`) and its raw pointer and copies words, the
+  pointer, width and height being all it asks for. wie kept images in the
+  decoder's 32-bit ARGB while reporting 16 bpp, so every sprite came out as
+  noise. Images are now the handset's RGB565 (a transparent pixel keeping its
+  own colour, which is what a blitter like that keys on), and the encoding's
+  alpha follows the pixels in the same allocation, one byte per pixel, read
+  only by the platform's own `MC_grpDrawImage`. `MC_grpCopyFrameBuffer` copies
+  pixels as they are: an off-screen framebuffer is marked as owning its
+  backing the way an image is, and reading an alpha plane behind one (a first
+  attempt did) turned a dozen titles' screens to noise. 메이플스토리 도적편,
+  일지매영웅전기2 and 무한신맞고2009 had the same noise in their art and now
+  draw it. Slot 0xeb was a stub answering 0; it is
+  `MC_grpDecodeNextImage`, which answers `MC_GRP_IMAGE_DONE` (1) for an image
+  (everything decodes in one pass) and `M_E_BADFORMAT` otherwise (wfeature has
+  the same reading). 크로이센 paces itself on the wall clock: on the virtual
+  clock a 40 s run stays on its loading screen, on the real clock it reaches
+  the title, new game and character selection. Result: LGT launched twice 72 of
+  79 unchanged, with only those four titles' frames different; KTF untouched.
 - **Null clip data, a jar not named after the AID, container children**
   (2026-10-28): 절묘한타이밍 builds a `Clip(String, byte[])` from a null array
   in its own error path and the host panicked on the array's length; the

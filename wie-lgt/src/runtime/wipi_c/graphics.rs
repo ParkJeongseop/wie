@@ -1,4 +1,4 @@
-use alloc::vec;
+use alloc::{boxed::Box, vec, vec::Vec};
 use core::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
@@ -7,12 +7,12 @@ use wipi_types::{
     wipic::{WIPICDisplayInfo, WIPICFramebuffer, WIPICIndirectPtr, WIPICWord},
 };
 
-use wie_backend::canvas::{ArgbPixel, Clip, Color, Image, PixelType, VecImageBuffer};
+use wie_backend::canvas::{ArgbPixel, Clip, Color, Image, PixelType, Rgb565Pixel, VecImageBuffer, decode_image};
 use wie_core_arm::{Allocator, ArmCore};
 use wie_util::{Result, WieError, read_generic, write_generic};
 use wie_wipi_c::{
     WIPICContext,
-    api::graphics::{FrameBuffer, decode_image_framebuffer, primitives},
+    api::graphics::{FrameBuffer, primitives},
 };
 
 const GRAPHICS_STATE_ROOT: u32 = 0x7fff1008;
@@ -330,6 +330,67 @@ fn image_framebuffer(context: &dyn WIPICContext, ptr_image: WIPICIndirectPtr) ->
         return Err(WieError::FatalError("LGT image has no native backing".into()));
     }
     Ok(FrameBuffer(read_record(context, WIPICIndirectPtr(image.ptr_image))?))
+}
+
+/// Decodes what a title passes to `MC_grpCreateImage` into the handset's own RGB565 pixels, so a
+/// title that takes an image's framebuffer and its raw pointer (`MC_grpGetImageFrameBuffer`, then
+/// `MC_GRP_GET_FRAME_BUFFER_POINTER`) and runs its own blitter reads what it would on the handset.
+/// 크로이센 does, and read the 32-bit pixels images used to keep as noise. A transparent pixel
+/// keeps its colour (the decode is not premultiplied), which is what such a blitter keys on. The
+/// encoding's alpha follows the pixels in the same allocation, one byte per pixel, where only
+/// `MC_grpDrawImage` reads it (`image_with_alpha`).
+fn decode_image_rgb565(context: &mut dyn WIPICContext, buf: WIPICIndirectPtr, offset: WIPICWord, length: WIPICWord) -> Result<FrameBuffer> {
+    let address = context.data_ptr(buf)?.checked_add(offset).ok_or(WieError::AllocationFailure)?;
+    let mut data = vec![0; length as usize];
+    context.read_bytes(address, &mut data)?;
+    let image = decode_image(&data)?;
+
+    let (width, height) = (image.width(), image.height());
+    let pixels = (width as usize).checked_mul(height as usize).ok_or(WieError::AllocationFailure)?;
+    let mut raw = Vec::with_capacity(pixels * 3);
+    let mut alpha = Vec::with_capacity(pixels);
+    for y in 0..height as i32 {
+        for x in 0..width as i32 {
+            let color = image.get_pixel(x, y);
+            raw.extend_from_slice(&Rgb565Pixel::from_color(color).to_le_bytes());
+            alpha.push(color.a);
+        }
+    }
+    raw.extend_from_slice(&alpha);
+
+    let buf = context.alloc(u32::try_from(raw.len()).map_err(|_| WieError::AllocationFailure)?)?;
+    context.write_bytes(context.data_ptr(buf)?, &raw)?;
+
+    Ok(FrameBuffer(WIPICFramebuffer {
+        width,
+        height,
+        bpl: width * 2,
+        bpp: 16,
+        buf,
+    }))
+}
+
+/// An image backing's pixels with the alpha its encoding declared (see `decode_image_rgb565`), for
+/// the platform's own draws.
+fn image_with_alpha(context: &mut dyn WIPICContext, backing: &FrameBuffer) -> Result<Box<dyn Image>> {
+    if backing.0.bpp != 16 {
+        return backing.image(context);
+    }
+
+    let pixels = (backing.0.width as usize) * (backing.0.height as usize);
+    let mut raw = vec![0u8; pixels * 3];
+    context.read_bytes(context.data_ptr(backing.0.buf)?, &mut raw)?;
+    let (rgb, alpha) = raw.split_at(pixels * 2);
+    let argb = rgb
+        .chunks_exact(2)
+        .zip(alpha)
+        .map(|(rgb, &a)| {
+            let color = Rgb565Pixel::to_color(u16::from_le_bytes([rgb[0], rgb[1]]));
+            ArgbPixel::from_color(Color { a, ..color })
+        })
+        .collect();
+
+    Ok(Box::new(VecImageBuffer::<ArgbPixel>::from_raw(backing.0.width, backing.0.height, argb)))
 }
 
 fn activate_application_view(context: &mut dyn WIPICContext, handle: WIPICIndirectPtr) -> Result<()> {
@@ -727,7 +788,8 @@ pub async fn draw_image(
     if width <= 0 || height <= 0 {
         return Ok(());
     }
-    let source = image_framebuffer(context, ptr_image)?.image(context)?;
+    let backing = image_framebuffer(context, ptr_image)?;
+    let source = image_with_alpha(context, &backing)?;
     let resolved = resolve_framebuffer(context, dst)?;
     let graphics = resolve_context(context, &resolved, ptr_graphics)?;
     primitives::draw_image(
@@ -760,6 +822,8 @@ pub async fn copy_frame_buffer(
     if width <= 0 || height <= 0 {
         return Ok(());
     }
+    // Pixels as they are: an off-screen framebuffer owns its backing the way an image does
+    // (`owned_image`), but has no alpha plane behind its pixels.
     let source = resolve_framebuffer(context, source)?.framebuffer.image(context)?;
     let resolved = resolve_framebuffer(context, dst)?;
     let graphics = resolve_context(context, &resolved, ptr_graphics)?;
@@ -945,7 +1009,7 @@ pub async fn create_image(
     offset: WIPICWord,
     length: WIPICWord,
 ) -> Result<WIPICWord> {
-    let backing = decode_image_framebuffer(context, encoded_data, offset, length)?;
+    let backing = decode_image_rgb565(context, encoded_data, offset, length)?;
     let width = backing.0.width;
     let height = backing.0.height;
     let ptr_backing = alloc_record(context, backing.0)?;
@@ -972,6 +1036,20 @@ pub async fn create_image(
 
 pub async fn get_image_framebuffer(context: &mut dyn WIPICContext, ptr_image: WIPICIndirectPtr) -> Result<WIPICIndirectPtr> {
     Ok(WIPICIndirectPtr(read_record::<LgtImage>(context, ptr_image)?.ptr_framebuffer))
+}
+
+/// `MC_grpDecodeNextImage(img)` walks an animated source a frame at a time. Images here are
+/// decoded whole when created, so a valid image has no next frame: `MC_GRP_IMAGE_DONE` (1), the
+/// answer a caller stops looping on. 크로이센 creates its 71 sprites and asks this after each; the
+/// stub answered 0. A pointer that is not an image is `M_E_BADFORMAT`.
+pub async fn decode_next_image(context: &mut dyn WIPICContext, ptr_image: WIPICIndirectPtr) -> Result<i32> {
+    tracing::debug!("MC_grpDecodeNextImage({:#x})", ptr_image.0);
+
+    if ptr_image.0 == 0 || image_framebuffer(context, ptr_image).is_err() {
+        return Ok(-20); // M_E_BADFORMAT
+    }
+
+    Ok(1) // MC_GRP_IMAGE_DONE
 }
 
 pub async fn get_image_property(context: &mut dyn WIPICContext, ptr_image: WIPICIndirectPtr, property: i32) -> Result<i32> {
