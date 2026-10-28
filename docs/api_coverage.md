@@ -308,6 +308,16 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **KTF `throw e`: the init callbacks' slot 2 throws an object** (2026-10-29):
+  the client's init stores the fifth argument, the platform's callback table,
+  and calls into it for the runtime's own needs: slot 1 throws by class name
+  (the NullPointerException a null check raises), slot 2 was left zero.
+  맞고삼국대전 builds a `new Exception()` and hands it to slot 2 through a
+  jump, which died as "jump native address is null"; 주타이쿤2's thread did
+  the same and the title sat still. Slot 2 now throws the object it is given
+  (a null is a NullPointerException) through the same handler search as every
+  other throw (wfeature's `throwAOTExceptionObject` reads the slot the same
+  way). Both titles play.
 - **KTF collections see what the guest's registers and stacks hold** (2026-10-29):
   the collector runs after every MIDP paint and every resource read, and its
   roots were the Java frames, statics and global references — none of which

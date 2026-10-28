@@ -13,7 +13,7 @@ use crate::{
     emulator::IMAGE_BASE,
     runtime::{
         SVC_CATEGORY_INIT,
-        java::interface::{get_wipi_jb_interface, java_array_new, java_check_type, java_class_load, java_new, java_throw},
+        java::interface::{get_wipi_jb_interface, java_array_new, java_check_type, java_class_load, java_new, java_throw, java_throw_object},
         svc_ids::InitSvcId,
         wipi_c::{interface::get_wipic_knl_interface, register_wipic_svc_handler},
     },
@@ -34,6 +34,7 @@ async fn handle_init_svc(core: &mut ArmCore, jvm: &mut Jvm, id: SvcId) -> Result
         InitSvcId::JavaArrayNew => EmulatedFunction::call(&java_array_new, core, jvm).await?.write(core, lr),
         InitSvcId::JavaClassLoad => EmulatedFunction::call(&java_class_load, core, jvm).await?.write(core, lr),
         InitSvcId::Alloc => EmulatedFunction::call(&alloc, core, &mut ()).await?.write(core, lr),
+        InitSvcId::JavaThrowObject => EmulatedFunction::call(&java_throw_object, core, jvm).await?.write(core, lr),
     }
 }
 
@@ -95,7 +96,7 @@ pub async fn load_native(
     let param_4 = InitParam4 {
         fn_get_interface: core.make_svc_stub(SVC_CATEGORY_INIT, InitSvcId::GetInterface)?,
         fn_java_throw: core.make_svc_stub(SVC_CATEGORY_INIT, InitSvcId::JavaThrow)?,
-        unk1: 0,
+        unk1: core.make_svc_stub(SVC_CATEGORY_INIT, InitSvcId::JavaThrowObject)?,
         unk2: 0,
         fn_java_check_type: core.make_svc_stub(SVC_CATEGORY_INIT, InitSvcId::JavaCheckType)?,
         fn_java_new: core.make_svc_stub(SVC_CATEGORY_INIT, InitSvcId::JavaNew)?,
