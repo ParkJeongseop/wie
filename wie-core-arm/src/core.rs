@@ -710,6 +710,16 @@ impl RunFunctionResult<()> for () {
     fn get(_: &ArmCore) {}
 }
 
+/// Both words of a two-word answer (a `long`), r0 low and r1 high, which is what a `bl` leaves.
+impl RunFunctionResult<u64> for u64 {
+    fn get(core: &ArmCore) -> u64 {
+        let low = core.read_param(0).unwrap() as u64;
+        let high = core.read_param(1).unwrap() as u64;
+
+        low | (high << 32)
+    }
+}
+
 pub struct ThreadContextGuard {
     core: ArmCore,
     thread_id: ThreadId,

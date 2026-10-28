@@ -116,9 +116,11 @@ fn map_exception_unwind(core: &ArmCore, caller_sp: u32, context_base: u32, targe
     Ok(JavaMethodResult::new(vec![context_base, target], Some(next_pc)))
 }
 
-fn map_jump_result(core: &ArmCore, caller_sp: u32, result: core::result::Result<u32, WieError>) -> Result<JavaMethodResult> {
+/// A jump's callee ran on a context of its own, so both words of its answer are carried back to
+/// the caller (r0 and r1): a `long` from a jumped method used to arrive as its low word only.
+fn map_jump_result(core: &ArmCore, caller_sp: u32, result: core::result::Result<u64, WieError>) -> Result<JavaMethodResult> {
     match result {
-        Ok(result) => Ok(JavaMethodResult::new(vec![result], None)),
+        Ok(result) => Ok(JavaMethodResult::new(vec![result as u32, (result >> 32) as u32], None)),
         Err(WieError::JavaExceptionUnwind {
             context_base,
             target,
@@ -187,7 +189,7 @@ async fn java_jump_1(core: &mut ArmCore, _: &mut (), arg1: u32, address: u32) ->
     }
 
     let caller_sp = core.save_context().sp;
-    let result = core.run_function::<u32>(address, &[arg1, 0, 0]).await;
+    let result = core.run_function::<u64>(address, &[arg1, 0, 0]).await;
     map_jump_result(core, caller_sp, result)
 }
 
@@ -309,7 +311,7 @@ async fn call_native(core: &mut ArmCore, _: &mut (), address: u32, ptr_data: u32
 
     // TODO correctly figure out parameter
     let caller_sp = core.save_context().sp;
-    let result = match core.run_function::<u32>(address, &[ptr_data, ptr_data]).await {
+    let result = match core.run_function::<u64>(address, &[ptr_data, ptr_data]).await {
         Ok(result) => result,
         Err(WieError::JavaExceptionUnwind {
             context_base,
@@ -319,8 +321,10 @@ async fn call_native(core: &mut ArmCore, _: &mut (), address: u32, ptr_data: u32
         Err(err) => return Err(err),
     };
 
-    write_generic(core, ptr_data, result)?;
-    write_generic(core, ptr_data + 4, 0u32)?;
+    // Both words of the answer go into the container: the second is what the body left in r1, which
+    // is the high word of a `long` and otherwise whatever the callee was holding, as after a `bl`.
+    write_generic(core, ptr_data, result as u32)?;
+    write_generic(core, ptr_data + 4, (result >> 32) as u32)?;
 
     Ok(JavaMethodResult::new(vec![ptr_data], None))
 }
@@ -333,7 +337,7 @@ async fn java_jump_2(core: &mut ArmCore, _: &mut (), arg1: u32, arg2: u32, addre
     }
 
     let caller_sp = core.save_context().sp;
-    let result = core.run_function::<u32>(address, &[arg1, arg2, 0]).await;
+    let result = core.run_function::<u64>(address, &[arg1, arg2, 0]).await;
     map_jump_result(core, caller_sp, result)
 }
 
@@ -345,7 +349,7 @@ async fn java_jump_3(core: &mut ArmCore, _: &mut (), arg1: u32, arg2: u32, arg3:
     }
 
     let caller_sp = core.save_context().sp;
-    let result = core.run_function::<u32>(address, &[arg1, arg2, arg3]).await;
+    let result = core.run_function::<u64>(address, &[arg1, arg2, arg3]).await;
     map_jump_result(core, caller_sp, result)
 }
 

@@ -6,9 +6,15 @@ use bytemuck::{Pod, cast_slice_mut};
 use wipi_types::wipic::{WIPICFramebuffer, WIPICIndirectPtr, WIPICWord};
 
 use wie_backend::canvas::{ArgbPixel, Canvas, Color, Image, ImageBufferCanvas, PixelType, Rgb8Pixel, Rgb565Pixel, VecImageBuffer};
-use wie_util::{Result, WieError};
+use wie_util::{Result, WieError, read_generic, write_generic};
 
 use crate::context::WIPICContext;
+
+/// Where the screen framebuffer's record pointer lives, and the word that says the C side drew
+/// into it since `MC_grpRepaint` last presented it. The page is the core's global data; the LGT
+/// runtime keeps its own words at 0x7fff1004..0x7fff1010, so the dirty word sits past them.
+pub(super) const SCREEN_FRAMEBUFFER_PTR: u32 = 0x7fff1000;
+pub(super) const SCREEN_FRAMEBUFFER_DIRTY_PTR: u32 = 0x7fff1020;
 
 // same 256MB as wie_core_arm's HEAP_SIZE; not referenced directly to avoid the dependency
 const MAX_FRAMEBUFFER_BYTES: u32 = 0x1000_0000;
@@ -114,7 +120,19 @@ impl FrameBuffer {
     }
 
     pub fn write(&self, context: &mut dyn WIPICContext, data: &[u8]) -> Result<()> {
-        context.write_bytes(context.data_ptr(self.0.buf)?, data)
+        context.write_bytes(context.data_ptr(self.0.buf)?, data)?;
+
+        // A write into the screen framebuffer is what the next MC_grpRepaint has to present.
+        // Without the global page (unit tests) there is no screen framebuffer to mark.
+        let screen: u32 = read_generic(context, SCREEN_FRAMEBUFFER_PTR).unwrap_or(0);
+        if screen != 0 {
+            let record: WIPICFramebuffer = read_generic(context, context.data_ptr(WIPICIndirectPtr(screen))?)?;
+            if record.buf.0 == self.0.buf.0 {
+                write_generic(context, SCREEN_FRAMEBUFFER_DIRTY_PTR, 1u32)?;
+            }
+        }
+
+        Ok(())
     }
 
     pub fn pixel_to_color(&self, pixel: WIPICWord) -> Color {

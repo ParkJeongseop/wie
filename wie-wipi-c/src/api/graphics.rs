@@ -18,10 +18,13 @@ use wipi_types::wipic::{WIPICDisplayInfo, WIPICFramebuffer, WIPICGraphicsContext
 
 use crate::context::WIPICContext;
 
-use self::{grp_context::WIPICGraphicsContextIdx, image::create_wipi_image};
+use self::{
+    framebuffer::{SCREEN_FRAMEBUFFER_DIRTY_PTR, SCREEN_FRAMEBUFFER_PTR},
+    grp_context::WIPICGraphicsContextIdx,
+    image::create_wipi_image,
+};
 
 const FRAMEBUFFER_DEPTH: u32 = 16; // XXX hardcode to 16bpp as some game requires 16bpp framebuffer
-const SCREEN_FRAMEBUFFER_PTR: u32 = 0x7fff1000;
 
 pub async fn get_screen_framebuffer(context: &mut dyn WIPICContext, a0: WIPICWord) -> Result<WIPICIndirectPtr> {
     tracing::debug!("MC_grpGetScreenFrameBuffer({a0:#x})");
@@ -582,8 +585,27 @@ pub async fn draw_string(
     primitives::draw_text(context, &framebuffer, &string, x, top, color, clip)
 }
 
+/// `MC_grpRepaint` asks the handset to put the LCD's framebuffer on the LCD and to run the
+/// title's paint. The Clet runtimes (KTF and LGT) disable the MIDP display's own flush, so what
+/// reaches the screen is only what the C side presents: a title that draws with `MC_grp*` into
+/// the screen framebuffer and relies on this call to show it (sega미니게임6, a thousand strings a
+/// second onto a screen that stayed white) needs the framebuffer presented here. It is presented
+/// when the C side drew into it since the last presentation, so a title whose paint draws and
+/// flushes on its own (데몬헌터, 바이오크로니클) is not shown a stale frame first.
 pub async fn repaint(context: &mut dyn WIPICContext, lcd: i32, x: i32, y: i32, width: i32, height: i32) -> Result<()> {
     tracing::debug!("MC_grpRepaint({lcd}, {x}, {y}, {width}, {height})");
+
+    let dirty: u32 = read_generic(context, SCREEN_FRAMEBUFFER_DIRTY_PTR)?;
+    tracing::debug!("MC_grpRepaint: screen framebuffer dirty={dirty}");
+    if dirty != 0 {
+        write_generic(context, SCREEN_FRAMEBUFFER_DIRTY_PTR, 0u32)?;
+        let screen: u32 = read_generic(context, SCREEN_FRAMEBUFFER_PTR)?;
+        if screen != 0 {
+            let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(WIPICIndirectPtr(screen))?)?);
+            let frame = framebuffer.image(context)?;
+            context.system().platform().screen().paint(&*frame);
+        }
+    }
 
     let platform = context.system().platform();
     let screen = platform.screen();

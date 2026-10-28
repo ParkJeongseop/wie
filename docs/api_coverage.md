@@ -445,6 +445,32 @@ runs them on `wie_midp` + `wie_mmpp`.
   FAIL to a white screen it repaints without drawing — an online game whose
   native module ends right after linking, open), none worse; KTF 273 to 274 of
   321 at 16 s (해적왕2007 from SHALLOW to OK), none worse.
+- **`MC_grpRepaint` presents the screen framebuffer** (2026-10-15). The Clet
+  runtimes (KTF and LGT) disable the MIDP display's own flush
+  (`Display.disablePaint`), so the only way a frame reaches the screen is a
+  flush from the C side; `MC_grpRepaint` only requested a Java redraw. A title
+  that draws with `MC_grp*` into the screen framebuffer and relies on the
+  repaint to show it was never shown: sega미니게임6 drew a thousand strings a
+  second onto a screen that stayed white. `FrameBuffer::write` now notes a
+  write into the screen framebuffer (a word in the core's global data page,
+  beside the LGT runtime's own), and `MC_grpRepaint` presents the framebuffer
+  when that note is set, then requests the redraw as before, so a title whose
+  paint draws and flushes on its own (데몬헌터, 바이오크로니클, which a repaint
+  change broke once before) is not shown a stale frame. Result: KTF 274 to 276
+  of 321 (sega미니게임6 plays its intro story; 게임팩25 from FAIL to its title,
+  loading and story), none worse; LGT launched twice 70 of 79, identical.
+- **A KTF Java jump answers with both words** (2026-10-15). A jump
+  (`JavaJump1/2/3`) runs its callee on a context of its own and carried only
+  r0 back to the caller, so a `long` from a jumped method arrived as its low
+  word; the native-call container (`CallNative`) likewise had its second word
+  written as 0. Both now carry r1 as well (`RunFunctionResult<u64>` reads
+  r0 and r1, what a `bl` would have left) — wfeature found the same with a
+  title that took a digit out of `System.currentTimeMillis` by index. Result:
+  KTF 276 to 277 of 321 (귀신사냥2007 from FAIL to its title and story), none
+  worse; seven titles keep their status with a frame or two more or less,
+  which a time value that now has its high word does (2006독일축구,
+  메이플스토리 법사편 ×2, 무한의통통, 생과일타이쿤파이널, 일지매 영웅전기 ×2, all
+  checked on contact sheets).
 - **LGT titles ask for a restart on their first launch** (2026-10-15): 10 of the
   11 LGT WIPI titles a 40 s sweep classed STUCK or SHALLOW sit on the same
   screen — "게임이 정상적으로 다운로드 되었습니다. 안정적인 메모리 확보를 위해

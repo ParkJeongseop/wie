@@ -189,7 +189,11 @@ pub mod test {
 
     impl ByteWrite for TestContext {
         fn write_bytes(&mut self, address: u32, data: &[u8]) -> wie_util::Result<()> {
-            self.memory[address as usize..(address + data.len() as u32) as usize].copy_from_slice(data);
+            let end = address as usize + data.len();
+            if end > TEST_MEMORY_SIZE {
+                return Err(wie_util::WieError::InvalidMemoryAccess(address));
+            }
+            self.memory[address as usize..end].copy_from_slice(data);
 
             Ok(())
         }
@@ -197,7 +201,11 @@ pub mod test {
 
     impl ByteRead for TestContext {
         fn read_bytes(&self, address: u32, result: &mut [u8]) -> wie_util::Result<usize> {
-            result.copy_from_slice(&self.memory[address as usize..(address as usize + result.len())]);
+            let end = address as usize + result.len();
+            if end > TEST_MEMORY_SIZE {
+                return Err(wie_util::WieError::InvalidMemoryAccess(address));
+            }
+            result.copy_from_slice(&self.memory[address as usize..end]);
 
             Ok(result.len())
         }
