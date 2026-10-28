@@ -308,6 +308,23 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **KTF draws honour the graphics context's clip** (2026-10-29): every KTF
+  `MC_grp*` draw built its own rectangle and ignored the context's clip, so a
+  title that clips one cell out of a sprite sheet painted the whole sheet.
+  짜요짜요타이쿤3 (both copies) first died on `MC_grpSetContext(ClipIdx, NULL)`,
+  the call it uses to reset its clip before a frame, read as an array at
+  address 0; with the null clearing the field, its splash logo smeared and its
+  menus filled with neighbouring cells. A null clip or origin now clears the
+  field, and every draw (`PutPixel`, `DrawLine`, `DrawRect`, `FillRect`,
+  `DrawArc`, `FillArc`, `DrawImage`, `CopyArea`, `CopyFrameBuffer`,
+  `DrawString`, `SetRGBPixels`) intersects its rectangle with the clip:
+  [left, top, right, bottom] in 16-bit fields, right and bottom outside, an
+  empty one meaning "no clip" (what `MC_grpInitContext` leaves). Result: KTF
+  16 s launched twice 283 to 285 of 321 (짜요짜요타이쿤3 ×2). Comparing kept
+  frames by hash, four other titles changed and all for the better or not
+  visibly: 게임팩25's title art now stays inside its handheld frame,
+  메이플스토리 도적편 shows "LV 1" instead of its whole digit sheet, 데몬헌터 and
+  에픽크로니클PE differ in a few pixels.
 - **KTF `MC_GrpImage` names its framebuffers, and they are RGB565 with an
   alpha mask** (2026-10-29): the record began with an inlined framebuffer, so
   the image handle doubled as a framebuffer handle. The specification's record

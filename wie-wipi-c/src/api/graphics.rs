@@ -26,6 +26,30 @@ use self::{
 
 const FRAMEBUFFER_DEPTH: u32 = 16; // XXX hardcode to 16bpp as some game requires 16bpp framebuffer
 
+/// Intersects a draw's own rectangle with the graphics context's clip. The record keeps the clip as
+/// [left, top, right, bottom] in 16-bit fields, the right and bottom edges outside it, in the
+/// destination's coordinates; an empty one, which is what `MC_grpInitContext` leaves and what
+/// `MC_grpSetContext` with a null array sets, means "no clip". The KTF draws ignored it, so a title
+/// that clips one cell out of a sprite sheet painted the whole sheet: 짜요짜요타이쿤3's logo smeared
+/// across its splash and its menus filled with the neighbouring cells.
+fn with_context_clip(context: &dyn WIPICContext, pgc: WIPICWord, clip: Clip) -> Result<Clip> {
+    if pgc == 0 {
+        return Ok(clip);
+    }
+    let gctx: WIPICGraphicsContext = read_generic(context, pgc)?;
+    let [left, top, right, bottom] = gctx.clip.map(|value| i32::from(value as i16));
+    if right <= left || bottom <= top {
+        return Ok(clip);
+    }
+
+    Ok(clip.intersect(&Clip {
+        x: left,
+        y: top,
+        width: (right - left) as u32,
+        height: (bottom - top) as u32,
+    }))
+}
+
 pub async fn get_screen_framebuffer(context: &mut dyn WIPICContext, a0: WIPICWord) -> Result<WIPICIndirectPtr> {
     tracing::debug!("MC_grpGetScreenFrameBuffer({a0:#x})");
 
@@ -62,6 +86,12 @@ pub async fn set_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, o
 
     let mut grp_ctx: WIPICGraphicsContext = read_generic(context, p_grp_ctx)?;
     match op {
+        // A null clip clears it: a context that was never given one reads as zeroes, which means
+        // "no clip" (MC_grpInitContext zeroes the record). 짜요짜요타이쿤3 resets its clip this way
+        // before every frame and the null was read as an array.
+        WIPICGraphicsContextIdx::ClipIdx if pv == 0 => {
+            grp_ctx.clip = [0; 4];
+        }
         WIPICGraphicsContextIdx::ClipIdx => {
             let clip: [i32; 4] = read_generic(context, pv)?;
             grp_ctx.clip = clip.map(|value| value as u16);
@@ -91,6 +121,9 @@ pub async fn set_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, o
         }
         WIPICGraphicsContextIdx::StyleIdx => {
             grp_ctx.style = pv;
+        }
+        WIPICGraphicsContextIdx::OffsetIdx if pv == 0 => {
+            grp_ctx.offset = [0; 2];
         }
         WIPICGraphicsContextIdx::OffsetIdx => {
             let offset: [i32; 2] = read_generic(context, pv)?;
@@ -133,19 +166,14 @@ pub async fn put_pixel(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr,
     let gctx: WIPICGraphicsContext = read_generic(context, p_gctx)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    primitives::put_pixel(
-        context,
-        &framebuffer,
-        x as _,
-        y as _,
-        color,
-        Clip {
-            x: 0,
-            y: 0,
-            width: framebuffer.0.width,
-            height: framebuffer.0.height,
-        },
-    )
+    let clip = Clip {
+        x: 0,
+        y: 0,
+        width: framebuffer.0.width,
+        height: framebuffer.0.height,
+    };
+    let clip = with_context_clip(context, p_gctx, clip)?;
+    primitives::put_pixel(context, &framebuffer, x as _, y as _, color, clip)
 }
 
 pub async fn fill_rect(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr, x: i32, y: i32, w: i32, h: i32, p_gctx: WIPICWord) -> Result<()> {
@@ -163,6 +191,7 @@ pub async fn fill_rect(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr,
         width: w as _,
         height: h as _,
     };
+    let clip = with_context_clip(context, p_gctx, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
     primitives::fill_rect(context, &framebuffer, x, y, w as u32, h as u32, color, clip)
@@ -194,6 +223,7 @@ pub async fn draw_arc(
         width: w as _,
         height: h as _,
     };
+    let clip = with_context_clip(context, p_gctx, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
     primitives::draw_arc(context, &framebuffer, x, y, w as u32, h as u32, start_angle, arc_angle, color, clip)
@@ -225,6 +255,7 @@ pub async fn fill_arc(
         width: w as _,
         height: h as _,
     };
+    let clip = with_context_clip(context, p_gctx, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
     primitives::fill_arc(context, &framebuffer, x, y, w as u32, h as u32, start_angle, arc_angle, color, clip)
@@ -345,6 +376,7 @@ pub async fn draw_image(
         width: w as _,
         height: h as _,
     };
+    let clip = with_context_clip(context, graphics_context, clip)?;
 
     primitives::draw_image(context, &framebuffer, dx, dy, w as u32, h as u32, &*src_image, sx, sy, clip)
 }
@@ -452,6 +484,7 @@ pub async fn copy_area(
         width: w as _,
         height: h as _,
     };
+    let clip = with_context_clip(context, pgc, clip)?;
 
     primitives::copy_area(context, &framebuffer, dx, dy, w as u32, h as u32, x, y, clip)
 }
@@ -516,6 +549,7 @@ pub async fn copy_frame_buffer(
         width: w as _,
         height: h as _,
     };
+    let clip = with_context_clip(context, pgc, clip)?;
 
     primitives::copy_framebuffer(context, &dst_framebuffer, dx, dy, w as u32, h as u32, &src_framebuffer, sx, sy, clip)
 }
@@ -584,6 +618,7 @@ pub async fn draw_string(
         width: framebuffer.0.width,
         height: framebuffer.0.height,
     };
+    let clip = with_context_clip(context, pgc, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
     // KTF's platform takes `y` as the text baseline: 메이플스토리 도적편 (KTF) hardcodes
@@ -654,7 +689,7 @@ pub async fn set_rgb_pixels(
     h: i32,
     psrc: WIPICWord,
     ibpl: i32,
-    _pgc: WIPICWord,
+    pgc: WIPICWord,
 ) -> Result<()> {
     tracing::debug!("MC_grpSetRGBPixels({:#x}, {x}, {y}, {w}, {h}, {psrc:#x}, {ibpl})", dst.0);
     if w <= 0 || h <= 0 {
@@ -668,6 +703,7 @@ pub async fn set_rgb_pixels(
         width: framebuffer.0.width,
         height: framebuffer.0.height,
     };
+    let clip = with_context_clip(context, pgc, clip)?;
     primitives::set_rgb_pixels(context, &framebuffer, x, y, w, h, psrc, ibpl, clip)
 }
 
@@ -717,6 +753,7 @@ pub async fn draw_rect(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x:
         width: w as _,
         height: h as _,
     };
+    let clip = with_context_clip(context, pgc, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
     primitives::draw_rect(context, &framebuffer, x, y, w as u32, h as u32, color, clip)
@@ -733,6 +770,7 @@ pub async fn draw_line(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x1
         width: framebuffer.0.width as _,
         height: framebuffer.0.height as _,
     };
+    let clip = with_context_clip(context, pgc, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
     primitives::draw_line(context, &framebuffer, x1, y1, x2, y2, color, clip)
