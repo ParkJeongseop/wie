@@ -308,6 +308,18 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **LGT modules are entered where their `.raptor` record says** (2026-10-29):
+  the toolchain writes the entry a second time in the `.raptor` section (magic
+  `RAPT`, then at +12 the entry as an offset from the image base with the
+  Thumb bit set). In 78 of the 79 LGT modules it equals the ELF header's
+  entry; in SD한국전쟁 the header names `0x1000`, the module's Jlet
+  registration routine, which reads a block the platform has not filled, so
+  the module returned without an init struct and the loader read address 0.
+  The `.raptor` entry (`0x3baec`) is the usual start that stores the init
+  struct, and is now used when it names an address inside code. The title
+  reaches its notice, logo, title menu and the opening story. (wfeature's
+  lgt.md "A module whose ELF header names the wrong entry" reached the same
+  reading.)
 - **LGT: a null framebuffer is nothing to destroy either** (2026-10-29): the
   LGT `MC_grpDestroyOffScreenFrameBuffer` read whatever it was handed as an
   off-screen record, and 메탈슬러그 서바이벌 calls it with null before its first

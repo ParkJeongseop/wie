@@ -1,7 +1,7 @@
 use alloc::format;
 use core::mem::size_of;
 
-use elf::{ElfBytes, endian::AnyEndian};
+use elf::{ElfBytes, endian::AnyEndian, section::SectionHeaderTable, string_table::StringTable};
 
 use jvm::Jvm;
 use wipi_types::lgt::{InitParam1, InitParam2, InitStruct};
@@ -157,9 +157,36 @@ fn load_executable(core: &mut ArmCore, data: &[u8]) -> Result<u32> {
         }
     }
 
-    tracing::debug!("Entrypoint: {:#x}", elf.ehdr.e_entry);
+    let entrypoint = raptor_entry(&elf, &shdrs, &strtab)?.unwrap_or(elf.ehdr.e_entry as u32);
+    tracing::debug!("Entrypoint: {entrypoint:#x}");
 
-    Ok(elf.ehdr.e_entry as u32)
+    Ok(entrypoint)
+}
+
+// The toolchain records the entry a second time in its `.raptor` section: magic `RAPT`, then at +12 the entry as an
+// offset from the image base with the Thumb bit set. The two agree in every module but one (SD한국전쟁), whose ELF
+// header names its Jlet registration routine; the record is used when it names an address inside code.
+fn raptor_entry(elf: &ElfBytes<AnyEndian>, shdrs: &SectionHeaderTable<AnyEndian>, strtab: &StringTable) -> Result<Option<u32>> {
+    let Some(raptor) = shdrs.iter().find(|x| strtab.get(x.sh_name as usize).is_ok_and(|name| name == ".raptor")) else {
+        return Ok(None);
+    };
+    let record = elf
+        .section_data(&raptor)
+        .map_err(|x| WieError::FatalError(format!("Failed to read ELF section .raptor: {x}")))?
+        .0;
+    if record.len() < 16 || &record[..4] != b"RAPT" {
+        return Ok(None);
+    }
+
+    let Some(base) = shdrs.iter().filter(|x| x.sh_addr != 0).map(|x| x.sh_addr).min() else {
+        return Ok(None);
+    };
+    let entry = base + (u32::from_le_bytes([record[12], record[13], record[14], record[15]]) & !1) as u64;
+    let in_code = shdrs
+        .iter()
+        .any(|x| x.sh_flags & elf::abi::SHF_EXECINSTR as u64 != 0 && (x.sh_addr..x.sh_addr + x.sh_size).contains(&entry));
+
+    Ok(in_code.then_some(entry as u32))
 }
 
 async fn get_application_jar_path(core: &mut ArmCore, ptr_jar_path: &mut u32, _a0: u32, _capacity: u32, path_output: u32) -> Result<u32> {
