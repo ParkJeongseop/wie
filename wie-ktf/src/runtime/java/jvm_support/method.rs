@@ -1,13 +1,21 @@
-use alloc::{borrow::Cow, boxed::Box, format, string::ToString, vec, vec::Vec};
+use alloc::{
+    borrow::Cow,
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use core::{
     fmt::{self, Debug, Formatter},
     mem::{offset_of, size_of},
     ops::{Deref, DerefMut},
 };
 use futures::TryFutureExt;
-use jvm::{ClassInstance, JavaError, JavaType, JavaValue, Jvm, Method, Result as JvmResult};
+use jvm::{ClassInstance, ClassInstanceRef, JavaError, JavaType, JavaValue, Jvm, Method, Result as JvmResult, runtime::JavaLangString};
 use jvm_class_proto::JavaMethodProto;
 use jvm_types::MethodAccessFlags;
+use rustjava_runtime::classes::java::lang::String as JavaString;
 use wipi_types::ktf::java::{
     JavaExceptionHandler as RawJavaExceptionHandler, JavaMethodDefinition as RawJavaMethod,
     JavaMethodExceptionTableEntry as RawJavaMethodExceptionTableEntry,
@@ -236,7 +244,17 @@ impl JavaMethod {
 
     pub async fn handle_exception(core: &mut ArmCore, jvm: &Jvm, exception: Box<dyn ClassInstance>) -> Result<JavaMethodResult> {
         let exception_class = exception.class_definition().name().into_owned();
-        tracing::warn!("Java exception thrown: {exception:?} ({exception_class})");
+        // The message names what failed, such as the resource a title could not open.
+        let message: ClassInstanceRef<JavaString> = jvm
+            .get_class_field(&exception, "java/lang/Throwable", "detailMessage", "Ljava/lang/String;")
+            .await
+            .unwrap_or_else(|_| None.into());
+        let message = if message.is_null() {
+            String::new()
+        } else {
+            format!(": {}", JavaLangString::to_rust_string(jvm, &message.into()).await.unwrap_or_default())
+        };
+        tracing::warn!("Java exception thrown: {exception:?} ({exception_class}{message})");
 
         let current_java_exception_handler = KtfJvmSupport::current_java_exception_handler(core)?;
 
