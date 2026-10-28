@@ -308,6 +308,20 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **Null clip data, a jar not named after the AID, container children**
+  (2026-10-28): 절묘한타이밍 builds a `Clip(String, byte[])` from a null array
+  in its own error path and the host panicked on the array's length; the
+  title now gets the `NullPointerException`. 박정석_영웅탄생's hand-repacked
+  archive carries its jar as `010100D5.jar` under AID 01035248, so `<AID>.jar`
+  was a `FileNotFoundException` at launch; an archive with no such jar but one
+  jar loads that one (it then faults where the other copy of the title does).
+  `ContainerComponent` keeps the children added to it, in a static table keyed
+  by the container rather than an instance field (titles subclass containers),
+  and answers `getComponent` / `getComponentCount`; 마스터오브소드2-작은화면
+  reads its form back and now stops at `Component.setBackground`, which cannot
+  be added while Component's vtable must keep its size (see the kfc entry).
+  Result: KTF 16 s launched twice 281 to 282 of 321 (절묘한타이밍; 박정석_영웅탄생 (2)
+  from a failed load to the fault its other copy has), none worse; LGT 70 of 79 identical.
 - **KTF widget toolkit, listeners, `instanceof`, mutable images, play events**
   (2026-10-28): 강호동맞고2 could not load `com/ktf/kfc/GTextField` and then
   `Component.setEventListener`; 미니고치 wanted `lwc/ButtonComponent`,

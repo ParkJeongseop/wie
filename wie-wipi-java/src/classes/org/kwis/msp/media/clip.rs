@@ -117,6 +117,11 @@ impl Clip {
         let _: () = jvm
             .invoke_special(&this, "org/kwis/msp/media/Clip", "<init>", "(Ljava/lang/String;)V", (r#type,))
             .await?;
+        // 절묘한타이밍 builds a clip from a null array inside its own error path; the length of
+        // null is a NullPointerException for the title, not a host panic.
+        if data.is_null() {
+            return Err(jvm.exception("java/lang/NullPointerException", "data").await);
+        }
         let length = jvm.array_length(&data).await?;
 
         let _: () = jvm

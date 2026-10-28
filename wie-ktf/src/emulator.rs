@@ -73,7 +73,21 @@ impl KtfEmulator {
             tracing::warn!("Ignoring unsupported display size {width}x{height}: {error}");
         }
 
+        // The jar is named after the AID; an archive repacked by hand may carry it under another
+        // name (박정석_영웅탄생: AID 01035248, jar 010100D5.jar), and a lone jar is still the title.
         let jar_filename = format!("{}.jar", adf.aid);
+        let jar_filename = if files.contains_key(&jar_filename) {
+            jar_filename
+        } else {
+            let mut jars = files.keys().filter(|x| x.ends_with(".jar"));
+            match (jars.next(), jars.next()) {
+                (Some(only), None) => {
+                    tracing::info!("Archive has no {jar_filename}; loading its only jar {only}");
+                    only.clone()
+                }
+                _ => jar_filename,
+            }
+        };
 
         Self::load(platform, &jar_filename, &adf.pid, &adf.aid, Some(adf.mclass), &files, options)
     }
