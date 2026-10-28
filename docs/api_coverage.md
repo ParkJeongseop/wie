@@ -308,6 +308,18 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **KTF kernel slot 36 is `MC_knlGetDLLInterface`; the user-memory library**
+  (2026-10-29): 액션히어로3D died on the unimplemented `MC_knlReserved4`. Its
+  call site passes a name (`"MXUserMemInterf"`), -1 twice for "any version"
+  and two null out-pointers, and immediately calls the first entry of the
+  table it gets back with a buffer of its own and 0x14400 — wfeature's
+  `wipic_usermem.go` reads the same library the same way: create(pool, size),
+  alloc(pool, size), free(pool, block). The slot now answers that name with a
+  three-entry table (and the version 1.0 through non-null out-pointers) and
+  any other name with null. The library keeps its bookkeeping in the caller's
+  buffer — its size and the next free offset in the first two words — and cuts
+  4-byte-aligned blocks in order; a free gives nothing back (the title
+  re-creates the pool instead). The title goes from its logo to the 3D fight.
 - **KTF draws leave an unmasked image's magenta out** (2026-10-29): three
   titles drew magenta boxes around what they cut out of a magenta backdrop no
   header declares — 컴투스포춘골프3D's 8-bit BMPs, 럭키당구's palette PNG glyphs

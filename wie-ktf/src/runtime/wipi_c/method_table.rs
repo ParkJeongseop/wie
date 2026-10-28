@@ -12,6 +12,7 @@ use wie_wipi_c::{
     api::{database, graphics, im, kernel, media, misc, net, uic, util},
 };
 
+use super::user_memory;
 use crate::runtime::{
     SVC_CATEGORY_WIPIC,
     svc_ids::{WIPICDatabaseMethodId, WIPICGraphicsMethodId, WIPICKernelMethodId, WIPICTableId},
@@ -588,5 +589,11 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
                 None
             }
         }
+        WIPICTableId::UserMemory => match function_id {
+            0 => Some(user_memory::create.into_body()),
+            1 => Some(user_memory::alloc.into_body()),
+            2 => Some(user_memory::free.into_body()),
+            _ => None,
+        },
     }
 }

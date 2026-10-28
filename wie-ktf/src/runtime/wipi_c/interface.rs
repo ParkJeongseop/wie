@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use core::mem::{size_of, size_of_val};
 
 use bytemuck::Pod;
@@ -6,7 +6,7 @@ use bytemuck::Pod;
 use wipi_types::ktf::wipic::WIPICInterface;
 
 use wie_core_arm::{Allocator, ArmCore};
-use wie_util::{Result, write_generic};
+use wie_util::{Result, read_null_terminated_string_bytes, write_generic};
 use wie_wipi_c::{WIPICContext, WIPICMethodBody};
 
 use crate::runtime::wipi_c::method_table::{self, get_database_interface, get_graphics_interface};
@@ -90,6 +90,34 @@ pub async fn get_wipic_interfaces(core: &mut ArmCore, context: &mut dyn WIPICCon
     let address = context.alloc_raw(size_of::<WIPICInterface>() as u32)?;
 
     write_generic(context, address, interface)?;
+
+    Ok(address)
+}
+
+/// Kernel slot 36 is `MC_knlGetDLLInterface(name, major, minor, &rtnMajor, &rtnMinor)`: a library the
+/// handset carries beside the WIPI C tables, asked for by name. The one a title in the corpus asks for
+/// is the user-memory library (액션히어로3D, any version); another name is answered with null, which
+/// is what a handset without the library answers.
+pub fn get_dll_interface(core: &mut ArmCore, context: &mut dyn WIPICContext, ptr_name: u32, ptr_major: u32, ptr_minor: u32) -> Result<u32> {
+    let name = read_null_terminated_string_bytes(context, ptr_name)?;
+    tracing::debug!("MC_knlGetDLLInterface({:?})", String::from_utf8_lossy(&name));
+    if name != b"MXUserMemInterf" {
+        tracing::warn!("MC_knlGetDLLInterface: no library {:?}", String::from_utf8_lossy(&name));
+        return Ok(0);
+    }
+
+    if ptr_major != 0 {
+        write_generic(context, ptr_major, 1u32)?;
+    }
+    if ptr_minor != 0 {
+        write_generic(context, ptr_minor, 0u32)?;
+    }
+
+    let address = context.alloc_raw(3 * 4)?;
+    for index in 0..3u16 {
+        let stub = core.make_svc_stub(crate::runtime::SVC_CATEGORY_WIPIC, WIPICTableId::UserMemory.function_id(index))?;
+        write_generic(context, address + index as u32 * 4, stub)?;
+    }
 
     Ok(address)
 }

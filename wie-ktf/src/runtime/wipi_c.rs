@@ -12,6 +12,7 @@ use crate::runtime::svc_ids::{WIPICKernelMethodId, WIPICTableId};
 mod context;
 pub mod interface;
 mod method_table;
+mod user_memory;
 
 use context::KtfWIPICContext;
 
@@ -63,6 +64,12 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         return interface::get_wipic_interfaces(core, &mut KtfWIPICContext::new(core.clone(), system.clone(), jvm.clone()))
             .await?
             .write(core, lr);
+    }
+
+    if table_id == WIPICTableId::Kernel && function_id == WIPICKernelMethodId::Reserved4 as u16 {
+        let (ptr_name, ptr_major, ptr_minor) = (u32::get(core, 0), u32::get(core, 3), u32::get(core, 4));
+        let mut context = KtfWIPICContext::new(core.clone(), system.clone(), jvm.clone());
+        return interface::get_dll_interface(core, &mut context, ptr_name, ptr_major, ptr_minor)?.write(core, lr);
     }
 
     tracing::trace!("WIPIC {}:{function_id} from {lr:#x}", id.0 >> 16);
