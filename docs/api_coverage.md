@@ -308,6 +308,25 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **KTF `MC_GrpImage` names its framebuffers, and they are RGB565 with an
+  alpha mask** (2026-10-29): the record began with an inlined framebuffer, so
+  the image handle doubled as a framebuffer handle. The specification's record
+  holds two framebuffer *handles*, pixels then mask, and a title reading an
+  image through the handset's macros follows word zero to a framebuffer record
+  and switches on its depth field (`(bpp << 24) >> 27`): 폴라폴리2007 read the
+  width (74) as that handle and faulted at 0x48. With the record fixed, its
+  blitter showed the next assumption: an image is the screen's depth (it
+  writes at the source's stride into the 16-bit screen), it skips 0xF81F, and
+  with a mask it blends `src + (dst - src) * (255 - mask) / 255`. Images are
+  now RGB565 in `img` and, when the encoding has transparency, one alpha byte
+  per pixel in `mask` (bpp 8, 255 opaque); `MC_grpDrawImage` composes the two,
+  `MC_grpGetImageFrameBuffer` answers `img`, `MC_grpDestroyImage` frees both
+  surfaces with the record, and `MC_grpDecodeNextImage` answers
+  `MC_GRP_IMAGE_DONE` instead of a stub's 0. LGT and KTF share the conversion
+  (`Rgb565Image`). Result: KTF 16 s launched twice 282 to 283 of 321
+  (폴라폴리2007 plays to its tutorial; 크로이센1.04 paints instead of nothing and,
+  on the real clock, reaches its field), no other title's frames changed; LGT
+  72 of 79 identical.
 - **LGT images are RGB565, and `MC_grpDecodeNextImage`** (2026-10-29):
   크로이센 (LGT) decodes its 71 sprites with `MC_grpCreateImage`, asks slot
   0xeb after each, then blits them itself: it takes the image's framebuffer

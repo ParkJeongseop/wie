@@ -468,7 +468,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICGraphicsMethodId::GetUnicodeStringWidth => Some(gen_stub(31, "MC_grpGetUnicodeStringWidth")),
             WIPICGraphicsMethodId::CreateImage => Some(graphics::create_image.into_body()),
             WIPICGraphicsMethodId::DestroyImage => Some(graphics::destroy_image.into_body()),
-            WIPICGraphicsMethodId::DecodeNextImage => Some(gen_stub(34, "MC_grpDecodeNextImage")),
+            WIPICGraphicsMethodId::DecodeNextImage => Some(graphics::decode_next_image.into_body()),
             WIPICGraphicsMethodId::EncodeImage => Some(graphics::encode_image.into_body()),
             WIPICGraphicsMethodId::PostEvent => Some(graphics::post_event.into_body()),
             WIPICGraphicsMethodId::HandleInput => Some(gen_stub(37, "MC_imHandleInput")),

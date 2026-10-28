@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec, vec::Vec};
+use alloc::{boxed::Box, vec};
 use core::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
@@ -7,12 +7,12 @@ use wipi_types::{
     wipic::{WIPICDisplayInfo, WIPICFramebuffer, WIPICIndirectPtr, WIPICWord},
 };
 
-use wie_backend::canvas::{ArgbPixel, Clip, Color, Image, PixelType, Rgb565Pixel, VecImageBuffer, decode_image};
+use wie_backend::canvas::{ArgbPixel, Clip, Color, Image, PixelType, VecImageBuffer};
 use wie_core_arm::{Allocator, ArmCore};
 use wie_util::{Result, WieError, read_generic, write_generic};
 use wie_wipi_c::{
     WIPICContext,
-    api::graphics::{FrameBuffer, primitives},
+    api::graphics::{FrameBuffer, Rgb565Image, primitives},
 };
 
 const GRAPHICS_STATE_ROOT: u32 = 0x7fff1008;
@@ -340,31 +340,17 @@ fn image_framebuffer(context: &dyn WIPICContext, ptr_image: WIPICIndirectPtr) ->
 /// encoding's alpha follows the pixels in the same allocation, one byte per pixel, where only
 /// `MC_grpDrawImage` reads it (`image_with_alpha`).
 fn decode_image_rgb565(context: &mut dyn WIPICContext, buf: WIPICIndirectPtr, offset: WIPICWord, length: WIPICWord) -> Result<FrameBuffer> {
-    let address = context.data_ptr(buf)?.checked_add(offset).ok_or(WieError::AllocationFailure)?;
-    let mut data = vec![0; length as usize];
-    context.read_bytes(address, &mut data)?;
-    let image = decode_image(&data)?;
-
-    let (width, height) = (image.width(), image.height());
-    let pixels = (width as usize).checked_mul(height as usize).ok_or(WieError::AllocationFailure)?;
-    let mut raw = Vec::with_capacity(pixels * 3);
-    let mut alpha = Vec::with_capacity(pixels);
-    for y in 0..height as i32 {
-        for x in 0..width as i32 {
-            let color = image.get_pixel(x, y);
-            raw.extend_from_slice(&Rgb565Pixel::from_color(color).to_le_bytes());
-            alpha.push(color.a);
-        }
-    }
-    raw.extend_from_slice(&alpha);
+    let image = Rgb565Image::decode(context, buf, offset, length)?;
+    let mut raw = image.pixels;
+    raw.extend_from_slice(&image.alpha);
 
     let buf = context.alloc(u32::try_from(raw.len()).map_err(|_| WieError::AllocationFailure)?)?;
     context.write_bytes(context.data_ptr(buf)?, &raw)?;
 
     Ok(FrameBuffer(WIPICFramebuffer {
-        width,
-        height,
-        bpl: width * 2,
+        width: image.width,
+        height: image.height,
+        bpl: image.width * 2,
         bpp: 16,
         buf,
     }))
@@ -377,20 +363,12 @@ fn image_with_alpha(context: &mut dyn WIPICContext, backing: &FrameBuffer) -> Re
         return backing.image(context);
     }
 
-    let pixels = (backing.0.width as usize) * (backing.0.height as usize);
-    let mut raw = vec![0u8; pixels * 3];
+    let count = (backing.0.width as usize) * (backing.0.height as usize);
+    let mut raw = vec![0u8; count * 3];
     context.read_bytes(context.data_ptr(backing.0.buf)?, &mut raw)?;
-    let (rgb, alpha) = raw.split_at(pixels * 2);
-    let argb = rgb
-        .chunks_exact(2)
-        .zip(alpha)
-        .map(|(rgb, &a)| {
-            let color = Rgb565Pixel::to_color(u16::from_le_bytes([rgb[0], rgb[1]]));
-            ArgbPixel::from_color(Color { a, ..color })
-        })
-        .collect();
+    let (pixels, alpha) = raw.split_at(count * 2);
 
-    Ok(Box::new(VecImageBuffer::<ArgbPixel>::from_raw(backing.0.width, backing.0.height, argb)))
+    Ok(Rgb565Image::compose(backing.0.width, backing.0.height, pixels, alpha))
 }
 
 fn activate_application_view(context: &mut dyn WIPICContext, handle: WIPICIndirectPtr) -> Result<()> {

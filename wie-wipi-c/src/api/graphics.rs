@@ -4,7 +4,7 @@ mod image;
 pub mod primitives;
 
 pub use framebuffer::FrameBuffer;
-pub use image::decode_image_framebuffer;
+pub use image::{Rgb565Image, decode_image_framebuffer};
 
 use core::mem::size_of;
 
@@ -14,14 +14,14 @@ use wie_backend::{
 };
 use wie_util::{Result, read_generic, write_generic};
 
-use wipi_types::wipic::{WIPICDisplayInfo, WIPICFramebuffer, WIPICGraphicsContext, WIPICImage, WIPICIndirectPtr, WIPICWord};
+use wipi_types::wipic::{WIPICDisplayInfo, WIPICFramebuffer, WIPICGraphicsContext, WIPICIndirectPtr, WIPICWord};
 
 use crate::context::WIPICContext;
 
 use self::{
     framebuffer::{SCREEN_FRAMEBUFFER_DIRTY_PTR, SCREEN_FRAMEBUFFER_PTR},
     grp_context::WIPICGraphicsContextIdx,
-    image::create_wipi_image,
+    image::{ImageRecord, create_wipi_image, image_with_mask},
 };
 
 const FRAMEBUFFER_DEPTH: u32 = 16; // XXX hardcode to 16bpp as some game requires 16bpp framebuffer
@@ -241,7 +241,7 @@ pub async fn create_image(
 
     let image = create_wipi_image(context, image_data, offset, len)?;
 
-    let memory = context.alloc(size_of::<WIPICImage>() as WIPICWord)?;
+    let memory = context.alloc(size_of::<ImageRecord>() as WIPICWord)?;
     write_generic(context, ptr_image, memory)?;
     write_generic(context, context.data_ptr(memory)?, image)?;
 
@@ -301,6 +301,16 @@ pub async fn encode_image(
 pub async fn destroy_image(context: &mut dyn WIPICContext, image: WIPICIndirectPtr) -> Result<()> {
     tracing::debug!("MC_grpDestroyImage({:#x})", image.0);
 
+    let record: ImageRecord = read_generic(context, context.data_ptr(image)?)?;
+    for framebuffer in [record.img, record.mask] {
+        if framebuffer.0 != 0 {
+            let inner: WIPICFramebuffer = read_generic(context, context.data_ptr(framebuffer)?)?;
+            if inner.buf.0 != 0 {
+                context.free(inner.buf)?;
+            }
+            context.free(framebuffer)?;
+        }
+    }
     context.free(image)?;
 
     Ok(())
@@ -326,9 +336,9 @@ pub async fn draw_image(
     );
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(framebuffer)?)?);
-    let image: WIPICImage = read_generic(context, context.data_ptr(image)?)?;
+    let image: ImageRecord = read_generic(context, context.data_ptr(image)?)?;
 
-    let src_image = FrameBuffer(image.img).image(context)?;
+    let src_image = image_with_mask(context, &image)?;
     let clip = Clip {
         x: dx as _,
         y: dy as _,
@@ -661,22 +671,30 @@ pub async fn set_rgb_pixels(
     primitives::set_rgb_pixels(context, &framebuffer, x, y, w, h, psrc, ibpl, clip)
 }
 
-pub async fn get_image_framebuffer(_context: &mut dyn WIPICContext, image: WIPICIndirectPtr) -> Result<WIPICIndirectPtr> {
+pub async fn get_image_framebuffer(context: &mut dyn WIPICContext, image: WIPICIndirectPtr) -> Result<WIPICIndirectPtr> {
     tracing::debug!("MC_grpGetImageFrameBuffer({:#x})", image.0);
 
-    // WIPICImage starts with `img: WIPICFramebuffer` at offset 0,
-    // so the image handle doubles as a framebuffer handle.
-    Ok(image)
+    let record: ImageRecord = read_generic(context, context.data_ptr(image)?)?;
+    Ok(record.img)
+}
+
+/// `MC_grpDecodeNextImage(img)` walks an animated source a frame at a time. Every image here is
+/// decoded whole when created, so there is no next frame: `MC_GRP_IMAGE_DONE`.
+pub async fn decode_next_image(_context: &mut dyn WIPICContext, image: WIPICIndirectPtr) -> Result<i32> {
+    tracing::debug!("MC_grpDecodeNextImage({:#x})", image.0);
+
+    Ok(1) // MC_GRP_IMAGE_DONE
 }
 
 pub async fn get_image_property(context: &mut dyn WIPICContext, image: WIPICIndirectPtr, property: i32) -> Result<i32> {
     tracing::debug!("MC_grpGetImageProperty({:#x}, {property})", image.0);
 
-    let image: WIPICImage = read_generic(context, context.data_ptr(image)?)?;
+    let image: ImageRecord = read_generic(context, context.data_ptr(image)?)?;
+    let framebuffer: WIPICFramebuffer = read_generic(context, context.data_ptr(image.img)?)?;
 
     Ok(match property {
-        4 => image.img.width as _,
-        5 => image.img.height as _,
+        4 => framebuffer.width as _,
+        5 => framebuffer.height as _,
         _ => {
             tracing::warn!("unknown property {property}");
             0
