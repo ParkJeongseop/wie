@@ -14,7 +14,7 @@ use wipi_types::ktf::java::{JavaClass as RawJavaClass, JavaClassDescriptor as Ra
 
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::native::array_element_size;
-use wie_util::{write_generic, write_null_terminated_string_bytes};
+use wie_util::{read_generic, write_generic, write_null_terminated_string_bytes};
 
 use super::{KtfJvmSupport, Result, array_class_instance::JavaArrayClassInstance, class_definition::JavaClassDefinition};
 
@@ -70,6 +70,9 @@ impl JavaArrayClassDefinition {
             },
         )?;
 
+        // An array dispatches through java/lang/Object's vtable: a title calling `hashCode` or `clone` on
+        // one (박정석_영웅탄생) resolves the slot through the object header, and a zero vtable faulted.
+        let object: RawJavaClass = read_generic(core, java_lang_object_raw)?;
         write_generic(
             core,
             ptr_raw,
@@ -77,8 +80,8 @@ impl JavaArrayClassDefinition {
                 ptr_next: ptr_raw + 4,
                 unk1: 0,
                 ptr_descriptor,
-                ptr_vtable: 0,
-                vtable_count: 0,
+                ptr_vtable: object.ptr_vtable,
+                vtable_count: object.vtable_count,
                 unk_flag: 8,
             },
         )?;

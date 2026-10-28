@@ -10,7 +10,7 @@ mod name;
 mod value;
 mod vtable;
 
-use alloc::{boxed::Box, format};
+use alloc::{boxed::Box, collections::BTreeSet, format, vec, vec::Vec};
 use core::mem::{offset_of, size_of};
 use jvm_implementation::KtfJvmImplementation;
 
@@ -22,10 +22,10 @@ use jvm_types::FieldAccessFlags;
 use rustjava_runtime::classes::java::util::{Enumeration, jar::JarEntry};
 
 use wie_backend::System;
-use wie_core_arm::{Allocator, ArmCore};
-use wie_jvm_support::JvmSupport;
+use wie_core_arm::{Allocator, ArmCore, HEAP_BASE, HEAP_SIZE};
+use wie_jvm_support::{JvmSupport, native::NativeJavaValueCodec};
 use wie_midp::classes::javax::microedition::midlet::MIDlet;
-use wie_util::{Result, WieError, read_generic, read_null_terminated_table, write_generic};
+use wie_util::{ByteRead, Result, WieError, read_generic, read_null_terminated_table, write_generic};
 
 use wipi_types::ktf::{ExeInterfaceFunctions, InitParam2, java::JavaClass as RawJavaClass};
 
@@ -33,6 +33,7 @@ use self::{
     array_class_instance::JavaArrayClassInstance,
     classes::net::wie::{ClassLoaderContext, KtfClassLoader},
     name::JavaFullName,
+    value::JavaValueCodec,
 };
 use super::interface::register_java_interface_svc_handler;
 
@@ -84,6 +85,11 @@ impl KtfJvmSupport {
         let protos = [wie_wipi_java::get_protos().into(), wie_midp::get_protos().into()];
         let jvm_implementation = KtfJvmImplementation::new(core);
         let jvm = JvmSupport::new_jvm(system, jar_name, Box::new(protos), &[], jvm_implementation.clone()).await?;
+        // AOT-compiled Java keeps object references in ARM registers and on ARM stacks, where the
+        // collector cannot see them: a collection during a paint or a resource read freed the card
+        // 박정석_영웅탄생 had just built and was still calling into.
+        let scan_core = core.clone();
+        jvm.set_extra_roots(move || Self::guest_roots(&scan_core));
         register_java_interface_svc_handler(core, &jvm)?;
 
         let system_class_loader: Box<dyn ClassInstance> = jvm
@@ -216,6 +222,76 @@ impl KtfJvmSupport {
 
         jvm.invoke_virtual(&display, "javax/microedition/lcdui/Display", "disablePaint", "()V", ())
             .await
+    }
+
+    /// Conservative root scan of every guest thread: every saved register and every word of every
+    /// thread stack that points at a live object (the LGT runtime does the same).
+    fn guest_roots(core: &ArmCore) -> Vec<Box<dyn ClassInstance>> {
+        const CHUNK: usize = 64 * 1024;
+        const UNKNOWN_STACK_WINDOW: u32 = 16 * 1024;
+        let stacks = core.thread_contexts_with_stacks();
+        let live = core.save_context();
+        let suspended = core.suspended_caller_contexts();
+
+        let mut candidates = Vec::new();
+        for context in stacks
+            .iter()
+            .map(|(context, _, _)| context)
+            .chain(suspended.iter())
+            .chain(core::iter::once(&live))
+        {
+            candidates.extend([
+                context.r0, context.r1, context.r2, context.r3, context.r4, context.r5, context.r6, context.r7, context.r8, context.sb, context.sl,
+                context.fp, context.ip,
+            ]);
+        }
+        // A stack pointer outside every thread's stack (the stack the emulator itself runs guest
+        // code on, where 박정석_영웅탄생 kept the card it was building) gets a window above it.
+        let mut regions = stacks
+            .iter()
+            .map(|(_, base, size)| (*base, base.saturating_add(*size)))
+            .collect::<Vec<_>>();
+        for context in stacks
+            .iter()
+            .map(|(context, _, _)| context)
+            .chain(suspended.iter())
+            .chain(core::iter::once(&live))
+        {
+            let sp = context.sp & !3;
+            if (HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&sp) && !regions.iter().any(|(base, end)| (*base..*end).contains(&sp)) {
+                regions.push((sp, sp.saturating_add(UNKNOWN_STACK_WINDOW).min(HEAP_BASE + HEAP_SIZE)));
+            }
+        }
+        let mut chunk = vec![0u8; CHUNK];
+        for (base, end) in regions {
+            let mut address = base & !3;
+            while address < end {
+                let length = ((end - address) as usize).min(CHUNK);
+                if core.read_bytes(address, &mut chunk[..length]).is_err() {
+                    break;
+                }
+                candidates.extend(
+                    chunk[..length]
+                        .chunks_exact(4)
+                        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]])),
+                );
+                address += length as u32;
+            }
+        }
+
+        let mut roots = Vec::new();
+        let mut seen = BTreeSet::new();
+        for word in candidates {
+            if word % 4 != 0 || !(HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&word) || !seen.insert(word) {
+                continue;
+            }
+            if JavaClassInstance::is_live_instance(core, word) {
+                roots.push(JavaValueCodec::new(core).object_from_raw(word));
+            }
+        }
+        tracing::trace!("guest root scan: {} candidate words, {} live objects", seen.len(), roots.len());
+
+        roots
     }
 
     pub fn class_definition_raw(definition: &dyn ClassDefinition) -> Result<u32> {

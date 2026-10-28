@@ -308,6 +308,22 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **KTF collections see what the guest's registers and stacks hold** (2026-10-29):
+  the collector runs after every MIDP paint and every resource read, and its
+  roots were the Java frames, statics and global references — none of which
+  sees an object that compiled code keeps only in an ARM register or on an ARM
+  stack. 박정석_영웅탄생 built a card, kept it on the stack while a paint ran,
+  lost it to the collection, and called into the `char[]` that took its place
+  (a fault reading address 0x16); 2006월드올림픽's "field of 0xa" fault was the
+  same use after free. The LGT runtime already scanned guest stacks; KTF now
+  does the same: every saved register of every thread (and of suspended
+  callers and the live context) and every word of every thread stack, plus a
+  16 KB window above a stack pointer that lies outside every known stack (the
+  stack the emulator itself runs guest code on, which is where that card
+  was), is a root when it points at an allocated object whose class record
+  reads as a class. Also: an array class now carries java/lang/Object's vtable
+  — a zero one faulted a virtual call made on an array. The three titles go
+  from FAIL/STUCK to playing.
 - **KTF kernel slot 36 is `MC_knlGetDLLInterface`; the user-memory library**
   (2026-10-29): 액션히어로3D died on the unimplemented `MC_knlReserved4`. Its
   call site passes a name (`"MXUserMemInterf"`), -1 twice for "any version"

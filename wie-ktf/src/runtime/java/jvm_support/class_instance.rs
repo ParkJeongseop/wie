@@ -8,11 +8,14 @@ use core::{
 use jvm_types::FieldAccessFlags;
 
 use jvm::{ClassDefinition, ClassInstance, Field, JavaType, JavaValue, Result as JvmResult};
-use wipi_types::ktf::java::{JavaClassInstance as RawJavaClassInstance, JavaFieldDefinition as RawJavaField};
+use wipi_types::ktf::java::{
+    JavaClass as RawJavaClass, JavaClassDescriptor as RawJavaClassDescriptor, JavaClassInstance as RawJavaClassInstance,
+    JavaFieldDefinition as RawJavaField,
+};
 
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::native::NativeJavaValueCodec;
-use wie_util::{ByteWrite, read_generic, write_generic};
+use wie_util::{ByteWrite, read_generic, read_null_terminated_string_bytes, write_generic};
 
 use crate::runtime::java::jvm_support::KtfJvmSupport;
 
@@ -25,6 +28,27 @@ pub struct JavaClassInstance {
 }
 
 impl JavaClassInstance {
+    /// Whether `ptr_instance` points at an allocated object whose class record reads as a class
+    /// (a descriptor with a printable name), for the conservative root scan of guest stacks.
+    pub fn is_live_instance(core: &ArmCore, ptr_instance: u32) -> bool {
+        if ptr_instance == 0 || !Allocator::is_allocated(core, ptr_instance, size_of::<RawJavaClassInstance>() as u32).unwrap_or(false) {
+            return false;
+        }
+        let Ok(instance): Result<RawJavaClassInstance> = read_generic(core, ptr_instance) else {
+            return false;
+        };
+        let Ok(class): Result<RawJavaClass> = read_generic(core, instance.ptr_class) else {
+            return false;
+        };
+        let Ok(descriptor): Result<RawJavaClassDescriptor> = read_generic(core, class.ptr_descriptor) else {
+            return false;
+        };
+
+        descriptor.ptr_name != 0
+            && read_null_terminated_string_bytes(core, descriptor.ptr_name)
+                .is_ok_and(|name| !name.is_empty() && name.len() < 256 && name.iter().all(|byte| byte.is_ascii_graphic()))
+    }
+
     pub fn from_raw(ptr_raw: u32, core: &ArmCore) -> Self {
         Self { ptr_raw, core: core.clone() }
     }
