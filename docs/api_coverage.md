@@ -308,6 +308,19 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **KTF draws leave an unmasked image's magenta out** (2026-10-29): three
+  titles drew magenta boxes around what they cut out of a magenta backdrop no
+  header declares — 컴투스포춘골프3D's 8-bit BMPs, 럭키당구's palette PNG glyphs
+  without a `tRNS` (its dialogue highlights), and the bitmaps 헬싱 builds from
+  its own `HZ04` format — all through `MC_grpDrawImage`. A KTF draw of an image
+  that has no mask now leaves RGB565 `0xf81f` out. Making the key a mask on the
+  image record instead turned 폴라폴리2007 (it blits for itself and branches on
+  the mask handle) from OK to three frames, so the record is left as decoded.
+  Not done: the `Annunciator.bmp` 28 KTF archives share sets `bfReserved1` but
+  names index 304 of a 256-entry palette; read by its low byte (48, the pink
+  in its corner) it would clear the boxes around the signal and battery icons,
+  but the mask that gives it took 컴투스_맞고_2006 from OK to a host-side read
+  of a clobbered mask record (address 0x720065).
 - **KTF: the client's compiled class wins over a class file of the same name**
   (2026-10-29): 셔터-영혼의울림, 헬싱 and 삼국지 영걸전 ship the bytecode of
   the SDK's `Clet` bridge (`Clet`, `Clet$CletCard`: a Jlet whose

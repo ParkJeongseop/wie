@@ -142,19 +142,31 @@ pub fn decode_image_framebuffer(context: &mut dyn WIPICContext, buf: WIPICIndire
 }
 
 /// The image an `MC_GrpImage` holds, with its mask's alpha when it has one, for the platform's own
-/// draws.
+/// draws. An image without a mask leaves its magenta (RGB565 `0xf81f`) out: KTF titles cut sprites out of a
+/// magenta backdrop that nothing in the file declares — 컴투스포춘골프3D's 8-bit BMPs, 럭키당구's
+/// palette PNG glyphs without a `tRNS`, the bitmaps 헬싱 builds from its own format — and draw them
+/// through `MC_grpDrawImage`. The key is applied here rather than as a mask on the record: titles
+/// that blit for themselves read the mask handle (폴라폴리2007), and one more mask changes their path.
 pub fn image_with_mask(context: &mut dyn WIPICContext, record: &ImageRecord) -> Result<Box<dyn Image>> {
     let img = FrameBuffer(read_generic(context, context.data_ptr(record.img)?)?);
-    if record.mask.0 == 0 || img.0.bpp != 16 {
+    if img.0.bpp != 16 {
         return img.image(context);
     }
-    let mask: WIPICFramebuffer = read_generic(context, context.data_ptr(record.mask)?)?;
 
     let count = (img.0.width as usize) * (img.0.height as usize);
     let mut pixels = vec![0u8; count * 2];
     context.read_bytes(context.data_ptr(img.0.buf)?, &mut pixels)?;
-    let mut alpha = vec![0u8; count];
-    context.read_bytes(context.data_ptr(mask.buf)?, &mut alpha)?;
+    let alpha = if record.mask.0 == 0 {
+        pixels
+            .chunks_exact(2)
+            .map(|pixel| if u16::from_le_bytes([pixel[0], pixel[1]]) == 0xf81f { 0 } else { 0xff })
+            .collect()
+    } else {
+        let mask: WIPICFramebuffer = read_generic(context, context.data_ptr(record.mask)?)?;
+        let mut alpha = vec![0u8; count];
+        context.read_bytes(context.data_ptr(mask.buf)?, &mut alpha)?;
+        alpha
+    };
 
     Ok(Rgb565Image::compose(img.0.width, img.0.height, &pixels, &alpha))
 }
