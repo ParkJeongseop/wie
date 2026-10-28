@@ -155,8 +155,11 @@ impl ClassInstance for JavaClassInstance {
             tracing::error!("Not freeing LGT object {:#x}: its class header no longer reads", self.ptr_raw);
             return;
         }
-        let storage_size = self.storage_size().unwrap();
-        (*self).destroy_with_storage(storage_size).unwrap();
+        let ptr_raw = self.ptr_raw;
+        let result = self.storage_size().and_then(|storage_size| (*self).destroy_with_storage(storage_size));
+        if let Err(error) = result {
+            tracing::error!("Not freeing LGT object {ptr_raw:#x}: {error}");
+        }
     }
 
     fn identity(&self) -> usize {

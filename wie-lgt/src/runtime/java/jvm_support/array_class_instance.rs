@@ -94,8 +94,12 @@ impl ClassInstance for JavaArrayClassInstance {
             );
             return;
         }
+        // A header that reads can still point at storage the guest overwrote (알바타이쿤2 leaves an
+        // array whose field pointer is garbage): leaked and logged, not a panic in the collector.
         let storage_size = self.storage_size();
-        self.class_instance.clone().destroy_with_storage(storage_size).unwrap();
+        if let Err(error) = self.class_instance.clone().destroy_with_storage(storage_size) {
+            tracing::error!("Not freeing LGT array {:#x}: {error}", self.class_instance.ptr_raw);
+        }
     }
 
     fn identity(&self) -> usize {

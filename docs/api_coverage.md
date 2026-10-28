@@ -308,6 +308,21 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **LGT screen memory runs 24 rows past the visible screen; a collected
+  object that cannot be freed is leaked** (2026-10-29): KBO프로야구2009 and
+  알바타이쿤2 both wrote exactly 24 rows (11,520 bytes) past the end of the
+  240×320 screen buffer, measured by filling the memory after it with a
+  sentinel: they take the raw screen pointer to sit an annunciator strip above
+  the visible top (wfeature found the same `+= 0x18` in another title, while
+  titles of the same series write from row 0). The next heap block's header
+  was there, so the allocator was corrupted: headers of `0xffffffff` pixels,
+  double frees, a garbage `LGT WIPIC SVC id 2000`, and a host panic when the
+  collector freed an array whose storage pointer the overrun had overwritten.
+  The screen allocation now carries 24 trailing rows that are not presented,
+  and a collected LGT object or array that cannot be freed is logged and
+  leaked instead of panicking. Both titles play, drawn 24 rows lower than on
+  the handset (presenting from row 24 for such titles is open). Result: LGT
+  launched twice 72 to 74 of 79, other titles' kept frames identical.
 - **KTF draws honour the graphics context's clip** (2026-10-29): every KTF
   `MC_grp*` draw built its own rectangle and ignored the context's clip, so a
   title that clips one cell out of a sprite sheet painted the whole sheet.

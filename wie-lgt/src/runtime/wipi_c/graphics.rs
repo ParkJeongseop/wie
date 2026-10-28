@@ -233,9 +233,24 @@ fn read_record<T: Pod>(context: &dyn WIPICContext, handle: WIPICIndirectPtr) -> 
     read_generic(context, address)
 }
 
+/// Rows of memory after the screen's pixels that belong to the screen allocation rather than to the
+/// heap. Some LGT titles take the raw screen pointer to sit an annunciator strip (24 rows) above
+/// the visible top, as a handset that keeps its status bar above the client area hands it over,
+/// and so write their last 24 rows past the end of the visible screen. On the handset that memory
+/// is the LCD's own; here it was the next heap block's header, and KBO프로야구2009 and
+/// 알바타이쿤2 corrupted the allocator and died. (Other titles of the same series write from row
+/// 0, so the strip cannot simply go above the screen for everyone.)
+const SCREEN_TRAILING_ROWS: u32 = 24;
+
 fn create_backing(context: &mut dyn WIPICContext, width: u32, height: u32) -> Result<WIPICIndirectPtr> {
+    create_backing_with_slack(context, width, height, 0)
+}
+
+fn create_backing_with_slack(context: &mut dyn WIPICContext, width: u32, height: u32, trailing_rows: u32) -> Result<WIPICIndirectPtr> {
     let bpl = width.checked_mul(2).ok_or(WieError::AllocationFailure)?;
-    let size = bpl.checked_mul(height).ok_or(WieError::AllocationFailure)?;
+    let size = bpl
+        .checked_mul(height.checked_add(trailing_rows).ok_or(WieError::AllocationFailure)?)
+        .ok_or(WieError::AllocationFailure)?;
     let pixels = context.alloc(size)?;
     let pixels_address = context.data_ptr(pixels)?;
     context.write_bytes(pixels_address, &vec![0; size as usize])?;
@@ -408,7 +423,7 @@ pub async fn get_screen_framebuffer(context: &mut dyn WIPICContext, kind: WIPICW
         return Ok(WIPICIndirectPtr(state.ptr_screen_wrapper));
     }
 
-    let ptr_backing = create_backing(context, state.physical_width, state.physical_height)?;
+    let ptr_backing = create_backing_with_slack(context, state.physical_width, state.physical_height, SCREEN_TRAILING_ROWS)?;
     let ptr_screen_view = create_view(context, ptr_backing, 0, 0, state.physical_width, state.physical_height)?;
     let ptr_wrapper = alloc_record(
         context,
