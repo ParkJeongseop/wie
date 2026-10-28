@@ -308,6 +308,23 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **WIPI-C lists records in ascending id order** (2026-10-29): the record
+  repositories answer in storage order, which on the CLI and mobile hosts is a
+  directory read (9, 11, 7, 6, 1, 10, … on macOS), and `MC_dbListRecords`,
+  `MC_dbListRecordInfo` and the record-size lookup passed it on. 컴투스포춘골프3D
+  lists its twelve records and reads the sixth entry as its settings record
+  (record 6); it got an empty slot, took its character number 0 - 1 = 255
+  past its model-name table and dereferenced the failed resource load.
+  The lists are now sorted (the MIDP `RecordEnumerationImpl` already was).
+  Launched twice, the title reaches its title screen, character selection,
+  mission briefing and the 3D course. Open there: its 8-bit BMPs carry a
+  magenta backdrop that is drawn (no header key; the title's own `0xf81f`
+  constants are blend masks, not a colour key).
+- **LGT `0x6a` is `MC_knlGetCurProgramID` and `0xee` is `MC_grpPostEvent`**
+  (2026-10-29): both were unnamed stubs. 게임빌2010프로야구 posts itself event
+  `0xa600` from its first paint through the pair; the event now reaches the
+  clet's `handleCletEvent` through the shared `MC_grpPostEvent`. The title still
+  paints nothing after it (its C++ event dispatch does not act on it yet).
 - **LGT modules are entered where their `.raptor` record says** (2026-10-29):
   the toolchain writes the entry a second time in the `.raptor` section (magic
   `RAPT`, then at +12 the entry as an offset from the image base with the

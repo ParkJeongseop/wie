@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 
 use wipi_types::wipic::WIPICWord;
 
-use wie_backend::Database;
+use wie_backend::{Database, RecordId};
 use wie_util::{Result, read_generic, read_null_terminated_string_bytes, write_generic};
 
 use crate::context::WIPICContext;
@@ -192,7 +192,7 @@ pub async fn list_record(context: &mut dyn WIPICContext, db_id: i32, buf_ptr: WI
     let Some(db) = get_database_from_db_id(context, db_id).await? else {
         return Ok(-25); // M_E_INVALIDHANDLE
     };
-    let ids = db.get_record_ids().await;
+    let ids = sorted(db.get_record_ids().await);
 
     let mut cursor = 0;
     for &id in &ids {
@@ -343,7 +343,7 @@ pub async fn list_record_info(context: &mut dyn WIPICContext, ptr_name: WIPICWor
     }
 
     let db = system.platform().database_repository().open(&name, &pid).await;
-    let ids = db.get_record_ids().await;
+    let ids = sorted(db.get_record_ids().await);
 
     let mut written = 0;
     for id in ids {
@@ -695,7 +695,7 @@ pub async fn get_record_size(context: &mut dyn WIPICContext, db_id: i32) -> Resu
     let Some(db) = open_db_for_handle(context, &handle).await else {
         return Ok(-25);
     };
-    let first = db.get_record_ids().await.into_iter().next();
+    let first = sorted(db.get_record_ids().await).into_iter().next();
     Ok(match first {
         Some(id) => db.get(id).await.map(|data| data.len() as i32).unwrap_or(0),
         None => 0,
@@ -896,6 +896,13 @@ fn load_handle(context: &mut dyn WIPICContext, db_id: i32) -> Result<Option<Data
         return Ok(None);
     }
     Ok(Some(handle))
+}
+
+// Record ids in ascending order, the order they were added in. Repositories list them in storage order (a directory
+// read on the CLI and mobile hosts), and titles index the list: 컴투스포춘골프3D takes its n-th entry as record n + 1.
+fn sorted(mut ids: Vec<RecordId>) -> Vec<RecordId> {
+    ids.sort_unstable();
+    ids
 }
 
 async fn open_db_for_handle(context: &mut dyn WIPICContext, handle: &DatabaseHandle) -> Option<Box<dyn Database>> {
