@@ -89,6 +89,7 @@ impl GForm {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn init_with_display(
         jvm: &Jvm,
         _: &mut WieJvmContext,
@@ -108,6 +109,7 @@ impl GForm {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn init_with_display_flag(
         jvm: &Jvm,
         _: &mut WieJvmContext,

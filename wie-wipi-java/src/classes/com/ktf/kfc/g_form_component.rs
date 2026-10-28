@@ -65,6 +65,7 @@ impl GFormComponent {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn init_with_display(
         jvm: &Jvm,
         _: &mut WieJvmContext,
@@ -84,6 +85,7 @@ impl GFormComponent {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn add_component_at(
         jvm: &Jvm,
         _: &mut WieJvmContext,

@@ -64,6 +64,7 @@ impl GMsgBox {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn init_with_display(
         jvm: &Jvm,
         _: &mut WieJvmContext,
@@ -89,6 +90,7 @@ impl GMsgBox {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn init_with_display_flag(
         jvm: &Jvm,
         _: &mut WieJvmContext,
