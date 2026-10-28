@@ -5,7 +5,7 @@ use jvm_class_proto::JavaMethodProto;
 use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::org::kwis::msp::lwc::Component;
+use crate::classes::{net::wie::ShellCard, org::kwis::msp::lwc::Component};
 
 // class org.kwis.msp.lwc.ShellComponent
 pub struct ShellComponent;
@@ -73,16 +73,18 @@ impl ShellComponent {
         Ok(())
     }
 
-    async fn show(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.ShellComponent::show({this:?})");
+    /// Puts the shell on screen on a card of its own (`net.wie.ShellCard`), which draws it through
+    /// its own `paint` and hands it the keys. 학교가는길's whole game is a shell.
+    async fn show(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.ShellComponent::show({this:?})");
 
-        Ok(())
+        ShellCard::show(jvm, &this).await
     }
 
-    async fn hide(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.ShellComponent::hide({this:?})");
+    async fn hide(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.ShellComponent::hide({this:?})");
 
-        Ok(())
+        ShellCard::hide(jvm, &this).await
     }
 
     /// Lays the children out again after they changed; nothing is laid out here (미니고치 calls it
@@ -93,16 +95,21 @@ impl ShellComponent {
         Ok(())
     }
 
-    /// Nothing presents a shell, so none is shown (미니고치 asks before showing its form).
-    async fn is_shown(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
+    /// Whether the shell is on screen (미니고치 asks before showing its form).
+    async fn is_shown(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.lwc.ShellComponent::isShown({this:?})");
 
-        Ok(false)
+        Ok(!ShellCard::card_of(jvm, &this).await?.is_null())
     }
 
-    async fn service_repaints(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.ShellComponent::serviceRepaints({this:?})");
+    async fn service_repaints(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.ShellComponent::serviceRepaints({this:?})");
 
-        Ok(())
+        let card = ShellCard::card_of(jvm, &this).await?;
+        if card.is_null() {
+            return Ok(());
+        }
+
+        jvm.invoke_virtual(&card, "org/kwis/msp/lcdui/Card", "serviceRepaints", "()V", ()).await
     }
 }

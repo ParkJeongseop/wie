@@ -288,6 +288,16 @@ vtable = [
 ]
 
 [[class]]
+# LGT 학교가는길's TimerTask subclass keeps its run() in slot 10 of its own vtable, and cancel()=11 is
+# what it calls on the task it replaces (lr 0x23a8); scheduledExecutionTime follows the CLDC order.
+name = "java/util/TimerTask"
+vtable = [
+    { name = "run", descriptor = "()V", index = 10 },
+    { name = "cancel", descriptor = "()Z", index = 11 },
+    { name = "scheduledExecutionTime", descriptor = "()J", index = 12 },
+]
+
+[[class]]
 name = "java/lang/Runnable"
 vtable = [
     { name = "run", descriptor = "()V", index = 10 },

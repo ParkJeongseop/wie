@@ -308,6 +308,22 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **An lwc shell is shown on a card of its own** (2026-10-29):
+  `ShellComponent.show`/`hide`/`serviceRepaints`/`isShown` and
+  `Component.repaint` were stubs, so a title whose screens are shells drew
+  nothing (LGT 학교가는길: 385 repaints of a black screen). The specification
+  links a shell to an lcdui `Card` that passes it the card's events; `show`
+  now pushes a `net.wie.ShellCard` that has the shell draw itself (its own
+  `paint(Graphics)` override, which is what that title's SDK called it, or
+  the specification's `paintContent`) and hands it `keyNotify`/`showNotify`;
+  `repaint` on a shown shell repaints that card. The card of each shell is kept
+  in a static table on the wie class, so no platform class gains a method or a
+  field (KTF titles are sensitive to both). Children are not drawn or laid out.
+  The title then reached its `TimerTask` replacement, which calls `cancel()`
+  through vtable slot 11 of its own `TimerTask` subclass (`run` sits in slot
+  10): the LGT ABI table now pins `TimerTask` run/cancel/scheduledExecutionTime
+  at 10/11/12. 학교가는길 goes through its logo, title, school scene and
+  character selection.
 - **WIPI-C lists records in ascending id order** (2026-10-29): the record
   repositories answer in storage order, which on the CLI and mobile hosts is a
   directory read (9, 11, 7, 6, 1, 10, … on macOS), and `MC_dbListRecords`,

@@ -6,6 +6,8 @@ use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
+use crate::classes::net::wie::ShellCard;
+
 // class org.kwis.msp.lwc.Component
 pub struct Component;
 
@@ -112,15 +114,27 @@ impl Component {
     // nothing to flush — but leaving it unimplemented aborted whole apps with
     // "method not found". Accept it as a no-op so the app keeps running (and
     // draws through whatever other path it uses).
-    async fn repaint(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.Component::repaint({this:?})");
+    /// Repaints the card of a shown shell; a component inside one is not tracked to its shell yet.
+    async fn repaint(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.Component::repaint({this:?})");
 
-        Ok(())
+        let card = ShellCard::card_of(jvm, &this).await?;
+        if card.is_null() {
+            return Ok(());
+        }
+
+        jvm.invoke_virtual(&card, "org/kwis/msp/lcdui/Card", "repaint", "()V", ()).await
     }
 
-    async fn repaint_with_area(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, x: i32, y: i32, w: i32, h: i32) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.Component::repaint({this:?}, {x}, {y}, {w}, {h})");
+    async fn repaint_with_area(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, x: i32, y: i32, w: i32, h: i32) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.Component::repaint({this:?}, {x}, {y}, {w}, {h})");
 
-        Ok(())
+        let card = ShellCard::card_of(jvm, &this).await?;
+        if card.is_null() {
+            return Ok(());
+        }
+
+        jvm.invoke_virtual(&card, "org/kwis/msp/lcdui/Card", "repaint", "(IIII)V", (x, y, w, h))
+            .await
     }
 }
