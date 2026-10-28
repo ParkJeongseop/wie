@@ -1,10 +1,11 @@
-use alloc::{format, vec};
+use alloc::{borrow::ToOwned, format, vec, vec::Vec};
 
 use jvm::{Array, ClassInstanceRef, JavaError, Jvm, Result as JvmResult, runtime::JavaLangString};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::String;
 
+use wie_backend::System;
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 use wie_midp::classes::javax::microedition::rms::RecordStore;
 
@@ -130,13 +131,16 @@ impl DataBase {
 
     async fn open_data_base_with_flags(
         jvm: &Jvm,
-        _: &mut WieJvmContext,
+        context: &mut WieJvmContext,
         data_base_name: ClassInstanceRef<String>,
         record_size: i32,
         create: bool,
         flags: i32,
     ) -> JvmResult<ClassInstanceRef<DataBase>> {
         tracing::debug!("org.kwis.msp.db.DataBase::openDataBase({data_base_name:?}, {record_size}, {create}, {flags})");
+
+        let name = JavaLangString::to_rust_string(jvm, &data_base_name).await?;
+        Self::seed_packaged(context, &name).await;
 
         // Without `create`, a missing database is a DataBaseException (the specification; 모바일크래프트2
         // and 전국호텔왕plus catch it to decide between a first start and a saved game).
@@ -151,7 +155,6 @@ impl DataBase {
         let record_store = match record_store {
             Ok(record_store) => record_store,
             Err(JavaError::JavaException(exception)) if jvm.is_instance(&*exception, "javax/microedition/rms/RecordStoreNotFoundException") => {
-                let name = JavaLangString::to_rust_string(jvm, &data_base_name).await?;
                 return Err(jvm
                     .exception("org/kwis/msp/db/DataBaseException", &format!("database {name} does not exist"))
                     .await);
@@ -166,6 +169,46 @@ impl DataBase {
         jvm.put_field(&mut instance, "recordSize", "I", record_size).await?;
 
         Ok(instance)
+    }
+
+    /// A database the title ships the way the handset stores one: `<name>.idx`, the magic `qtpdb`
+    /// followed by the big-endian record size and record count, beside `<name>.db`, the records back
+    /// to back from id 1. Twenty KTF archives carry them under `P/` and open them without `create`
+    /// (광란의수족관!, 다이어트타이쿤, 블레이드마스터2 …); one becomes the store the first time it is opened.
+    async fn seed_packaged(context: &mut WieJvmContext, name: &str) {
+        let system = context.system();
+        let pid = system.pid().to_owned();
+        if system.platform().database_repository().exists(name, &pid).await {
+            return;
+        }
+
+        let Some(index) = Self::read_packaged(system, &format!("{name}.idx")).await else {
+            return;
+        };
+        if index.len() < 13 || &index[..5] != b"qtpdb" {
+            return;
+        }
+        let record_size = u32::from_be_bytes([index[5], index[6], index[7], index[8]]) as usize;
+        let count = u32::from_be_bytes([index[9], index[10], index[11], index[12]]) as usize;
+        if record_size == 0 {
+            return;
+        }
+        let records = Self::read_packaged(system, &format!("{name}.db")).await.unwrap_or_default();
+
+        tracing::debug!("Seeding database {name} from its packaged copy: {count} records of {record_size} bytes");
+        let mut database = system.platform().database_repository().open(name, &pid).await;
+        for (index, record) in records.chunks_exact(record_size).take(count).enumerate() {
+            database.set(index as u32 + 1, record).await;
+        }
+    }
+
+    async fn read_packaged(system: &System, path: &str) -> Option<Vec<u8>> {
+        let size = system.filesystem().size(path).await?;
+        let mut data = vec![0; size];
+        let read = system.filesystem().read(path, 0, size, &mut data).await?;
+        data.truncate(read);
+
+        Some(data)
     }
 
     async fn get_number_of_records(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {

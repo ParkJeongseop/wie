@@ -308,6 +308,22 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **A database a KTF title ships is its database** (2026-10-29): twenty KTF
+  archives carry `P/<name>.idx` + `P/<name>.db`, the handset's own database
+  files: the index is the magic `qtpdb`, the record size and the record count
+  (big-endian words at 5 and 9), then a last id and a creation time; the data
+  file is the records back to back from id 1 (the size always equals size ×
+  count). Titles open them through `org.kwis.msp.db.DataBase.openDataBase`
+  without `create`, and wie answered `DataBaseException`, which five of them
+  read as "the downloadable data is missing" and stopped on their
+  extra-download notice (다이어트타이쿤 ×2, 블레이드마스터2, 열혈교사전설2,
+  판타지포에버2). The first open of a name that has no store yet now seeds it
+  from those files. One index in the corpus is not `qtpdb` (열혈교사전설2's
+  `school0.idx` has `ffff` over its version byte, beside a clean `.bak`, and
+  holds a zeroed save); it is left alone. KTF launched twice 286 to 291 of
+  321; six titles that already played now start with the archive's saved
+  games available (월드크래프트's save slots, 피자타이쿤's day 5), as the handset
+  the archive came from had them.
 - **An lwc shell is shown on a card of its own** (2026-10-29):
   `ShellComponent.show`/`hide`/`serviceRepaints`/`isShown` and
   `Component.repaint` were stubs, so a title whose screens are shells drew
