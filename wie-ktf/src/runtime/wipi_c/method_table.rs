@@ -535,7 +535,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICDatabaseMethodId::SortRecords => Some(database::make_directory_ktf.into_body()),
             WIPICDatabaseMethodId::GetAccessMode => Some(gen_stub(9, "MC_dbGetAccessMode")),
             WIPICDatabaseMethodId::GetNumberOfRecords => Some(database::get_number_of_records_ktf.into_body()),
-            WIPICDatabaseMethodId::GetRecordSize => Some(database::get_record_size_ktf.into_body()),
+            WIPICDatabaseMethodId::GetRecordSize => Some(database::total_space_ktf.into_body()),
             WIPICDatabaseMethodId::ListDatabases => Some(database::list_databases.into_body()),
             WIPICDatabaseMethodId::Unk13 => Some(gen_stub(13, "MC_dbUnk13")),
             WIPICDatabaseMethodId::Unk14 => Some(gen_stub(14, "MC_dbUnk14")),

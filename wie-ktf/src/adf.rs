@@ -70,6 +70,15 @@ pub fn find_client_bin(jar: &[u8]) -> Result<(String, Vec<u8>)> {
         .ok_or_else(|| WieError::FatalError("client.bin* not found in jar".to_string()))
 }
 
+/// The classes a jar carries as class files, by internal name. A KTF title runs from the classes
+/// compiled into client.bin; a jar that also ships bytecode ships copies of some of them.
+pub fn class_files(jar: &[u8]) -> Result<Vec<String>> {
+    Ok(extract_zip(jar)?
+        .into_keys()
+        .filter_map(|name| name.strip_suffix(".class").map(String::from))
+        .collect())
+}
+
 pub fn parse_bss_size(filename: &str) -> Result<u32> {
     filename
         .strip_prefix("client.bin")

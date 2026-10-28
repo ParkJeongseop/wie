@@ -10,7 +10,7 @@ mod name;
 mod value;
 mod vtable;
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, format};
 use core::mem::{offset_of, size_of};
 use jvm_implementation::KtfJvmImplementation;
 
@@ -222,7 +222,10 @@ impl KtfJvmSupport {
         Ok(if let Some(x) = definition.as_any().downcast_ref::<JavaClassDefinition>() {
             x.ptr_raw
         } else {
-            let class = definition.as_any().downcast_ref::<JavaArrayClassDefinition>().unwrap();
+            let class = definition
+                .as_any()
+                .downcast_ref::<JavaArrayClassDefinition>()
+                .ok_or_else(|| WieError::FatalError(format!("{} is not a class of the client", definition.name())))?;
 
             class.class.ptr_raw
         })

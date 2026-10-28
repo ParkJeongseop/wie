@@ -242,16 +242,14 @@ pub async fn get_number_of_records_ktf(context: &mut dyn WIPICContext, arg: i32)
     Ok(count)
 }
 
-pub async fn get_record_size_ktf(context: &mut dyn WIPICContext, db_id: i32, rec_id: i32) -> Result<i32> {
-    tracing::debug!("MC_dbGetRecordSize({db_id:#x}, {rec_id})");
+/// KTF's table-7 slot 11 is `MC_fsTotalSpace()` in the specification's `MC_fs*` order, a
+/// no-argument getter beside `MC_fsAvailable` at 12: the storage the application owns. It was
+/// read as a record-size query and answered -25, which 셔터-영혼의울림 took for a full disk
+/// ("저장공간이 부족 합니다").
+pub async fn total_space_ktf(_context: &mut dyn WIPICContext) -> Result<i32> {
+    tracing::debug!("MC_fsTotalSpace()");
 
-    let Some(handle) = load_handle(context, db_id)? else {
-        return Ok(-25); // M_E_INVALIDHANDLE
-    };
-
-    // Single-record stream model: the mirror's length is the record size
-    // regardless of the requested id.
-    Ok(handle.buffer_len as i32)
+    Ok(KTF_DATABASE_STORAGE_LIMIT.min(i32::MAX as u64) as i32)
 }
 
 /// Returns the database storage available to a KTF application.

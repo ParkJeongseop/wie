@@ -308,6 +308,26 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **KTF: the client's compiled class wins over a class file of the same name**
+  (2026-10-29): 셔터-영혼의울림, 헬싱 and 삼국지 영걸전 ship the bytecode of
+  the SDK's `Clet` bridge (`Clet`, `Clet$CletCard`: a Jlet whose
+  start/pause/resume/destroy/paint/input methods are native) beside a
+  client.bin that carries the same classes compiled. The class loader asks its
+  parent first, the jar answered with the bytecode, and the first look at its
+  raw class record was a host panic. The emulator now lists the jar's class
+  files (no other KTF archive in the corpus has any) and has the class loader
+  register the client's compiled copy of each before the title starts; the
+  raw-record lookup reports a class that is not the client's instead of
+  panicking. All three start. A first attempt overrode `loadClass` instead:
+  one more method on the loader's class record and a resource lookup per class
+  load moved the guest heap enough to change the frames of 86 other titles
+  (none for the worse, but none for a reason), which is why the fix touches
+  nothing a title without class files runs.
+- **KTF table 7 slot 11 is `MC_fsTotalSpace()`** (2026-10-29): it was read as a
+  record-size query on a handle and answered -25 to the no-argument call, so
+  셔터-영혼의울림 said "저장공간이 부족 합니다" over its title and never started.
+  It now answers the application's storage limit (the free space at slot 12
+  is that limit less what is used).
 - **A database a KTF title ships is its database** (2026-10-29): twenty KTF
   archives carry `P/<name>.idx` + `P/<name>.db`, the handset's own database
   files: the index is the magic `qtpdb`, the record size and the record count

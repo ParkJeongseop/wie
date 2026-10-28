@@ -4,7 +4,8 @@ use alloc::{borrow::ToOwned, boxed::Box, collections::BTreeMap, format, string::
 
 use bytemuck::Zeroable;
 use futures::future::poll_fn;
-use jvm::{ClassInstance, Result as JvmResult, runtime::JavaLangString};
+use jvm::{ClassInstance, ClassInstanceRef, Result as JvmResult, runtime::JavaLangString};
+use rustjava_runtime::classes::java::lang::Class;
 
 use wie_backend::{Emulator, Event, Options, Platform, System, TaskRunner};
 use wie_core_arm::{Allocator, ArmCore};
@@ -12,7 +13,7 @@ use wie_jvm_support::JvmSupport;
 use wie_util::{Result, WieError, write_generic};
 
 use crate::{
-    adf::{KtfAdf, find_client_bin},
+    adf::{KtfAdf, class_files, find_client_bin},
     runtime::{KtfJvmSupport, KtfJvmThreadContext},
 };
 
@@ -148,17 +149,48 @@ impl KtfEmulator {
 
         Allocator::init(&mut core)?;
 
+        let class_files = files.get(jar_filename).and_then(|jar| class_files(jar).ok()).unwrap_or_default();
+
         let mut core_clone = core.clone();
         let mut system_clone = system.clone();
         let jar_filename_clone = jar_filename.to_owned();
-        system.spawn(async move || Self::start(&mut core_clone, &mut system_clone, jar_filename_clone, main_class_name).await);
+        system.spawn(async move || Self::start(&mut core_clone, &mut system_clone, jar_filename_clone, main_class_name, class_files).await);
 
         Ok(Self { core, system })
     }
 
     #[tracing::instrument(name = "start", skip_all)]
-    async fn start(core: &mut ArmCore, system: &mut System, jar_filename: String, main_class_name: Option<String>) -> Result<()> {
+    async fn start(
+        core: &mut ArmCore,
+        system: &mut System,
+        jar_filename: String,
+        main_class_name: Option<String>,
+        class_files: Vec<String>,
+    ) -> Result<()> {
         let (jvm, class_loader) = KtfJvmSupport::init(core, system, Some(&jar_filename)).await?;
+
+        // The client's compiled copy of a class comes before a class file of the same name: the
+        // loader asks its parent, the jar, first. 셔터-영혼의울림, 헬싱 and 삼국지 영걸전 ship the SDK's
+        // `Clet` bridge (a Jlet whose methods are native) as bytecode beside the client that compiles it.
+        for class_file in class_files {
+            let name = JavaLangString::from_rust_string(&jvm, &class_file).await;
+            let compiled: JvmResult<ClassInstanceRef<Class>> = match name {
+                Ok(name) => {
+                    jvm.invoke_virtual(
+                        &class_loader,
+                        "net/wie/KtfClassLoader",
+                        "findClass",
+                        "(Ljava/lang/String;)Ljava/lang/Class;",
+                        (name,),
+                    )
+                    .await
+                }
+                Err(x) => Err(x),
+            };
+            if let Err(x) = compiled {
+                return Err(JvmSupport::to_wie_err(&jvm, x).await);
+            }
+        }
         let clet_mode = main_class_name.as_deref().is_some_and(is_clet_mode);
 
         let main_class_name = if let Some(x) = main_class_name {
