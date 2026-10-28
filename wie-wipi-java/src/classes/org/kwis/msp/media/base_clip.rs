@@ -3,6 +3,7 @@ use alloc::vec;
 use jvm::{Array, ClassInstanceRef, Jvm, Result as JvmResult, runtime::JavaLangString};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
+use rustjava_runtime::classes::java::lang::Object;
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 use wie_midp::classes::javax::microedition::media::Player;
@@ -60,7 +61,7 @@ impl BaseClip {
         let input_stream = jvm.new_class("java/io/ByteArrayInputStream", "([BII)V", (buffer, offset, length)).await?;
         let r#type = JavaLangString::from_rust_string(jvm, "application/vnd.smaf").await?;
 
-        let player: ClassInstanceRef<Player> = jvm
+        let mut player: ClassInstanceRef<Player> = jvm
             .invoke_static(
                 "javax/microedition/media/Manager",
                 "createPlayer",
@@ -68,6 +69,20 @@ impl BaseClip {
                 (input_stream, r#type),
             )
             .await?;
+
+        // Data appended to a loaded clip replaces its player; the PlayListener a title set on the
+        // clip in between (kept on the player, see Clip::setListener) moves to the new one.
+        let previous: ClassInstanceRef<Player> = jvm.get_field(&this, "player", "Ljavax/microedition/media/Player;").await?;
+        if !previous.is_null()
+            && !player.is_null()
+            && jvm.is_instance(&**previous, "net/wie/SmafPlayer")
+            && jvm.is_instance(&**player, "net/wie/SmafPlayer")
+        {
+            let listener: ClassInstanceRef<Object> = jvm.get_field(&previous, "wipiListener", "Ljava/lang/Object;").await?;
+            let generation: i32 = jvm.get_field(&previous, "playGeneration", "I").await?;
+            jvm.put_field(&mut player, "wipiListener", "Ljava/lang/Object;", listener).await?;
+            jvm.put_field(&mut player, "playGeneration", "I", generation).await?;
+        }
 
         jvm.put_field(&mut this, "player", "Ljavax/microedition/media/Player;", player).await?;
 

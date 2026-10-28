@@ -291,7 +291,7 @@ mod test {
     use alloc::boxed::Box;
 
     use jvm::{ClassInstanceRef, runtime::JavaLangString};
-    use rustjava_runtime::classes::java::lang::{Object, String};
+    use rustjava_runtime::classes::java::lang::String;
     use test_utils::run_jvm_test;
     use wie_util::Result;
 

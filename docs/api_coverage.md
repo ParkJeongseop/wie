@@ -336,8 +336,14 @@ runs them on `wie_midp` + `wie_mmpp`.
   nothing: a title's `PlayListener.playUpdate(Clip, int, int)` is now told
   `END_OF_DATA` (1) when a clip played once has run its SMAF length
   (`SmafPlayer.getDuration` answers the sequence length in microseconds instead
-  of -1), from a timer so a handler that stops or replays the clip does not
-  re-enter play; 49 titles in the library name `PlayListener`. 월드장기체스
+  of -1), from the system event queue (an Alert's timeout goes the same way): not
+  from inside play or stop, which a handler commonly calls, and not from a
+  Java timer thread, which raced 트랜스포머's own loading thread on its second
+  launch. The event holds the clip past any Java reference, so the clip
+  sits in a static `Vector` on `Player` until the event fires: without that
+  root the collector reclaimed it and twenty-five KTF titles died with
+  `NoSuchFieldError: java/lang/String.player` when the event read the reused
+  object. 49 titles in the library name `PlayListener`. 월드장기체스
   (LGT) still stops on the first frame of its publisher intro with its loop
   running (open: it reads a 15-character system property every tick). Result
   against 00da45e0: KTF 16 s launched twice 280 to 281 of 321 (생과일타이쿤파이널),

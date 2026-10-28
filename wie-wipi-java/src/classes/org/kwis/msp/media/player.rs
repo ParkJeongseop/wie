@@ -1,15 +1,16 @@
 use alloc::vec;
 
 use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
-use jvm_class_proto::JavaMethodProto;
-use jvm_types::{ClassAccessFlags, MethodAccessFlags};
+use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
+use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
+use rustjava_runtime::classes::java::util::Vector;
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::{
-    net::wie::PlayUpdateTask,
-    org::kwis::msp::media::{BaseClip, Clip},
-};
+use wie_backend::Event;
+use wie_jvm_support::JvmSupport;
+
+use crate::classes::org::kwis::msp::media::{BaseClip, Clip, PlayListener};
 
 // class org.kwis.msp.media.Player
 pub struct Player;
@@ -82,7 +83,13 @@ impl Player {
                     MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC,
                 ),
             ],
-            fields: vec![],
+            // Clips whose end-of-data is still to be delivered: the event that delivers it holds
+            // the clip past any Java reference, so a static root keeps the collector off it.
+            fields: vec![JavaFieldProto::new(
+                "pendingClips",
+                "Ljava/util/Vector;",
+                FieldAccessFlags::PRIVATE | FieldAccessFlags::STATIC,
+            )],
             access_flags: ClassAccessFlags::PUBLIC,
         }
     }
@@ -117,7 +124,7 @@ impl Player {
         Ok(false)
     }
 
-    async fn play_clip(jvm: &Jvm, _context: &mut WieJvmContext, clip: ClassInstanceRef<Clip>, repeat: bool) -> JvmResult<bool> {
+    async fn play_clip(jvm: &Jvm, context: &mut WieJvmContext, clip: ClassInstanceRef<Clip>, repeat: bool) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.media.Player::play({clip:?}, {repeat})");
 
         if clip.is_null() {
@@ -129,16 +136,45 @@ impl Player {
             let _: () = jvm.invoke_virtual(&player, "net/wie/SmafPlayer", "start", "(Z)V", (repeat,)).await?;
 
             // A clip played once ends when its sequence does; the sink does not report it, so the
-            // end is scheduled from the duration (microseconds, -1 when unknown). Only the end is
-            // delivered, from the timer thread: a title's handler commonly stops or replays the clip,
-            // and a notification raised from inside play or stop would re-enter it.
+            // end is scheduled from the duration (microseconds, -1 when unknown) on the system event
+            // queue, like an Alert's timeout. Only the end is delivered, and not from inside play or
+            // stop (a title's handler commonly stops or replays the clip) nor from a Java thread of
+            // its own (a second thread races a title's own loading thread: 트랜스포머's second launch
+            // threw in its loader once a timer thread ran beside it).
             let generation = Clip::next_generation(jvm, &clip).await?;
             if !repeat {
                 let duration: i64 = jvm
                     .invoke_virtual(&player, "javax/microedition/media/Player", "getDuration", "()J", ())
                     .await?;
                 if duration > 0 {
-                    PlayUpdateTask::schedule(jvm, clip, generation, duration / 1000).await?;
+                    let pending = Self::pending_clips(jvm).await?;
+                    let _: () = jvm
+                        .invoke_virtual(&pending, "java/util/Vector", "addElement", "(Ljava/lang/Object;)V", (clip.clone(),))
+                        .await?;
+
+                    let due = context.system().platform().now() + (duration / 1000) as u64;
+                    let timer_jvm = jvm.clone();
+                    context.system().event_queue().push(Event::timer(due, move || {
+                        let jvm = timer_jvm;
+                        async move {
+                            let result: JvmResult<()> = async {
+                                let pending = Self::pending_clips(&jvm).await?;
+                                let _: bool = jvm
+                                    .invoke_virtual(&pending, "java/util/Vector", "removeElement", "(Ljava/lang/Object;)Z", (clip.clone(),))
+                                    .await?;
+                                if Clip::generation(&jvm, &clip).await? != generation {
+                                    return Ok(());
+                                }
+                                Clip::notify(&jvm, &clip, PlayListener::END_OF_DATA).await
+                            }
+                            .await;
+
+                            match result {
+                                Ok(()) => Ok(()),
+                                Err(error) => Err(JvmSupport::to_wie_err(&jvm, error).await),
+                            }
+                        }
+                    }));
                 }
             }
 
@@ -146,6 +182,20 @@ impl Player {
         } else {
             Ok(false)
         }
+    }
+
+    async fn pending_clips(jvm: &Jvm) -> JvmResult<ClassInstanceRef<Vector>> {
+        let pending: ClassInstanceRef<Vector> = jvm
+            .get_static_field("org/kwis/msp/media/Player", "pendingClips", "Ljava/util/Vector;")
+            .await?;
+        if !pending.is_null() {
+            return Ok(pending);
+        }
+        let pending: ClassInstanceRef<Vector> = jvm.new_class("java/util/Vector", "()V", ()).await?.into();
+        jvm.put_static_field("org/kwis/msp/media/Player", "pendingClips", "Ljava/util/Vector;", pending.clone())
+            .await?;
+
+        Ok(pending)
     }
 
     async fn stop_clip(jvm: &Jvm, _: &mut WieJvmContext, clip: ClassInstanceRef<Clip>) -> JvmResult<bool> {
