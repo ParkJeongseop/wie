@@ -50,7 +50,12 @@ pub async fn get_system_property(context: &mut dyn WIPICContext, ptr_id: WIPICWo
         "TIMEZONE" => "GMT+09:00",
         "ESN" => "00000000",
         "PHONEMODEL" => "Emulator",
-        "PHONENUMBER" => "", // putting this cause some game to fail authentication
+        // Four digits, the one length every title seen here accepts. Titles treat four digits or
+        // fewer as a handset with no line: 이노티아연대기1 then plays the data it ships (five or more
+        // and it asks to download it again), 슈퍼액션히어로3 substitutes its own number. Titles
+        // also take the number apart assuming one is there: 크로이센 copies all but its last four
+        // digits (an empty number made that copy 4 GB long) and 당신은골프왕 divides by its length.
+        "PHONENUMBER" => "0100",
         "MIN" => "01000000000",
         "ANNUN_CALL" => "0",
         "ANNUN_SMS" => "0",

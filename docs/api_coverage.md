@@ -830,8 +830,8 @@ Not API-crate surface, but blockers found while running real games:
   and bitmap `0xf8` — exactly words 0-4 MSB-first, while LSB-first would mark
   words that do not exist.
 - **Next layers found while doing the above** (2026-09-29): 당신은골프왕 divides
-  by `getSystemProperty("PHONENUMBER").length()`; wie returns "" on purpose
-  (see Phone-number DRM below), so it raises `/ by zero` at lr 0x576f.
+  by `getSystemProperty("PHONENUMBER").length()`; wie returned "" then, so it
+  raised `/ by zero` at lr 0x576f (fixed 2026-10-29, see Phone-number DRM).
   슈퍼액션히어로's thread calls slot 32 on an object that is a plain
   `java/lang/Thread` in wie — no CLDC Thread has that slot, so the object in that
   static differs from the handset's; not traced yet.
@@ -975,14 +975,30 @@ Not API-crate surface, but blockers found while running real games:
   `getStrokeStyle` / `setStrokeStyle` (2, 어스토니시아ep3 twice),
   `XDisplay.clear`, `Toolkit.*Img` (매지컬프린세스), `PrintStream.println([B)`,
   `System.exec`. Reaching one is a NoSuchMethodError or NoClassDefFoundError.
-- **Phone-number DRM** — some games gate on getSystemProperty("PHONENUMBER"
-  / "MIN"). wie returns an empty PHONENUMBER, which *passes* the check on
-  games that compare the phone number against a value (empty makes the
-  comparison void). Verified with 슈퍼액션히어로3: it requires naming the
-  handset to a specific number (010-5514-5031) on real hardware, but on the
-  emulator the empty phone number sails through to the game (the real boot
-  blocker was the unmapped SVC 0x19c above, not the DRM). Putting a real-
-  looking value here instead would make such games fail authentication.
+- **Phone-number DRM** — titles read `PHONENUMBER` (C `MC_knlGetSystemProperty`
+  and Java `HandsetProperty.getSystemProperty`), and what they want from it
+  is a length, not a value. Measured on 2026-10-29 over the 125 KTF and LGT
+  titles that name the property, with an empty number, eleven digits and four:
+  - LGT 당신은골프왕 divides by the number's length (empty: `/ by zero`).
+  - LGT 크로이센 copies all but the number's last four digits to compare a
+    prefix with its test handsets; an empty number made that copy 4 GB long,
+    the read ran off `.bss` and the host overflowed its stack turning the
+    fault into a Java exception.
+  - KTF 이노티아연대기1 treats four digits or fewer as a handset with no line
+    and plays the data it ships; five or more is a subscriber it can bill, and
+    it asks to download that data again and loops on the connection failure.
+  - LGT 슈퍼액션히어로3 substitutes its own built-in number when it is given
+    four digits or fewer (this is why an empty number "passed" it).
+  - KTF 이노티아연대기2 runs its offline certificate flow the same with all three.
+  - With any number, several Gamevil titles (놈ZERO, 뮤직팩토리, 하이브리드2)
+    offer the network authentication they skipped with none, fail it and go on;
+    붕어빵타이쿤3 and 게임빌2010슈퍼사커 get further.
+  Four digits (`0100`) is the one length all of these accept, so both sides
+  answer it. `MIN` is unchanged (C: eleven digits, Java: empty). If a title
+  turns up that needs a full-length number, the answer becomes a host setting
+  rather than a constant (wfeature reached the same conclusion). Result: KTF
+  16 s launched twice 282 of 321 identical; LGT launched twice 70 to 72 of 79
+  (당신은골프왕, 크로이센), none worse.
 - ~~**WIPI-C text rendering (tofu)**~~ — fixed: MC_grpDrawString decoded
   strings as UTF-8, turning EUC-KR Korean into replacement glyphs. Now
   decoded as EUC-KR like the other WIPI-C string APIs. Affects every game
