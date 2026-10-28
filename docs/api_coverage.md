@@ -308,6 +308,13 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **LGT: a null framebuffer is nothing to destroy either** (2026-10-29): the
+  LGT `MC_grpDestroyOffScreenFrameBuffer` read whatever it was handed as an
+  off-screen record, and 메탈슬러그 서바이벌 calls it with null before its first
+  frame. Null is now a no-op, as on KTF, and a handle that is not an off-screen
+  framebuffer (the screen, an image) is logged and left alone. The title goes
+  on through its logos, menu and opening story. LGT launched twice 74 to 75 of
+  79, the other 78 unchanged.
 - **LGT screen memory runs 24 rows past the visible screen; a collected
   object that cannot be freed is leaked** (2026-10-29): KBO프로야구2009 and
   알바타이쿤2 both wrote exactly 24 rows (11,520 bytes) past the end of the

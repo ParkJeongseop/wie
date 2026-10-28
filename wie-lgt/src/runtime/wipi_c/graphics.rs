@@ -466,9 +466,19 @@ pub async fn create_offscreen_framebuffer(context: &mut dyn WIPICContext, width:
 
 pub async fn destroy_offscreen_framebuffer(context: &mut dyn WIPICContext, handle: WIPICIndirectPtr) -> Result<()> {
     tracing::debug!("MC_grpDestroyOffScreenFrameBuffer({:#x})", handle.0);
+    // Destroying nothing, or a framebuffer that is not an off-screen one (the screen), does nothing,
+    // as on the KTF side: 메탈슬러그 서바이벌 destroys its not-yet-created buffer (0) before
+    // creating it, and died on the read.
+    if handle.0 == 0 {
+        return Ok(());
+    }
     let public: LgtFramebuffer = read_record(context, handle)?;
     if public.owned_image == 0 || public.ptr_graphics == 0 || public.ptr_image == 0 {
-        return Err(WieError::FatalError(alloc::format!("Invalid LGT off-screen framebuffer {:#x}", handle.0)));
+        tracing::warn!(
+            "MC_grpDestroyOffScreenFrameBuffer({:#x}): not an off-screen framebuffer, ignored",
+            handle.0
+        );
+        return Ok(());
     }
     let backing: WIPICFramebuffer = read_record(context, WIPICIndirectPtr(public.ptr_image))?;
 
