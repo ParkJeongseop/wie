@@ -254,7 +254,9 @@ impl JavaMethod {
         } else {
             format!(": {}", JavaLangString::to_rust_string(jvm, &message.into()).await.unwrap_or_default())
         };
-        tracing::warn!("Java exception thrown: {exception:?} ({exception_class}{message})");
+        // The return address is the guest code that made the throwing call.
+        let (_, lr) = core.read_pc_lr()?;
+        tracing::warn!("Java exception thrown: {exception:?} ({exception_class}{message}) from {lr:#x}");
 
         let current_java_exception_handler = KtfJvmSupport::current_java_exception_handler(core)?;
 
