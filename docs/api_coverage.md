@@ -308,6 +308,24 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **`InputStreamReader.read(char[], off, len)` fills the request** (2026-10-29,
+  RustJava c320364): it decoded one 10-byte chunk and returned the few
+  characters that made, which the Java contract allows but no handset did:
+  their readers keep reading until the request is filled or the input ends.
+  Titles read a whole text resource with one `read(buf, 0, available)` and
+  never loop. 장금이의 꿈 got 6 of a scenario's 127 characters, so its
+  dialogue box stayed empty and every paint threw an
+  ArrayIndexOutOfBoundsException; 루빅스큐브 parsed an empty number and sat on
+  its mode menu; 현영맞고 2006 cut a string at a missing separator in its key
+  handler and never left its menu. The reader now keeps decoding while input
+  is available (upstream RustJava 48a997a does the same) and holds an EUC-KR
+  lead byte back only when its trail byte has not arrived (the old check held
+  back any chunk ending in a byte of 0x81 or more, which a trail byte can be,
+  and so split pairs: 하베스트타이쿤's dialogue showed broken glyphs). All of
+  them now go on to their story, mode choice and how-to-play text, LGT 현영맞고
+  2006 from its menu to a game of go-stop, 하베스트타이쿤 shows clean text. The
+  other 316 KTF and 78 LGT titles and all 90 SK-VM titles keep their state
+  (SK-VM 미니고치 only shifts a frame on its name form).
 - **`Graphics.getPixels`/`setPixels`/`getRGBPixels` read and write the target**
   (2026-10-29): the three were stubs. `getRGBPixels` now copies the target's
   colours out as `0xAARRGGBB` (`bpl` ints apart), `getPixels` as the handset's

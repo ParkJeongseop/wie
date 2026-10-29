@@ -135,8 +135,8 @@ wie-util = { workspace = true }
 # RustJava is consumed from crates.io upstream; our fork carries only the
 # unmerged delta (currently: quieter String.valueOf logging), applied as a patch.
 [patch.crates-io]
-jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "620a2c2" }
-jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "620a2c2" }
-jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "620a2c2" }
-jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "620a2c2" }
-rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "620a2c2" }
+jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
+jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
+jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
+jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
+rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
