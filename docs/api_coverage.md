@@ -316,8 +316,8 @@ runs them on `wie_midp` + `wie_mmpp`.
   them). 0x68 was an unnamed stub, so 리듬스타2's `exit(0)` after its notices
   was ignored 228 times and it ran on into a white screen, and a title asking
   for its parent program would have been ended. `MC_knlGetSystemProperty`
-  answers `MEDIADEVICES` with `audio/MIDI,audio/x-smaf,audio/WAVE` instead of
-  M_E_INVALID (리듬스타2 reads it beside PHONEMODEL). No sweep change: the
+  answers `MEDIADEVICES` with `audio/x-smaf`, the one format its media layer
+  plays, instead of M_E_INVALID (리듬스타2 reads it beside PHONEMODEL). No sweep change: the
   headless harness does not stop on an exit request yet.
 - **A file exists from the open that creates it; LGT 0x195 is
   `MC_fsFileAttribute`** (2026-11-03): 바이오크로니클 (LGT) quit before its

@@ -66,7 +66,9 @@ pub async fn get_system_property(context: &mut dyn WIPICContext, ptr_id: WIPICWo
         "AIRPLANE_MODE" => "0",
         "ROAMING_AREA" => "0",
         "DS_LOCK" => "0",
-        "MEDIADEVICES" => "audio/MIDI,audio/x-smaf,audio/WAVE",
+        // What the media layer plays: SMAF only. A title that finds MIDI or WAVE listed would pick
+        // resources this side cannot sound.
+        "MEDIADEVICES" => "audio/x-smaf",
         _ => {
             tracing::warn!("unknown system property id: {id}");
             return Ok(-9); // M_E_INVALID
