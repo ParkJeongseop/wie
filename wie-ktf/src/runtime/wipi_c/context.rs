@@ -43,7 +43,21 @@ impl WIPICContext for KtfWIPICContext {
         Ok(WIPICIndirectPtr(ptr))
     }
 
+    /// Frees a handle `alloc` gave out, and nothing else. Titles free a handle twice (컴투스_맞고_2006
+    /// frees a sound buffer once it hands it to a clip and again with the clip's record, by then
+    /// reused): a handle the handset no longer knows is ignored, where freeing it here gave away
+    /// the block's next owner or read through whatever the reused memory held.
     fn free(&mut self, memory: WIPICIndirectPtr) -> Result<()> {
+        let header: Result<[u32; 2]> = read_generic(&self.core, memory.0);
+        let live = match header {
+            Ok([base, size]) => base == memory.0 + 4 && Allocator::is_allocated(&self.core, memory.0, size + 12).unwrap_or(false),
+            Err(_) => false,
+        };
+        if !live {
+            tracing::warn!("Ignoring free of {:#x}, which is not a live allocation", memory.0);
+            return Ok(());
+        }
+
         let size: u32 = read_generic(&self.core, memory.0 + 4)?;
         Allocator::free(&mut self.core, memory.0, size + 12)?;
 
