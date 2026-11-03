@@ -87,7 +87,9 @@ pub async fn java_class_load(core: &mut ArmCore, jvm: &mut Jvm, ptr_target: u32,
 }
 
 pub async fn java_throw(core: &mut ArmCore, jvm: &mut Jvm, ptr_error: KtfJvmWord, a1: u32) -> Result<JavaMethodResult> {
-    tracing::warn!("java_throw({ptr_error:#x}, {a1})");
+    // The return address is the guest code that threw; nested calls below replace it.
+    let (_, lr) = core.read_pc_lr()?;
+    tracing::warn!("java_throw({ptr_error:#x}, {a1}) from {lr:#x}");
 
     let error_bytes = read_null_terminated_string_bytes(core, ptr_error)?;
     let error = String::from_utf8_lossy(&error_bytes).to_string();
