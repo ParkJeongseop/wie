@@ -36,6 +36,7 @@ impl ContainerComponent {
                     Self::remove_component,
                     MethodAccessFlags::PUBLIC,
                 ),
+                JavaMethodProto::new("removeAllComponents", "()V", Self::remove_all_components, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("validate", "()V", Self::validate, Default::default()),
                 JavaMethodProto::new(
                     "getComponent",
@@ -142,6 +143,13 @@ impl ContainerComponent {
             .await?;
 
         Ok(())
+    }
+
+    async fn remove_all_components(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.ContainerComponent::removeAllComponents({this:?})");
+
+        let children = Self::children(jvm, &this).await?;
+        jvm.invoke_virtual(&children, "java/util/Vector", "removeAllElements", "()V", ()).await
     }
 
     async fn get_component(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, index: i32) -> JvmResult<ClassInstanceRef<Component>> {

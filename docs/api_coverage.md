@@ -308,6 +308,28 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **lwc members a title stopped on, and a new surface starts black** (2026-11-03):
+  강호동맞고2 stopped on `Component.setEventListener` and 마스터오브소드2-작은화면 on
+  `Component.setBackground`, then `setForeground`, `lwc/ProgressComponent` and
+  `ContainerComponent.removeAllComponents` (reached through its shell). The
+  three Component setters are taken and dropped (components send no events and
+  are not painted yet), `removeAllComponents` empties the child list, and
+  `ProgressComponent(boolean, int)` keeps a value from 0 to its maximum in whole
+  steps (`setMaxValue` and `setStep` refuse a non-positive maximum or a step
+  outside 1..maximum with IllegalArgumentException). **The Component vtable
+  sensitivity recorded on 2026-10-28 is gone**: with three more methods on
+  Component, 프리스타일_어택's second launch is unchanged — that fault was the
+  collector freeing objects only an ARM register or stack held (fixed by the
+  KTF guest root scan), which a different class layout had moved under it.
+  `FrameBuffer::new` (screen and offscreen surfaces of the WIPI-C runtime) now
+  zeroes its pixels: the heap returns whatever a freed block held, and
+  테트리스2006's screen showed a freed resource as noise for the whole run (it
+  is black now; the title still draws nothing on it, which is open — its own
+  blitter writes somewhere this side does not present). KTF `java_throw` logs
+  the calling guest address. Result: KTF 16 s launched twice 300 to **302** of
+  321 (강호동맞고2 title·menu·story, 마스터오브소드2-작은화면 story intro), none
+  worse; LGT 77 of 79 and SK-VM 84 of 90 identical frame for frame; five KTF
+  titles differ only in animation timing.
 - **`InputStreamReader.read(char[], off, len)` fills the request** (2026-10-29,
   RustJava c320364): it decoded one 10-byte chunk and returned the few
   characters that made, which the Java contract allows but no handset did:

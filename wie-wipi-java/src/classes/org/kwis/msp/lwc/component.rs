@@ -3,10 +3,11 @@ use alloc::vec;
 use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
+use rustjava_runtime::classes::java::lang::Object;
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::net::wie::ShellCard;
+use crate::classes::{net::wie::ShellCard, org::kwis::msp::lwc::EventListener};
 
 // class org.kwis.msp.lwc.Component
 pub struct Component;
@@ -31,6 +32,14 @@ impl Component {
                 JavaMethodProto::new("getY", "()I", Self::get_y, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("repaint", "()V", Self::repaint, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("repaint", "(IIII)V", Self::repaint_with_area, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new(
+                    "setEventListener",
+                    "(Lorg/kwis/msp/lwc/EventListener;Ljava/lang/Object;)V",
+                    Self::set_event_listener,
+                    MethodAccessFlags::PUBLIC,
+                ),
+                JavaMethodProto::new("setBackground", "(I)V", Self::set_background, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("setForeground", "(I)V", Self::set_foreground, MethodAccessFlags::PUBLIC),
             ],
             fields: vec![JavaFieldProto::new("focused", "Z", FieldAccessFlags::PRIVATE)],
             access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::ABSTRACT,
@@ -108,6 +117,33 @@ impl Component {
         tracing::warn!("stub org.kwis.msp.lwc.Component::getY({this:?})");
 
         Ok(0)
+    }
+
+    /// Components send no events yet, so there is nothing to keep the listener for.
+    async fn set_event_listener(
+        _: &Jvm,
+        _: &mut WieJvmContext,
+        this: ClassInstanceRef<Self>,
+        listener: ClassInstanceRef<EventListener>,
+        param: ClassInstanceRef<Object>,
+    ) -> JvmResult<()> {
+        tracing::warn!("stub org.kwis.msp.lwc.Component::setEventListener({this:?}, {listener:?}, {param:?})");
+
+        Ok(())
+    }
+
+    /// Components are not painted yet, so their background color has no effect.
+    async fn set_background(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, color: i32) -> JvmResult<()> {
+        tracing::warn!("stub org.kwis.msp.lwc.Component::setBackground({this:?}, {color:#x})");
+
+        Ok(())
+    }
+
+    /// Components are not painted yet, so their foreground color has no effect.
+    async fn set_foreground(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, color: i32) -> JvmResult<()> {
+        tracing::warn!("stub org.kwis.msp.lwc.Component::setForeground({this:?}, {color:#x})");
+
+        Ok(())
     }
 
     // LWC widget painting isn't wired to the framebuffer yet, so repaint has
