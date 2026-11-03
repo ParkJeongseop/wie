@@ -95,8 +95,9 @@ impl KtfClassLoader {
             .unwrap();
         let data = JavaIoInputStream::read_until_end(jvm, &data_stream).await.unwrap();
 
-        // load binary
-        let native_functions = load_native(
+        // load binary. A client the loader cannot run (an older relocatable module) surfaces as a
+        // Java exception rather than a host panic, so the title fails cleanly.
+        let native_functions = match load_native(
             &mut context.core,
             &mut context.system,
             jvm,
@@ -106,7 +107,10 @@ impl KtfClassLoader {
             ptr_current_jvm_thread_context as _,
         )
         .await
-        .unwrap();
+        {
+            Ok(functions) => functions,
+            Err(error) => return Err(jvm.exception("net/wie/WieError", &alloc::format!("{error:?}")).await),
+        };
 
         jvm.put_field(&mut this, "nativeFunctions", "I", native_functions as i32).await?;
 

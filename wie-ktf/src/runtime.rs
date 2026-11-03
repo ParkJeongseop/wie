@@ -1,5 +1,6 @@
 mod init;
 mod java;
+pub(crate) mod relocatable;
 mod svc_ids;
 mod wipi_c;
 

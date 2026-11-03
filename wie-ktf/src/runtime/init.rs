@@ -14,6 +14,7 @@ use crate::{
     runtime::{
         SVC_CATEGORY_INIT,
         java::interface::{get_wipi_jb_interface, java_array_new, java_check_type, java_class_load, java_new, java_throw, java_throw_object},
+        relocatable::RelocatableClient,
         svc_ids::InitSvcId,
         wipi_c::{interface::get_wipic_knl_interface, register_wipic_svc_handler},
     },
@@ -48,6 +49,19 @@ pub async fn load_native(
     ptr_current_jvm_thread_context: u32,
 ) -> Result<u32> {
     let bss_size = parse_bss_size(filename)?;
+
+    // The older generation of client images is a relocatable module, not code at its first byte.
+    // Running it at IMAGE_BASE+1 below would execute its header as Thumb and fault; recognise it
+    // first and relocate it. Linking its classes and running its entry under the platform is still
+    // to come, so for now this reports the format cleanly instead of crashing.
+    if let Some(module) = RelocatableClient::parse(data) {
+        let relocated = module.relocate(data, IMAGE_BASE)?;
+        core.load(&relocated, IMAGE_BASE, relocated.len() + bss_size as usize)?;
+        let entry = module.entry_address(&relocated);
+        return Err(WieError::Unimplemented(format!(
+            "KTF relocatable module (entry {entry:#x}) is not yet supported"
+        )));
+    }
 
     core.load(data, IMAGE_BASE, data.len() + bss_size as usize)?;
 

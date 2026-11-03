@@ -153,7 +153,10 @@ impl KtfJvmSupport {
 
         jvm.register_class(Box::new(class_loader_class), None).await.unwrap();
 
-        let class_loader = jvm
+        // The class loader runs the client's native initialization in its constructor; a client the
+        // loader cannot run (an older relocatable module) throws, which surfaces here as an error
+        // rather than a host panic.
+        let class_loader = match jvm
             .new_class(
                 "net/wie/KtfClassLoader",
                 "(Ljava/lang/ClassLoader;Ljava/lang/String;II)V",
@@ -165,7 +168,10 @@ impl KtfJvmSupport {
                 ),
             )
             .await
-            .unwrap();
+        {
+            Ok(class_loader) => class_loader,
+            Err(error) => return Err(JvmSupport::to_wie_err(&jvm, error).await),
+        };
 
         Ok((jvm, class_loader))
     }
