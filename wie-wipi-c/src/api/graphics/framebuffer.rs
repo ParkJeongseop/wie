@@ -47,6 +47,9 @@ impl FrameBuffer {
 
         let (size, bpl) = buffer_size(width, height, bytes_per_pixel)?;
         let buf = context.alloc(size)?;
+        // The heap hands back whatever a freed block held, so a surface starts black instead: a
+        // screen nothing has drawn on yet showed a freed resource as noise (테트리스2006).
+        context.write_bytes(context.data_ptr(buf)?, &vec![0; size as usize])?;
 
         Ok(Self(WIPICFramebuffer {
             width,
