@@ -56,9 +56,9 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::GetFramebufferBpp => graphics::get_framebuffer_bpp.into_body(),
         WIPICSvcId::Printk => kernel::printk.into_body(),
         WIPICSvcId::Sprintk => kernel::sprintk.into_body(),
-        WIPICSvcId::Unk13 => unk13.into_body(),
         WIPICSvcId::GetCurProgramId => kernel::get_cur_program_id.into_body(),
         WIPICSvcId::Exit => kernel::exit.into_body(),
+        WIPICSvcId::GetParentProgramId => get_parent_program_id.into_body(),
         WIPICSvcId::GetProgramName => kernel::get_program_name.into_body(),
         WIPICSvcId::Alloc => kernel::alloc.into_body(),
         WIPICSvcId::Calloc => kernel::calloc.into_body(),
@@ -345,10 +345,9 @@ async fn unk10(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u
     Ok(0)
 }
 
-async fn unk13(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk13({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
-    // kernel
+/// A title launched from the handset's own menu has no parent program.
+async fn get_parent_program_id(_context: &mut dyn WIPICContext) -> Result<u32> {
+    tracing::warn!("stub MC_knlGetParentProgramID()");
 
     Ok(0)
 }
