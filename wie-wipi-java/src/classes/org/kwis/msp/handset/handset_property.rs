@@ -44,8 +44,10 @@ impl HandsetProperty {
         // startApp (요구르팅, 2006월드올림픽, 드래곤나이트2, 메이플스토리 궁수편, 알바_전설_편의점2 died
         // on Integer.parseInt("")). PHONENUMBER is the four digits MC_knlGetSystemProperty answers
         // (see the note there: four digits or fewer is a handset with no line, and a title divides by
-        // or slices the number). MIN stays empty, PHONEMODEL too, since titles compare it against
-        // handset names.
+        // or slices the number). MIN stays empty. PHONEMODEL answers a real handset (LG-KH1300, a
+        // 240x320 KTF phone, as the reference emulator also reports): titles match it against a
+        // built-in device table, and "Emulator" matched no entry, so 삼국쟁패2 took the path that
+        // read a carried-over save and quit. A real model takes the path the game was tested on.
         let value = match name.as_ref() {
             "VOLUMELEVEL" => "5",
             "VIBRATORLEVEL" => "0",
@@ -58,6 +60,7 @@ impl HandsetProperty {
             "PHONENUMBER" => "0100",
             "ANNUN_CALL" | "ANNUN_SMS" | "ANNUN_SILENT" | "ANNUN_ALARM" | "ANNUN_SECURITY" => "0",
             "CURRENTCH" | "AIRPLANE_MODE" | "ROAMING_AREA" | "DS_LOCK" => "0",
+            "PHONEMODEL" => "LG-KH1300",
             _ => "",
         };
 

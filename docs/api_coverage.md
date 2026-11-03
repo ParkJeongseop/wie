@@ -308,6 +308,16 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **PHONEMODEL answers a real handset** (2026-11-03): the C kernel reported
+  "Emulator" and the Java HandsetProperty reported "", a model that matches no
+  entry in the device tables titles carry. 삼국쟁패2 (KTF) took the no-match path
+  — it read a carried-over save and called `MC_knlExit` before its menu — purely
+  because of the model string; with a real model it does not read the save and
+  reaches its opening. Both sides now answer `LG-KH1300` (a 240x320 KTF phone,
+  the value the reference emulator reports). A whole-library A/B found no OK
+  change on 321 KTF or 79 LGT titles (model gates a device-tuning branch, not
+  running), and nine titles only shifted which splash or menu frame they were
+  on; 삼국쟁패2, 놈3 and 지크 reach their content a little sooner.
 - **A sealed Xce `MIDlet-Key` is re-issued for the emulated subscriber**
   (2026-11-03): the Xce SK-VM SDK's `SecureUtil` stores an MD5 of the buyer's
   phone number, the service id and a shared secret as `MIDlet-Key`, recomputes

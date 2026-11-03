@@ -49,7 +49,10 @@ pub async fn get_system_property(context: &mut dyn WIPICContext, ptr_id: WIPICWo
         // offline certificate with it).
         "TIMEZONE" => "GMT+09:00",
         "ESN" => "00000000",
-        "PHONEMODEL" => "Emulator",
+        // A real 240x320 KTF handset (the reference emulator reports the same): titles match the
+        // model against a built-in device table, and "Emulator" matched no entry — 삼국쟁패2 then read
+        // a carried-over save and quit. A real model takes the path the game was tested on.
+        "PHONEMODEL" => "LG-KH1300",
         // Four digits, the one length every title seen here accepts. Titles treat four digits or
         // fewer as a handset with no line: 이노티아연대기1 then plays the data it ships (five or more
         // and it asks to download it again), 슈퍼액션히어로3 substitutes its own number. Titles
