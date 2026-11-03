@@ -308,6 +308,24 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **A keyed BMP's index is the low byte of `biClrImportant`; KTF `MC_knlFree`
+  ignores a handle it did not give out** (2026-11-03): Com2us's
+  `Annunciator.bmp` (28 KTF and 2 LGT titles) sets `bfReserved1 = 1` and
+  `biClrImportant = 304`, past its 256-entry palette, so the key was dropped
+  and the signal and battery icons stood in pink boxes; index 48 is that
+  pink. LGT 판타지포에버3 and 블레이드마스터3 carry the same value in the
+  BMPs of their resource packs, and their whole backdrops and every sprite's
+  surround were magenta. Taking the low byte was tried on 2026-10-29 and
+  dropped because 컴투스_맞고_2006 failed reading address 0x720065; that was not
+  the mask: the title frees a sound buffer once it has handed it to a clip and
+  again with the clip's record, by then reused, and the second time it frees
+  a "handle" that is UTF-16 text. The new mask only moved the heap under it.
+  `MC_knlFree` (KTF's WIPI-C context) now frees only a handle that points at
+  itself plus four and whose block is allocated, and warns and ignores
+  anything else, as a handle-based handset allocator would. Result: KTF 302
+  of 321 and LGT 77 of 79 and SK-VM 84 of 90 unchanged in status; the 28 KTF
+  titles differ only in the top 24 rows (the icons), LGT 판타지포에버3 ×2 and
+  블레이드마스터3 lose their magenta.
 - **lwc members a title stopped on, and a new surface starts black** (2026-11-03):
   강호동맞고2 stopped on `Component.setEventListener` and 마스터오브소드2-작은화면 on
   `Component.setBackground`, then `setForeground`, `lwc/ProgressComponent` and

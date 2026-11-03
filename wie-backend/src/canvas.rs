@@ -924,8 +924,10 @@ impl Clip {
 }
 
 /// BMP has no alpha channel, so WIPI packages flag transparency in the file header:
-/// `bfReserved1 == 1` marks the image as keyed and `biClrImportant` holds the palette
-/// index of the key color. Returns the key as RGB, or `None` when the image is opaque.
+/// `bfReserved1 == 1` marks the image as keyed and the low byte of `biClrImportant` holds the
+/// palette index of the key color (Com2us's `Annunciator.bmp`, in 28 KTF and 2 LGT titles, carries
+/// 304 for index 48, the pink its icon corners are drawn in). Returns the key as RGB, or `None`
+/// when the image is opaque.
 fn bmp_color_key(data: &[u8]) -> Option<[u8; 3]> {
     const FILE_HEADER_SIZE: usize = 14;
 
@@ -942,7 +944,7 @@ fn bmp_color_key(data: &[u8]) -> Option<[u8; 3]> {
 
     let info_header_size = u32_at(FILE_HEADER_SIZE);
     let bit_count = u16_at(FILE_HEADER_SIZE + 14);
-    let key_index = u32_at(FILE_HEADER_SIZE + 36);
+    let key_index = u32_at(FILE_HEADER_SIZE + 36) & 0xff;
     if bit_count > 8 {
         return None; // key index only addresses a palette
     }
@@ -1770,6 +1772,41 @@ mod tests {
         let image = canvas.into_inner();
 
         assert!(is_set(&image, 3, 3));
+    }
+
+    /// An 8-bit 2x1 BMP whose second pixel is palette index 1, keyed by `bfReserved1 = 1` and the
+    /// given `biClrImportant`.
+    fn keyed_bmp(clr_important: u32) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"BM");
+        data.extend_from_slice(&(14 + 40 + 256 * 4 + 4u32).to_le_bytes());
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&0u16.to_le_bytes());
+        data.extend_from_slice(&(14 + 40 + 256 * 4u32).to_le_bytes());
+        data.extend_from_slice(&40u32.to_le_bytes());
+        data.extend_from_slice(&2i32.to_le_bytes());
+        data.extend_from_slice(&1i32.to_le_bytes());
+        data.extend_from_slice(&1u16.to_le_bytes());
+        data.extend_from_slice(&8u16.to_le_bytes());
+        data.extend_from_slice(&[0; 16]);
+        data.extend_from_slice(&256u32.to_le_bytes());
+        data.extend_from_slice(&clr_important.to_le_bytes());
+        for index in 0..256u32 {
+            data.extend_from_slice(&[index as u8, 0, 0xff, 0]);
+        }
+        data.extend_from_slice(&[0, 1, 0, 0]);
+        data
+    }
+
+    #[test]
+    fn test_bmp_key_index_is_the_low_byte() -> Result<()> {
+        for clr_important in [1, 0x101] {
+            let image = super::decode_image(&keyed_bmp(clr_important))?;
+            assert_eq!(image.get_pixel(0, 0).a, 0xff, "{clr_important:#x}: index 0 is opaque");
+            assert_eq!(image.get_pixel(1, 0).a, 0, "{clr_important:#x}: index 1 is the key");
+        }
+
+        Ok(())
     }
 
     #[test]
