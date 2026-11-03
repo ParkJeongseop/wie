@@ -308,6 +308,19 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **A file exists from the open that creates it; LGT 0x195 is
+  `MC_fsFileAttribute`** (2026-11-03): 바이오크로니클 (LGT) quit before its
+  title with "데이터 저장 실패로 게임을 종료합니다". It opens each save
+  read-write (flag 8) and asks its attribute at once; the open created nothing
+  until the first write, and slot 0x195 was served as a record list that
+  writes nothing for a file without records, so the title read a stack word as
+  the size (22 MB, then 1.2 GB) and gave up. Every open but read-only (1) now
+  creates the file (the specification's flags: 1 read, 2 write and append,
+  4 write and truncate, 8 read-write), and 0x195 writes `MH_FileInfo` — three
+  words, the size in the third — for any file that exists, zero bytes
+  included, and M_E_NOENT for one that does not. Result: 바이오크로니클 logo,
+  title, menu and story (4 to 35 distinct frames); KTF 302, LGT 77 and SK-VM 84
+  identical frame for frame otherwise.
 - **A keyed BMP's index is the low byte of `biClrImportant`; KTF `MC_knlFree`
   ignores a handle it did not give out** (2026-11-03): Com2us's
   `Annunciator.bmp` (28 KTF and 2 LGT titles) sets `bfReserved1 = 1` and

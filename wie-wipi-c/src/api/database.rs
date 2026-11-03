@@ -131,7 +131,9 @@ async fn open_database_impl(context: &mut dyn WIPICContext, ptr_name: WIPICWord,
         let mut db = system.platform().database_repository().open(&name, &pid).await;
         db.set(1, &data).await;
         data
-    } else if mode == 4 {
+    } else if mode != 1 {
+        // Only a read-only open (1) cannot create: the file exists from the moment any other open
+        // returns, so a stat or a second open made before the first write finds it.
         system.platform().database_repository().open(&name, &pid).await;
         Vec::new()
     } else {
@@ -319,8 +321,13 @@ pub async fn seek_record_single(context: &mut dyn WIPICContext, db_id: i32, offs
     Ok(position as i32)
 }
 
-pub async fn list_record_info(context: &mut dyn WIPICContext, ptr_name: WIPICWord, buf_ptr: WIPICWord, capacity: WIPICWord) -> Result<i32> {
-    tracing::debug!("MC_dbListRecordInfo({ptr_name:#x}, {buf_ptr:#x}, {capacity})");
+/// LGT slot 0x195, `MC_fsFileAttribute(name, info, flag)`: a three-word `MH_FileInfo` with the
+/// file's size in the third word, which titles allocate their read buffer with. A file that exists
+/// answers even when nothing was written to it yet: 바이오크로니클 opens its saves read-write and
+/// stats them at once, and an untouched info block left it reading a stack word as the size,
+/// failing, and quitting with "데이터 저장 실패". A missing name is M_E_NOENT.
+pub async fn file_attribute(context: &mut dyn WIPICContext, ptr_name: WIPICWord, info_ptr: WIPICWord, flag: WIPICWord) -> Result<i32> {
+    tracing::debug!("MC_fsFileAttribute({ptr_name:#x}, {info_ptr:#x}, {flag})");
 
     let Ok(name) = String::from_utf8(read_null_terminated_string_bytes(context, ptr_name)?) else {
         return Ok(-22);
@@ -328,36 +335,19 @@ pub async fn list_record_info(context: &mut dyn WIPICContext, ptr_name: WIPICWor
     let system = context.system();
     let pid = system.pid().to_owned();
 
-    if !system.platform().database_repository().exists(&name, &pid).await {
-        if let Some(data) = read_packaged_database(context, &name).await? {
-            if capacity > 0 {
-                write_generic(context, buf_ptr, 1u32)?;
-                write_generic(context, buf_ptr + 4, 0u32)?;
-                write_generic(context, buf_ptr + 8, data.len() as u32)?;
-            }
-            return Ok(0);
-        }
+    let size = if system.platform().database_repository().exists(&name, &pid).await {
+        let db = system.platform().database_repository().open(&name, &pid).await;
+        db.get(1).await.map_or(0, |data| data.len() as u32)
+    } else if let Some(data) = read_packaged_database(context, &name).await? {
+        data.len() as u32
+    } else {
         return Ok(-12); // M_E_NOENT
-    }
+    };
 
-    let db = system.platform().database_repository().open(&name, &pid).await;
-    let ids = sorted(db.get_record_ids().await);
-
-    let mut written = 0;
-    for id in ids {
-        if written >= capacity {
-            break;
-        }
-
-        let Some(data) = db.get(id).await else {
-            continue;
-        };
-
-        let entry_ptr = buf_ptr + written * 12;
-        write_generic(context, entry_ptr, id)?;
-        write_generic(context, entry_ptr + 4, 0u32)?;
-        write_generic(context, entry_ptr + 8, data.len() as u32)?;
-        written += 1;
+    if info_ptr != 0 {
+        write_generic(context, info_ptr, 1u32)?;
+        write_generic(context, info_ptr + 4, 0u32)?;
+        write_generic(context, info_ptr + 8, size)?;
     }
 
     Ok(0)
@@ -1021,7 +1011,7 @@ mod tests {
     use crate::context::test::TestContext;
 
     use super::{
-        KTF_DATABASE_STORAGE_LIMIT, delete_database, delete_record_ktf, exists_database, list_databases, list_record_info, open_database,
+        KTF_DATABASE_STORAGE_LIMIT, delete_database, delete_record_ktf, exists_database, file_attribute, list_databases, open_database,
         select_record, select_record_ktf, stream_read, stream_write, tell_ktf, update_record,
     };
 
@@ -1097,13 +1087,13 @@ mod tests {
     }
 
     #[futures_test::test]
-    async fn lgt_list_record_info_and_delete_database_use_database_name() {
+    async fn lgt_file_attribute_and_delete_database_use_database_name() {
         let mut context = database_test_context();
         let db_id = open_test_database(&mut context).await;
         context.write_bytes(0x2000, &[1, 2, 3, 4]).unwrap();
         assert_eq!(stream_write(&mut context, db_id, 0x2000, 4).await.unwrap(), 4);
 
-        assert_eq!(list_record_info(&mut context, 0x1000, 0x2100, 1).await.unwrap(), 0);
+        assert_eq!(file_attribute(&mut context, 0x1000, 0x2100, 1).await.unwrap(), 0);
         let mut entry = [0; 12];
         context.read_bytes(0x2100, &mut entry).unwrap();
         assert_eq!(u32::from_le_bytes(entry[0..4].try_into().unwrap()), 1);
@@ -1111,6 +1101,20 @@ mod tests {
 
         assert_eq!(delete_database(&mut context, 0x1000, 1).await.unwrap(), 0);
         assert_eq!(exists_database(&mut context, 0x1000, 1).await.unwrap(), -12);
+    }
+
+    #[futures_test::test]
+    async fn lgt_read_write_open_creates_the_file_its_attribute_reports() {
+        let mut context = database_test_context();
+        context.write_bytes(0x1000, b"SAVsetup\0").unwrap();
+        context.write_bytes(0x2100, &[0xee; 12]).unwrap();
+
+        assert_eq!(file_attribute(&mut context, 0x1000, 0x2100, 1).await.unwrap(), -12);
+        assert!(open_database(&mut context, 0x1000, 8, 1).await.unwrap() > 0);
+        assert_eq!(file_attribute(&mut context, 0x1000, 0x2100, 1).await.unwrap(), 0);
+        let mut info = [0; 12];
+        context.read_bytes(0x2100, &mut info).unwrap();
+        assert_eq!(u32::from_le_bytes(info[8..12].try_into().unwrap()), 0);
     }
 
     #[futures_test::test]
