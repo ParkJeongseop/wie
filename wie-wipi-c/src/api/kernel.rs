@@ -66,6 +66,7 @@ pub async fn get_system_property(context: &mut dyn WIPICContext, ptr_id: WIPICWo
         "AIRPLANE_MODE" => "0",
         "ROAMING_AREA" => "0",
         "DS_LOCK" => "0",
+        "MEDIADEVICES" => "audio/MIDI,audio/x-smaf,audio/WAVE",
         _ => {
             tracing::warn!("unknown system property id: {id}");
             return Ok(-9); // M_E_INVALID

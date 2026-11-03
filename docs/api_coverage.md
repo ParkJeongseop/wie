@@ -308,6 +308,17 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **LGT `MC_knlExit` is slot 0x68, 0x6b is `MC_knlGetParentProgramID`;
+  `MEDIADEVICES` answers** (2026-11-03): the LGT kernel block runs in the
+  specification's order from printk at 0x64 (printk, sprintk, getExecNames,
+  execute, exit, programStop, getCurProgramID at 0x6a, getParentProgramID,
+  …, getProgramName at 0x6f, which this table already had where that counts
+  them). 0x68 was an unnamed stub, so 리듬스타2's `exit(0)` after its notices
+  was ignored 228 times and it ran on into a white screen, and a title asking
+  for its parent program would have been ended. `MC_knlGetSystemProperty`
+  answers `MEDIADEVICES` with `audio/MIDI,audio/x-smaf,audio/WAVE` instead of
+  M_E_INVALID (리듬스타2 reads it beside PHONEMODEL). No sweep change: the
+  headless harness does not stop on an exit request yet.
 - **A file exists from the open that creates it; LGT 0x195 is
   `MC_fsFileAttribute`** (2026-11-03): 바이오크로니클 (LGT) quit before its
   title with "데이터 저장 실패로 게임을 종료합니다". It opens each save
