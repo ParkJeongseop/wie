@@ -308,6 +308,22 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **A sealed Xce `MIDlet-Key` is re-issued for the emulated subscriber**
+  (2026-11-03): the Xce SK-VM SDK's `SecureUtil` stores an MD5 of the buyer's
+  phone number, the service id and a shared secret as `MIDlet-Key`, recomputes
+  it from the running handset's number and calls `System.exit` when the two
+  differ. An archive carries the original buyer's hash, which no emulated
+  number can match, so five SK-VM titles drew "인증 되지 않은 컨텐츠입니다" and
+  quit at once (visible only once the harness honoured the exit). The SK-VM
+  loader rewrites `MIDlet-Key*` to the hash of the number this device reports
+  (`011` + `01000000000` stripped, + the service id, + the secret), so the
+  check passes for the emulated subscriber rather than the original one. Four
+  (Chaos블레이드, 노리맥스영웅전, 테일즈판타지 SKVM, 스페셜포스) reach their
+  menus and gameplay; 삼국지연의2 uses a different, title-specific key scheme
+  (its own multi-field concatenation) and still exits, left alone rather than
+  special-cased. A descriptor without the Xce fields is untouched, and a
+  reconstruction that does not match a title's own fails closed. SK-VM 79 to 83
+  of 90, none worse.
 - **A directory `MC_fsMkDir` made can be stat'ed** (2026-11-03): 리얼싸커2009
   ×2 (KTF) makes `/shared` while it installs, stats it at once, and calls
   `MC_knlExit` when the stat says it is not there. The store is flat, so the

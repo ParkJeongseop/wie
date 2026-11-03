@@ -18,6 +18,70 @@ use wie_backend::{
 use wie_jvm_support::{JvmSupport, RustJavaJvmImplementation};
 use wie_util::{Result, WieError};
 
+/// The subscriber number and carrier this platform reports. The Xce DRM below rebuilds the full
+/// number from these the same way a title does, so both have to agree.
+const DEVICE_MIN: &str = "01000000000";
+const DEVICE_CARRIER: &str = "SKT";
+
+/// The Xce SK-VM SDK seals a title with an MD5 of the buyer's phone number, the service id and a
+/// shared secret, kept as `MIDlet-Key` in the descriptor; its `SecureUtil` recomputes that hash
+/// from the running handset's number and calls `System.exit` when the two differ. An archived
+/// descriptor carries the original buyer's hash, which no emulated number can match, so five SK-VM
+/// titles (Chaos블레이드, 노리맥스영웅전, 테일즈판타지 SKVM, 삼국지연의2, 스페셜포스) drew "인증 되지
+/// 않은 컨텐츠입니다" and quit before their first screen. The descriptor is rewritten so `MIDlet-Key`
+/// holds the hash of the number *this* device reports — the check then passes for the emulated
+/// subscriber instead of the one who bought the copy. A descriptor without the Xce fields is left
+/// untouched, and a reconstruction that does not match a title's own fails closed, as it did before.
+fn authorize_xce_drm(properties: &mut BTreeMap<String, String>, min: &str, carrier: &str) {
+    const SECRET: &str = "a0a535ef35b";
+
+    let Some(url) = properties.get("MIDlet-Jar-URL") else {
+        return;
+    };
+    let Some(service_index) = url.find("SERVICE_ID=") else {
+        return;
+    };
+    // SecureUtil reads the ten characters at url[index + 16 .. index + 26].
+    let Some(service_id) = url.get(service_index + 16..service_index + 26) else {
+        return;
+    };
+
+    let number = reconstruct_subscriber_number(min, carrier);
+    let digest = md5::compute(format!("{number}{service_id}{SECRET}")).0;
+    let mut hash = String::with_capacity(32);
+    for byte in digest {
+        hash.push_str(&format!("{byte:02x}"));
+    }
+
+    let keys = properties.keys().filter(|key| key.starts_with("MIDlet-Key")).cloned().collect::<Vec<_>>();
+    for key in keys {
+        tracing::debug!("Rewriting {key} for the emulated subscriber");
+        properties.insert(key, hash.clone());
+    }
+}
+
+/// Rebuilds the full phone number from `MIN` and the carrier the way `SecureUtil` does: a leading
+/// zero drops three digits (the `010` prefix), otherwise two; a seven-digit remainder regains a
+/// leading zero; then the carrier's own prefix is put back.
+fn reconstruct_subscriber_number(min: &str, carrier: &str) -> String {
+    let stripped = if min.starts_with('0') { min.get(3..) } else { min.get(2..) }.unwrap_or("");
+    let stripped = if stripped.len() == 7 {
+        format!("0{stripped}")
+    } else {
+        stripped.to_string()
+    };
+    let prefix = match carrier {
+        "SKT" => "011",
+        "STI" => "017",
+        "KTF" => "016",
+        "HSP" => "018",
+        "LGT" => "019",
+        "010" => "010",
+        _ => "",
+    };
+    format!("{prefix}{stripped}")
+}
+
 pub struct SktEmulator {
     system: System,
 }
@@ -107,14 +171,17 @@ impl SktEmulator {
         properties: BTreeMap<String, String>,
         main_class_name: Option<String>,
     ) -> Result<()> {
+        let mut properties = properties;
+        authorize_xce_drm(&mut properties, DEVICE_MIN, DEVICE_CARRIER);
+
         let system_properties = [
-            ("MIN", "01000000000"),
-            ("m.MIN", "01000000000"),
+            ("MIN", DEVICE_MIN),
+            ("m.MIN", DEVICE_MIN),
             ("m.COLOR", "7"),
             // games read m.VENDER/m.MODEL with getBytes() and would NPE on a missing key
             ("m.VENDER", "LG"),
             ("m.MODEL", "11"),
-            ("m.CARRIER", "SKT"),
+            ("m.CARRIER", DEVICE_CARRIER),
             ("m.SK_VM", "10"),
             ("m.SKT_API", "1.2"),
             // the handset's extended software version; 택티컬퀘스트 scans its characters at start
