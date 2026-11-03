@@ -733,12 +733,22 @@ pub async fn rename_or_list_ktf(context: &mut dyn WIPICContext, a0: WIPICWord, a
     Ok(0)
 }
 
-/// KTF's table-7 slot 8 is `MC_fsMkDir(name)`; the store is flat, so a directory costs nothing.
+/// KTF's table-7 slot 8 is `MC_fsMkDir(name)`. The store is flat, so a directory is an empty entry
+/// named with a trailing slash, kept only so that asking about the path afterwards finds it:
+/// 리얼싸커2009 makes `/shared`, stats it, and quits when it is not there.
 pub async fn make_directory_ktf(context: &mut dyn WIPICContext, ptr_name: WIPICWord) -> Result<i32> {
     let name = String::from_utf8_lossy(&read_null_terminated_string_bytes(context, ptr_name)?).into_owned();
     tracing::debug!("MC_fsMkDir({name})");
 
+    let system = context.system();
+    let pid = system.pid().to_owned();
+    system.platform().database_repository().open(&directory_marker(&name), &pid).await;
+
     Ok(0)
+}
+
+fn directory_marker(name: &str) -> String {
+    alloc::format!("{}/", name.trim_end_matches('/'))
 }
 
 pub async fn tell_ktf(context: &mut dyn WIPICContext, db_id: i32) -> Result<i32> {
@@ -789,6 +799,15 @@ pub async fn stat_by_name_ktf(context: &mut dyn WIPICContext, name_ptr: WIPICWor
         None => match read_packaged_file_ktf(context, &name).await? {
             // A database only packaged in the archive (P/<name>) also exists.
             Some(data) => data.len() as u32,
+            // So does a directory MC_fsMkDir made, holding nothing.
+            None if {
+                let system = context.system();
+                let pid = system.pid().to_owned();
+                system.platform().database_repository().exists(&directory_marker(&name), &pid).await
+            } =>
+            {
+                0
+            }
             None => {
                 tracing::debug!("db.stat_by_name({name:?}, mode={mode}) -> -22 (not found)");
                 return Ok(-22);

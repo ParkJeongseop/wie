@@ -308,6 +308,15 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **A directory `MC_fsMkDir` made can be stat'ed** (2026-11-03): 리얼싸커2009
+  ×2 (KTF) makes `/shared` while it installs, stats it at once, and calls
+  `MC_knlExit` when the stat says it is not there. The store is flat, so the
+  directory is kept as an empty entry named with a trailing slash and the
+  name-keyed stat (table 7 slot 5) answers it with size 0. Found once the
+  headless harness stopped on an exit request as the app does: the title had
+  been closing in the app at its install screen while the sweep showed it
+  running on. KTF 16 s launched twice: both copies FAIL to OK, nothing else
+  changes.
 - **LGT `MC_knlExit` is slot 0x68, 0x6b is `MC_knlGetParentProgramID`;
   `MEDIADEVICES` answers** (2026-11-03): the LGT kernel block runs in the
   specification's order from printk at 0x64 (printk, sprintk, getExecNames,
