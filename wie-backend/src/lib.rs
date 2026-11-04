@@ -7,6 +7,7 @@ mod database;
 mod executor;
 mod platform;
 mod screen;
+mod storage_request;
 mod system;
 mod task;
 mod task_runner;
@@ -20,25 +21,22 @@ pub use self::{
     executor::{AsyncCallable, AsyncCallableResult},
     platform::{Filesystem, Platform},
     screen::Screen,
-    system::{Event, FilesystemOverlay, KeyCode, System},
+    storage_request::StorageRequest,
+    system::{Event, FilesystemOverlay, KeyCode, System, normalize_guest_path},
     task::YieldFuture,
     task_runner::{DefaultTaskRunner, TaskRunner},
     time::Instant,
 };
 
-use alloc::{
-    boxed::Box,
-    collections::BTreeMap,
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{boxed::Box, collections::BTreeMap, format, string::String, vec::Vec};
 
+use wie_core_arm_aot::CompiledExecutor;
 use wie_util::{Result, WieError};
 
 pub trait Emulator {
     fn handle_event(&mut self, event: Event);
     fn tick(&mut self) -> Result<()>;
+    fn is_preparing(&self) -> bool;
 }
 
 pub struct ProfileSample {
@@ -54,6 +52,7 @@ pub type ProfileCallback = Box<dyn FnMut(Vec<ProfileSample>) + Send + Sync>;
 
 pub struct Options {
     pub enable_gdbserver: bool,
+    pub aot: Option<Box<dyn CompiledExecutor>>,
     pub profile: Option<ProfileCallback>,
 }
 
@@ -74,13 +73,17 @@ pub fn extract_zip(zip: &[u8]) -> Result<BTreeMap<String, Vec<u8>>> {
             if !file.is_file() {
                 return None;
             }
+            let name = match file.name() {
+                Ok(name) => name.into_owned(),
+                Err(err) => return Some(Err(WieError::FatalError(format!("Failed to read zip entry name {x}: {err}")))),
+            };
 
             let mut data = Vec::new();
             if let Err(err) = file.read_to_end(&mut data) {
-                return Some(Err(WieError::FatalError(format!("Failed to read zip entry {}: {err}", file.name()))));
+                return Some(Err(WieError::FatalError(format!("Failed to read zip entry {name}: {err}"))));
             }
 
-            Some(Ok((file.name().to_string(), data)))
+            Some(Ok((name, data)))
         })
         .collect::<Result<_>>()
 }

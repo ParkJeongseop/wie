@@ -53,6 +53,7 @@ pub fn get_java_interface_method(core: &mut ArmCore, function_index: u32) -> Res
         0x55 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::Unk55)?,
         0x56 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::MonitorEnter)?,
         0x57 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::MonitorExit)?,
+        0x5b => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::LoadLongArray)?,
         0x61 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StoreReferenceArray)?,
         0x64 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetInterfaceDispatchTable)?,
         0x82 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::SetJarPath)?,
@@ -60,7 +61,6 @@ pub fn get_java_interface_method(core: &mut ArmCore, function_index: u32) -> Res
         0xe1 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetStringClass)?,
         0xe2 => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::GetStringArrayClass)?,
         0xfa => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StoreReferenceArrayUnchecked)?,
-        0x5b => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::LoadLongArray)?,
         0xfd => core.make_svc_stub(SVC_CATEGORY_JAVA_SYSTEM, JavaSystemSvcId::StoreLongArray)?,
         _ => return Err(WieError::FatalError(format!("Unknown lgt java import: {function_index:#x}"))),
     })
@@ -71,7 +71,8 @@ pub fn register_java_system_svc_handler(core: &mut ArmCore, jvm: &Jvm, ptr_jar_p
 }
 
 async fn handle_java_system_svc(core: &mut ArmCore, (jvm, ptr_jar_path): &mut (Jvm, u32), id: SvcId) -> Result<JumpTo> {
-    let (_, lr) = core.read_pc_lr()?;
+    let caller = core.save_context();
+    let lr = caller.lr;
     let result: Result<()> = async {
         match JavaSystemSvcId::try_from(id)? {
             JavaSystemSvcId::InterfaceUnk0 => EmulatedFunction::call(&java_unk0, core, &mut ()).await?.write(core, lr),
@@ -93,6 +94,7 @@ async fn handle_java_system_svc(core: &mut ArmCore, (jvm, ptr_jar_path): &mut (J
             JavaSystemSvcId::Unk55 => EmulatedFunction::call(&java_unk55, core, &mut ()).await?.write(core, lr),
             JavaSystemSvcId::MonitorEnter => EmulatedFunction::call(&java_monitor_enter, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::MonitorExit => EmulatedFunction::call(&java_monitor_exit, core, jvm).await?.write(core, lr),
+            JavaSystemSvcId::LoadLongArray => EmulatedFunction::call(&java_load_long_array, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::StringLiteral => EmulatedFunction::call(&java_string_literal, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::GetInterfaceDispatchTable => EmulatedFunction::call(&java_get_interface_dispatch_table, core, jvm)
                 .await?
@@ -100,14 +102,13 @@ async fn handle_java_system_svc(core: &mut ArmCore, (jvm, ptr_jar_path): &mut (J
             JavaSystemSvcId::PushExceptionFrame => EmulatedFunction::call(&java_push_exception_frame, core, &mut ()).await?.write(core, lr),
             JavaSystemSvcId::PopExceptionFrame => EmulatedFunction::call(&java_pop_exception_frame, core, &mut ()).await?.write(core, lr),
             JavaSystemSvcId::StoreReferenceArray => EmulatedFunction::call(&java_store_reference_array, core, jvm).await?.write(core, lr),
+            JavaSystemSvcId::StoreLongArray => EmulatedFunction::call(&java_store_long_array, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::GetStringClass => EmulatedFunction::call(&java_get_string_class, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::GetStringArrayClass => EmulatedFunction::call(&java_get_string_array_class, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::PendingException => EmulatedFunction::call(&java_pending_exception, core, &mut ()).await?.write(core, lr),
             JavaSystemSvcId::StoreReferenceArrayUnchecked => EmulatedFunction::call(&java_store_reference_array_unchecked, core, &mut ())
                 .await?
                 .write(core, lr),
-            JavaSystemSvcId::StoreLongArray => EmulatedFunction::call(&java_store_long_array, core, jvm).await?.write(core, lr),
-            JavaSystemSvcId::LoadLongArray => EmulatedFunction::call(&java_load_long_array, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::LinkPublicClass => EmulatedFunction::call(&java_link_public_class, core, jvm).await?.write(core, lr),
             JavaSystemSvcId::IsClassAssignable => java_is_class_assignable(core, jvm, core.read_param(0)?, core.read_param(1)?, core.read_param(2)?)
                 .await?
@@ -129,10 +130,13 @@ async fn handle_java_system_svc(core: &mut ArmCore, (jvm, ptr_jar_path): &mut (J
 
     match result {
         Ok(()) => Ok(JumpTo(lr)),
-        Err(WieError::JavaException(ptr_exception)) => match exception::unwind(core, ptr_exception)? {
-            Some(resume_address) => Ok(JumpTo(resume_address)),
-            None => Err(WieError::JavaException(ptr_exception)),
-        },
+        Err(WieError::JavaException(ptr_exception)) => {
+            core.restore_context(&caller);
+            match exception::unwind(core, ptr_exception)? {
+                Some(resume_address) => Ok(JumpTo(resume_address)),
+                None => Err(WieError::JavaException(ptr_exception)),
+            }
+        }
         Err(error) => Err(error),
     }
 }
@@ -194,7 +198,7 @@ async fn java_string_literal(core: &mut ArmCore, jvm: &mut Jvm, _runtime_context
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     let native_strings: ClassInstanceRef<Vector> = jvm
-        .get_field(&class_loader, "nativeStrings", "Ljava/util/Vector;")
+        .get_field(&class_loader, "net/wie/LgtClassLoader", "nativeStrings", "Ljava/util/Vector;")
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     let _: bool = jvm
@@ -259,14 +263,17 @@ fn compiler_interface_dispatch_table(core: &ArmCore, ptr_instance: u32, interfac
 }
 
 async fn java_push_exception_frame(core: &mut ArmCore, _: &mut ()) -> Result<()> {
+    tracing::debug!("java_push_exception_frame()");
     exception::push(core)
 }
 
 async fn java_pop_exception_frame(core: &mut ArmCore, _: &mut ()) -> Result<()> {
+    tracing::debug!("java_pop_exception_frame()");
     exception::pop(core)
 }
 
 async fn java_pending_exception(core: &mut ArmCore, _: &mut ()) -> Result<u32> {
+    tracing::debug!("java_pending_exception()");
     exception::pending(core)
 }
 
@@ -301,58 +308,37 @@ async fn java_raise_arithmetic_exception(core: &mut ArmCore, jvm: &mut Jvm) -> R
     Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)))
 }
 
+async fn java_load_long_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32) -> Result<i64> {
+    tracing::debug!("java_load_long_array({ptr_array:#x}, {index})");
+    if ptr_array == 0 {
+        let JavaError::JavaException(exception) = jvm.exception("java/lang/NullPointerException", "null array").await;
+        return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
+    }
+    let array = LgtJvmSupport::class_instance_from_raw(core, ptr_array);
+    let values = jvm
+        .load_array::<i64>(&array, index as usize, 1)
+        .await
+        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
+    Ok(values[0])
+}
+
 async fn java_store_reference_array_unchecked(core: &mut ArmCore, _: &mut (), ptr_array: u32, index: u32, ptr_value: u32) -> Result<()> {
     let ptr_fields: u32 = read_generic(core, ptr_array + 2 * size_of::<u32>() as u32)?;
     write_generic(core, ptr_fields + (index + 1) * size_of::<u32>() as u32, ptr_value)
 }
 
-/// `array[index] = value` for a `long[]`. The compiler emits this helper instead of inlining the
-/// two-word store and passes the value high word first: LGT 슈퍼액션히어로 widens an int with
-/// `asrs r5, r4, #31` and hands `r5` in r2 and `r4` in r3, and stores `System.currentTimeMillis()`'s
-/// r0/r1 result as r3/r2.
-async fn java_store_long_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32, value_high: u32, value_low: u32) -> Result<()> {
+async fn java_store_long_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32, high: u32, low: u32) -> Result<()> {
+    tracing::debug!("java_store_long_array({ptr_array:#x}, {index}, {high:#x}, {low:#x})");
     if ptr_array == 0 {
-        let JavaError::JavaException(exception) = jvm.exception("java/lang/NullPointerException", "long array store").await;
+        let JavaError::JavaException(exception) = jvm.exception("java/lang/NullPointerException", "null array").await;
         return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
     }
     let mut array = LgtJvmSupport::class_instance_from_raw(core, ptr_array);
-    let length = jvm
-        .array_length(&array)
-        .await
-        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
-    if index as usize >= length {
-        let JavaError::JavaException(exception) = jvm.exception("java/lang/ArrayIndexOutOfBoundsException", &index.to_string()).await;
-        return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
-    }
-    let value = (((value_high as u64) << 32) | value_low as u64) as i64;
-    jvm.store_array(&mut array, index as usize, [jvm::JavaValue::Long(value)])
+    // This compiler helper passes the high word before the low word.
+    let value = ((high as u64) << 32 | low as u64) as i64;
+    jvm.store_array(&mut array, index as usize, [value])
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))
-}
-
-/// `array[index]` for a `long[]`, the load half of 0xfd; the value comes back as the ARM EABI
-/// 64-bit return (r0 low word, r1 high word), which is how LGT 슈퍼액션히어로 and 메이플스토리2007
-/// spill it to the stack afterwards (low word at the lower address).
-async fn java_load_long_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32) -> Result<u64> {
-    if ptr_array == 0 {
-        let JavaError::JavaException(exception) = jvm.exception("java/lang/NullPointerException", "long array load").await;
-        return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
-    }
-    let array = LgtJvmSupport::class_instance_from_raw(core, ptr_array);
-    let length = jvm
-        .array_length(&array)
-        .await
-        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
-    if index as usize >= length {
-        let JavaError::JavaException(exception) = jvm.exception("java/lang/ArrayIndexOutOfBoundsException", &index.to_string()).await;
-        return Err(WieError::JavaException(LgtJvmSupport::class_instance_raw(&*exception)));
-    }
-    let values: Vec<i64> = jvm
-        .load_array(&array, index as usize, 1)
-        .await
-        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
-
-    Ok(values[0] as u64)
 }
 
 async fn java_store_reference_array(core: &mut ArmCore, jvm: &mut Jvm, ptr_array: u32, index: u32, ptr_value: u32) -> Result<()> {
@@ -422,7 +408,7 @@ async fn java_register_class(core: &mut ArmCore, jvm: &mut Jvm, ptr_class: u32) 
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     let generated_classes: i32 = jvm
-        .get_field(&loader, "generatedClasses", "I")
+        .get_field(&loader, "net/wie/LgtClassLoader", "generatedClasses", "I")
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     LgtJvmSupport::register_generated_class(core, jvm, ptr_class, generated_classes as u32, loader).await?;
@@ -444,16 +430,22 @@ async fn java_resolve_class(core: &mut ArmCore, jvm: &mut Jvm, ptr_class: u32, _
 async fn java_initialize_class(core: &mut ArmCore, jvm: &mut Jvm, ptr_class_object: u32, callback: u32) -> Result<()> {
     let mut class_object = LgtJvmSupport::class_instance_from_raw(core, ptr_class_object);
     let ready: i32 = jvm
-        .get_field(&class_object, CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR)
+        .get_field(&class_object, "java/lang/Class", CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR)
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     if ready == 5 {
         return Ok(());
     }
 
-    jvm.put_field(&mut class_object, CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR, 5i32)
-        .await
-        .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
+    jvm.put_field(
+        &mut class_object,
+        "java/lang/Class",
+        CLASS_INITIALIZATION_STATE_FIELD,
+        WORD_FIELD_DESCRIPTOR,
+        5i32,
+    )
+    .await
+    .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     if callback != 0 {
         let _: () = core.run_function(callback, &[]).await?;
     }
@@ -497,8 +489,8 @@ async fn java_instantiate(core: &mut ArmCore, jvm: &mut Jvm, ptr_class_object: u
     let definition = JavaLangClass::to_rust_class(jvm, &class_object)
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
-    let instance = definition
-        .instantiate(jvm)
+    let instance = jvm
+        .instantiate_class(&definition.name())
         .await
         .map_err(|JavaError::JavaException(instance)| WieError::JavaException(LgtJvmSupport::class_instance_raw(&*instance)))?;
     let ptr_instance = LgtJvmSupport::class_instance_raw(&*instance);
@@ -622,33 +614,6 @@ fn log_imported_members(core: &ArmCore, class_name: &str, kind: &str, table: u32
     Ok(())
 }
 
-/// Links one field-import range, giving a wide-field placeholder the word after its low word.
-#[allow(clippy::too_many_arguments)]
-fn link_field_imports(
-    core: &mut ArmCore,
-    jvm: &Jvm,
-    class_name: &str,
-    imports: u32,
-    word_indices: u32,
-    offset: u16,
-    count: u16,
-    is_static: bool,
-) -> Result<()> {
-    let mut previous_word_index: Option<u16> = None;
-    for index in offset..offset + count {
-        let word_index = match read_member_name_and_descriptor(core, imports, index)? {
-            Some((name, descriptor)) => LgtJvmSupport::field_word_index(jvm, class_name, &name, &descriptor, is_static)?,
-            None => previous_word_index
-                .map(|word_index| word_index + 1)
-                .ok_or_else(|| WieError::FatalError(format!("Dangling wide-field placeholder at import {index} while linking {class_name}")))?,
-        };
-        previous_word_index = Some(word_index);
-        write_generic(core, word_indices + index as u32 * size_of::<u16>() as u32, word_index)?;
-    }
-
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn link_class_members(
     core: &mut ArmCore,
@@ -666,26 +631,42 @@ async fn link_class_members(
     interface_method_indices: u32,
     non_virtual_method_targets: u32,
 ) -> Result<()> {
-    link_field_imports(
-        core,
-        jvm,
-        class_name,
-        instance_field_imports,
-        instance_field_word_indices,
-        link.instance_field_offset,
-        link.instance_field_count,
-        false,
-    )?;
-    link_field_imports(
-        core,
-        jvm,
-        class_name,
-        static_field_imports,
-        static_field_word_indices,
-        link.static_field_offset,
-        link.static_field_count,
-        true,
-    )?;
+    for (offset, count, imports, indices, is_static) in [
+        (
+            link.instance_field_offset,
+            link.instance_field_count,
+            instance_field_imports,
+            instance_field_word_indices,
+            false,
+        ),
+        (
+            link.static_field_offset,
+            link.static_field_count,
+            static_field_imports,
+            static_field_word_indices,
+            true,
+        ),
+    ] {
+        let mut index = offset;
+        while index < offset + count {
+            let Some((name, descriptor)) = read_member_name_and_descriptor(core, imports, index)? else {
+                // a wide field's second slot is a null placeholder
+                index += 1;
+                continue;
+            };
+            let word_index = LgtJvmSupport::field_word_index(jvm, class_name, &name, &descriptor, is_static)?;
+            let output = indices + index as u32 * size_of::<u16>() as u32;
+            if matches!(JavaType::parse(&descriptor), JavaType::Long | JavaType::Double) {
+                // Wide imports reserve two slots, ordered high word then low word.
+                write_generic(core, output, word_index + 1)?;
+                write_generic(core, output + size_of::<u16>() as u32, word_index)?;
+                index += 2;
+            } else {
+                write_generic(core, output, word_index)?;
+                index += 1;
+            }
+        }
+    }
 
     for index in link.virtual_method_offset..link.virtual_method_offset + link.virtual_method_count {
         let (name, descriptor) = read_method_name_and_descriptor(core, virtual_method_imports, index, class_name)?;
@@ -948,7 +929,7 @@ mod tests {
     use wie_core_arm::{Allocator, ArmCore};
     use wie_util::{ByteWrite, Result, read_generic, write_generic, write_null_terminated_string_bytes};
 
-    use super::{LgtJvmSupport, java_link_imported_classes};
+    use super::{LgtJvmSupport, java_link_imported_classes, java_link_public_class};
 
     #[test]
     fn test_imported_member_link_outputs() -> Result<()> {
@@ -958,11 +939,15 @@ mod tests {
         let system_clone = system.clone();
 
         system.spawn(async move || {
-            let mut core = ArmCore::new(false, None)?;
+            let mut core = ArmCore::new(wie_backend::Options {
+                enable_gdbserver: false,
+                aot: None,
+                profile: None,
+            })?;
             Allocator::init(&mut core)?;
             let mut context = core.save_context();
             let stack = Allocator::alloc(&mut core, 0x100)?;
-            context.sp = stack + 0x100;
+            context.sp = stack + 0x80;
             core.restore_context(&context);
             let mut jvm = LgtJvmSupport::init(&mut core, &system_clone, None).await?;
             let class_name = "org/kwis/msp/lcdui/Font";
@@ -1079,6 +1064,76 @@ mod tests {
             );
             assert_eq!(read_generic::<u32, _>(&core, non_virtual_method_targets + 12)?, 0xe5e5_e5e5);
             assert_eq!(read_generic::<u32, _>(&core, interface_method_indices)?, 0xd4d4_d4d4);
+
+            // Instance fields of runtime classes live in wie's extension storage and are refused unless
+            // the ABI table pins them, so only the static wide imports are linked here.
+            for (class_name, descriptor, static_name) in [("java/lang/Double", "D", Some("MAX_VALUE"))] {
+                let class = jvm.resolve_class(class_name).await.unwrap();
+                let class_object = class.java_class();
+                let mut names = Vec::new();
+                for value in [class_name, "value", descriptor, static_name.unwrap_or(""), "TYPE", "Ljava/lang/Class;"] {
+                    let address = Allocator::alloc(&mut core, (value.len() + 1) as u32)?;
+                    write_null_terminated_string_bytes(&mut core, address, value.as_bytes())?;
+                    names.push(address);
+                }
+                let ptr_link = imported_classes + size_of::<u32>() as u32;
+                write_generic(
+                    &mut core,
+                    ptr_link,
+                    RawJavaClassLink {
+                        ptr_name: names[0],
+                        instance_field_offset: 1,
+                        instance_field_count: 0,
+                        static_field_offset: 1,
+                        static_field_count: if static_name.is_some() { 3 } else { 0 },
+                        virtual_method_offset: 0,
+                        virtual_method_count: 0,
+                        interface_method_offset: 0,
+                        interface_method_count: 0,
+                        non_virtual_method_offset: 0,
+                        non_virtual_method_count: 0,
+                    },
+                )?;
+                let fields = Allocator::alloc(&mut core, 8 * 4)?;
+                core.write_bytes(fields, &[0; 8 * 4])?;
+                write_generic(&mut core, fields + 8, names[1])?;
+                write_generic(&mut core, fields + 12, names[2])?;
+                let statics = Allocator::alloc(&mut core, 8 * 4)?;
+                core.write_bytes(statics, &[0; 8 * 4])?;
+                write_generic(&mut core, statics + 8, names[3])?;
+                write_generic(&mut core, statics + 12, names[2])?;
+                write_generic(&mut core, statics + 24, names[4])?;
+                write_generic(&mut core, statics + 28, names[5])?;
+                let indices = Allocator::alloc(&mut core, 16)?;
+                core.write_bytes(indices, &[0xa5; 16])?;
+                write_generic(&mut core, context.sp + 7 * 4, 0u32)?;
+                java_link_public_class(
+                    &mut core,
+                    &mut jvm,
+                    ptr_link,
+                    LgtJvmSupport::class_instance_raw(&*class_object),
+                    fields,
+                    statics,
+                    0,
+                    0,
+                    0,
+                    indices,
+                    indices + 8,
+                    0,
+                    0,
+                )
+                .await?;
+                assert_eq!(read_generic::<[u16; 4], _>(&core, indices)?, [0xa5a5; 4]);
+                if let Some(name) = static_name {
+                    let word = LgtJvmSupport::field_word_index(&jvm, class_name, name, descriptor, true)?;
+                    assert_eq!(read_generic::<u16, _>(&core, indices + 10)?, word + 1);
+                    assert_eq!(read_generic::<u16, _>(&core, indices + 12)?, word);
+                    assert_eq!(
+                        read_generic::<u16, _>(&core, indices + 14)?,
+                        LgtJvmSupport::field_word_index(&jvm, class_name, "TYPE", "Ljava/lang/Class;", true)?
+                    );
+                }
+            }
 
             done_clone.store(true, Ordering::Relaxed);
             Ok(())

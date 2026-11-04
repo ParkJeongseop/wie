@@ -24,11 +24,10 @@ pub struct J2MEEmulator {
 impl J2MEEmulator {
     pub fn jar_metadata(jar: &[u8]) -> Result<Option<(String, Option<Vec<u8>>)>> {
         let files = extract_zip(jar)?;
-        let Some(manifest) = files.get("META-INF/MANIFEST.MF") else {
+        let Some((_, manifest)) = files.iter().find(|(path, _)| path.eq_ignore_ascii_case("META-INF/MANIFEST.MF")) else {
             return Ok(None);
         };
         let descriptor = J2MEDescriptor::parse(manifest);
-
         if descriptor.name.is_empty() || descriptor.main_class_name.is_empty() {
             return Ok(None);
         }
@@ -247,6 +246,10 @@ impl J2MEEmulator {
 }
 
 impl Emulator for J2MEEmulator {
+    fn is_preparing(&self) -> bool {
+        false
+    }
+
     fn handle_event(&mut self, event: Event) {
         self.system.event_queue().push(event)
     }
@@ -277,10 +280,6 @@ impl J2MEDescriptor {
     pub fn parse(data: &[u8]) -> Self {
         let lines = data.split(|x| *x == b'\n');
 
-        let mut name = String::new();
-        let mut main_class_name = String::new();
-        let mut icon = String::new();
-        let mut midlet_icon = String::new();
         let mut properties = BTreeMap::new();
         let mut logical_lines: Vec<String> = Vec::new();
 
@@ -312,13 +311,25 @@ impl J2MEDescriptor {
             let key = key.trim();
             let value = value.trim();
             properties.insert(key.to_string(), value.to_string());
+        }
 
-            match key {
-                "MIDlet-Name" => name = value.to_string(),
+        Self::from_properties(properties)
+    }
+
+    fn from_properties(properties: BTreeMap<String, String>) -> Self {
+        let mut name = String::new();
+        let mut main_class_name = String::new();
+        let mut icon = String::new();
+        let mut midlet_icon = String::new();
+
+        for (key, value) in &properties {
+            match key.as_str() {
                 "MIDlet-Icon" => icon = value.to_string(),
                 "MIDlet-1" => {
                     let mut values = value.split(',');
-                    values.next();
+                    if let Some(value) = values.next() {
+                        name = value.trim().to_string();
+                    }
                     if let Some(value) = values.next() {
                         midlet_icon = value.trim().to_string();
                     }
@@ -404,7 +415,7 @@ mod tests {
     fn ignores_malformed_manifest_lines() {
         let descriptor = J2MEDescriptor::parse(b"invalid line\nMIDlet-1: incomplete\n\xff\nMIDlet-Name: Valid App\n");
 
-        assert_eq!(descriptor.name, "Valid App");
+        assert_eq!(descriptor.name, "incomplete");
         assert!(descriptor.main_class_name.is_empty());
     }
 

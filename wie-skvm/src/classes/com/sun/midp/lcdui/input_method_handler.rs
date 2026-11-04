@@ -46,7 +46,7 @@ impl InputMethodHandler {
         tracing::debug!("com.sun.midp.lcdui.InputMethodHandler::<init>({this:?})");
 
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
-        jvm.put_field(&mut this, "mode", "I", 1).await
+        jvm.put_field(&mut this, "com/sun/midp/lcdui/InputMethodHandler", "mode", "I", 1).await
     }
 
     async fn get_input_method_handler(jvm: &Jvm, _context: &mut WieJvmContext) -> JvmResult<ClassInstanceRef<Self>> {
@@ -78,12 +78,12 @@ impl InputMethodHandler {
     async fn get_input_mode(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("com.sun.midp.lcdui.InputMethodHandler::getInputMode({this:?})");
 
-        jvm.get_field(&this, "mode", "I").await
+        jvm.get_field(&this, "com/sun/midp/lcdui/InputMethodHandler", "mode", "I").await
     }
 
     async fn switch_input_mode(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, mode: i32) -> JvmResult<()> {
         tracing::debug!("com.sun.midp.lcdui.InputMethodHandler::switchInputMode({this:?}, {mode})");
 
-        jvm.put_field(&mut this, "mode", "I", mode).await
+        jvm.put_field(&mut this, "com/sun/midp/lcdui/InputMethodHandler", "mode", "I", mode).await
     }
 }

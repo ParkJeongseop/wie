@@ -61,7 +61,8 @@ impl Clip {
         tracing::debug!("org.kwis.msp.media.Clip::<init>({this:?}, {type:?})");
 
         let _: () = jvm.invoke_special(&this, "org/kwis/msp/media/BaseClip", "<init>", "()V", ()).await?;
-        jvm.put_field(&mut this, "type", "Ljava/lang/String;", r#type).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/media/Clip", "type", "Ljava/lang/String;", r#type)
+            .await?;
 
         Ok(())
     }
@@ -156,7 +157,7 @@ impl Clip {
             return Ok(false);
         }
 
-        jvm.put_field(&mut this, "volume", "I", level).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/media/Clip", "volume", "I", level).await?;
 
         Ok(true)
     }
@@ -182,7 +183,8 @@ impl Clip {
             tracing::warn!("org.kwis.msp.media.Clip::setListener({this:?}): clip has no player, listener dropped");
             return Ok(());
         }
-        jvm.put_field(&mut player, "wipiListener", "Ljava/lang/Object;", listener).await
+        jvm.put_field(&mut player, "net/wie/SmafPlayer", "wipiListener", "Ljava/lang/Object;", listener)
+            .await
     }
 
     /// Tells the clip's listener, if it has one, what the clip did (`PlayListener.playUpdate`).
@@ -192,7 +194,7 @@ impl Clip {
         if player.is_null() {
             return Ok(());
         }
-        let listener: ClassInstanceRef<Object> = jvm.get_field(&player, "wipiListener", "Ljava/lang/Object;").await?;
+        let listener: ClassInstanceRef<Object> = jvm.get_field(&player, "net/wie/SmafPlayer", "wipiListener", "Ljava/lang/Object;").await?;
         if listener.is_null() {
             return Ok(());
         }
@@ -215,9 +217,10 @@ impl Clip {
         if player.is_null() {
             return Ok(0);
         }
-        let generation: i32 = jvm.get_field(&player, "playGeneration", "I").await?;
+        let generation: i32 = jvm.get_field(&player, "net/wie/SmafPlayer", "playGeneration", "I").await?;
         let generation = generation.wrapping_add(1);
-        jvm.put_field(&mut player, "playGeneration", "I", generation).await?;
+        jvm.put_field(&mut player, "net/wie/SmafPlayer", "playGeneration", "I", generation)
+            .await?;
 
         Ok(generation)
     }
@@ -227,7 +230,7 @@ impl Clip {
         if player.is_null() {
             return Ok(0);
         }
-        jvm.get_field(&player, "playGeneration", "I").await
+        jvm.get_field(&player, "net/wie/SmafPlayer", "playGeneration", "I").await
     }
 
     async fn set_buffer(
@@ -249,13 +252,13 @@ impl Clip {
     async fn get_type(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<String>> {
         tracing::debug!("org.kwis.msp.media.Clip::getType({this:?})");
 
-        jvm.get_field(&this, "type", "Ljava/lang/String;").await
+        jvm.get_field(&this, "org/kwis/msp/media/Clip", "type", "Ljava/lang/String;").await
     }
 
     async fn set_position(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, milliseconds: i32) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.media.Clip::setPosition({this:?}, {milliseconds})");
 
-        jvm.put_field(&mut this, "position", "I", milliseconds).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/media/Clip", "position", "I", milliseconds).await?;
 
         Ok(true)
     }
@@ -263,13 +266,13 @@ impl Clip {
     async fn get_position(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.media.Clip::getPosition({this:?})");
 
-        jvm.get_field(&this, "position", "I").await
+        jvm.get_field(&this, "org/kwis/msp/media/Clip", "position", "I").await
     }
 
     async fn set_stop_time(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, milliseconds: i32) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.media.Clip::setStopTime({this:?}, {milliseconds})");
 
-        jvm.put_field(&mut this, "stopTime", "I", milliseconds).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/media/Clip", "stopTime", "I", milliseconds).await?;
 
         Ok(true)
     }
@@ -277,17 +280,18 @@ impl Clip {
     async fn get_stop_time(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.media.Clip::getStopTime({this:?})");
 
-        jvm.get_field(&this, "stopTime", "I").await
+        jvm.get_field(&this, "org/kwis/msp/media/Clip", "stopTime", "I").await
     }
 
     async fn get_volume(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.media.Clip::getVolume({this:?})");
 
-        jvm.get_field(&this, "volume", "I").await
+        jvm.get_field(&this, "org/kwis/msp/media/Clip", "volume", "I").await
     }
 
     pub async fn player(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Player>> {
-        jvm.get_field(this, "player", "Ljavax/microedition/media/Player;").await
+        jvm.get_field(this, "org/kwis/msp/media/Clip", "player", "Ljavax/microedition/media/Player;")
+            .await
     }
 }
 

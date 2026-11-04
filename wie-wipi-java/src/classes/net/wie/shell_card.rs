@@ -43,7 +43,8 @@ impl ShellCard {
         tracing::debug!("net.wie.ShellCard::<init>({this:?}, {shell:?})");
 
         let _: () = jvm.invoke_special(&this, "org/kwis/msp/lcdui/Card", "<init>", "()V", ()).await?;
-        jvm.put_field(&mut this, "shell", "Lorg/kwis/msp/lwc/ShellComponent;", shell).await?;
+        jvm.put_field(&mut this, "net/wie/ShellCard", "shell", "Lorg/kwis/msp/lwc/ShellComponent;", shell)
+            .await?;
 
         Ok(())
     }
@@ -51,7 +52,9 @@ impl ShellCard {
     async fn paint(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, graphics: ClassInstanceRef<Graphics>) -> JvmResult<()> {
         tracing::debug!("net.wie.ShellCard::paint({this:?}, {graphics:?})");
 
-        let shell: ClassInstanceRef<ShellComponent> = jvm.get_field(&this, "shell", "Lorg/kwis/msp/lwc/ShellComponent;").await?;
+        let shell: ClassInstanceRef<ShellComponent> = jvm
+            .get_field(&this, "net/wie/ShellCard", "shell", "Lorg/kwis/msp/lwc/ShellComponent;")
+            .await?;
         // The drawing is the title's: a shell subclass overrides `paint` (LGT 학교가는길) or the
         // specification's `paintContent`; the SDK's components draw nothing of their own here.
         for name in ["paint", "paintContent"] {
@@ -68,7 +71,9 @@ impl ShellCard {
     async fn key_notify(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, r#type: i32, key: i32) -> JvmResult<bool> {
         tracing::debug!("net.wie.ShellCard::keyNotify({this:?}, {type}, {key})");
 
-        let shell: ClassInstanceRef<ShellComponent> = jvm.get_field(&this, "shell", "Lorg/kwis/msp/lwc/ShellComponent;").await?;
+        let shell: ClassInstanceRef<ShellComponent> = jvm
+            .get_field(&this, "net/wie/ShellCard", "shell", "Lorg/kwis/msp/lwc/ShellComponent;")
+            .await?;
 
         jvm.invoke_virtual(&shell, "org/kwis/msp/lwc/Component", "keyNotify", "(II)Z", (r#type, key))
             .await
@@ -77,7 +82,9 @@ impl ShellCard {
     async fn show_notify(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, shown: bool) -> JvmResult<()> {
         tracing::debug!("net.wie.ShellCard::showNotify({this:?}, {shown})");
 
-        let shell: ClassInstanceRef<ShellComponent> = jvm.get_field(&this, "shell", "Lorg/kwis/msp/lwc/ShellComponent;").await?;
+        let shell: ClassInstanceRef<ShellComponent> = jvm
+            .get_field(&this, "net/wie/ShellCard", "shell", "Lorg/kwis/msp/lwc/ShellComponent;")
+            .await?;
 
         jvm.invoke_virtual(&shell, "org/kwis/msp/lwc/Component", "showNotify", "(Z)V", (shown,))
             .await

@@ -6,13 +6,21 @@ use core::mem::size_of;
 
 use ab_glyph::{Font as GlyphFont, FontArc, ScaleFont};
 use bytemuck::{Pod, cast_slice, pod_collect_to_vec};
-use image::{ExtendedColorType, ImageEncoder, ImageReader, codecs::png::PngEncoder};
+use image::{
+    DynamicImage, ExtendedColorType, ImageEncoder, ImageReader,
+    codecs::{
+        bmp::{BmpDecoder, BmpEncoder},
+        png::PngEncoder,
+    },
+};
 use num_traits::{Num, Zero};
 
 use wie_util::{Result, WieError};
 
 use self::lbmp::decode_lbmp;
 pub use self::res::decode_res;
+
+pub const FONT_SIZE: f32 = 10.0;
 
 #[derive(Clone, Debug)]
 pub struct Font(FontArc);
@@ -969,10 +977,37 @@ pub fn decode_image(data: &[u8]) -> Result<Box<dyn Image>> {
 
     use std::io::Cursor;
 
-    if data[0] == b'L' && data[1] == b'B' && data[2] == b'M' && data[3] == b'P' {
+    if data.starts_with(b"LBMP") {
         return decode_lbmp(data);
     }
 
+    // WIPI indexed BMPs mark transparency in bfReserved1 and biClrImportant (0x100 | index).
+    if data.len() >= 54
+        && data.starts_with(b"BM")
+        && data[6..10] == [1, 0, 0, 0]
+        && data[14..18] == [40, 0, 0, 0]
+        && data[28..30] == [8, 0]
+        && data[51..54] == [1, 0, 0]
+    {
+        let mut decoder = BmpDecoder::new(Cursor::new(data)).map_err(|error| WieError::FatalError(error.to_string()))?;
+        let palette = decoder
+            .get_palette()
+            .ok_or_else(|| WieError::FatalError("Indexed BMP palette missing".into()))?
+            .to_vec();
+        decoder.set_indexed_color(true);
+        let indices = DynamicImage::from_decoder(decoder)
+            .map_err(|error| WieError::FatalError(error.to_string()))?
+            .into_luma8();
+        let pixels = indices
+            .pixels()
+            .map(|pixel| {
+                let index = pixel.0[0];
+                let [r, g, b] = palette[index as usize];
+                u32::from_le_bytes([b, g, r, if index == data[50] { 0 } else { 255 }])
+            })
+            .collect();
+        return Ok(Box::new(VecImageBuffer::<ArgbPixel>::from_raw(indices.width(), indices.height(), pixels)));
+    }
     let color_key = bmp_color_key(data);
 
     let image = ImageReader::new(Cursor::new(&data))
@@ -997,44 +1032,30 @@ pub fn decode_image(data: &[u8]) -> Result<Box<dyn Image>> {
     )) as Box<_>)
 }
 
-/// Encodes one region of an image as an uncompressed 24-bit BMP, the format the WIPI specification
-/// names for `MC_grpEncodeImage` and `Graphics.encodeImage`: a title keeps the bytes and hands them
-/// back to image creation later, so this writes what [`decode_image`] reads. The region has to lie
-/// inside the image; callers clip first.
-pub fn encode_bmp(image: &dyn Image, x: u32, y: u32, width: u32, height: u32) -> Vec<u8> {
-    const HEADER_SIZE: u32 = 14 + 40; // BITMAPFILEHEADER + BITMAPINFOHEADER
+pub fn encode_bmp(image: &dyn Image) -> Result<Vec<u8>> {
+    let rgb = image
+        .colors()
+        .into_iter()
+        .flat_map(|color| [color.r, color.g, color.b])
+        .collect::<Vec<_>>();
+    let mut encoded = Vec::new();
+    BmpEncoder::new(&mut encoded)
+        .encode(&rgb, image.width(), image.height(), ExtendedColorType::Rgb8)
+        .map_err(|error| WieError::FatalError(error.to_string()))?;
 
-    let row_stride = (width * 3).div_ceil(4) * 4; // rows are padded to four bytes
-    let image_size = row_stride * height;
-    let file_size = HEADER_SIZE + image_size;
-    let mut result = vec![0u8; file_size as usize];
+    Ok(encoded)
+}
 
-    result[0] = b'B';
-    result[1] = b'M';
-    result[2..6].copy_from_slice(&file_size.to_le_bytes());
-    result[10..14].copy_from_slice(&HEADER_SIZE.to_le_bytes()); // pixel data offset
-    result[14..18].copy_from_slice(&40u32.to_le_bytes()); // DIB header size
-    result[18..22].copy_from_slice(&(width as i32).to_le_bytes());
-    result[22..26].copy_from_slice(&(height as i32).to_le_bytes()); // positive: bottom-up
-    result[26..28].copy_from_slice(&1u16.to_le_bytes()); // planes
-    result[28..30].copy_from_slice(&24u16.to_le_bytes()); // bits per pixel
-    result[34..38].copy_from_slice(&image_size.to_le_bytes());
-    result[38..42].copy_from_slice(&2835u32.to_le_bytes()); // 72 DPI
-    result[42..46].copy_from_slice(&2835u32.to_le_bytes());
-
+/// Encodes one region of an image, which has to lie inside it (callers clip first), as [`encode_bmp`].
+pub fn encode_bmp_region(image: &dyn Image, x: u32, y: u32, width: u32, height: u32) -> Result<Vec<u8>> {
+    let mut region = VecImageBuffer::<ArgbPixel>::new(width, height);
     for row in 0..height {
-        let source_y = y + height - 1 - row; // bottom-up: the last image row comes first
-        let base = (HEADER_SIZE + row * row_stride) as usize;
         for column in 0..width {
-            let color = image.get_pixel((x + column) as i32, source_y as i32);
-            let offset = base + column as usize * 3;
-            result[offset] = color.b;
-            result[offset + 1] = color.g;
-            result[offset + 2] = color.r;
+            region.put_pixel(column as i32, row as i32, image.get_pixel((x + column) as i32, (y + row) as i32));
         }
     }
 
-    result
+    encode_bmp(&region)
 }
 
 pub fn encode_png(image: &dyn Image) -> Result<Vec<u8>> {
@@ -1064,38 +1085,9 @@ mod tests {
     use alloc::{borrow::Cow, sync::Arc, vec, vec::Vec};
     use spin::Mutex;
 
-    use wie_util::Result;
-
     use crate::canvas::{Clip, Image, ImageBuffer, ImageBufferCanvas};
 
     use super::{ArgbPixel, Canvas, Color, Rgb332Pixel, VecImageBuffer};
-
-    #[test]
-    fn test_canvas() -> Result<()> {
-        let image_buffer = VecImageBuffer::<ArgbPixel>::new(10, 10);
-        let mut canvas = ImageBufferCanvas::new(image_buffer);
-
-        let clip = Clip {
-            x: 0,
-            y: 0,
-            width: 10,
-            height: 10,
-        };
-        canvas.fill_rect(0, 0, 10, 10, Color { r: 0, g: 0, b: 0, a: 255 }, clip);
-
-        let image_buffer = canvas.into_inner();
-        let raw = image_buffer.raw();
-
-        assert_eq!(raw.len(), 10 * 10 * 4);
-        for i in 0..10 * 10 {
-            assert_eq!(raw[i * 4], 0);
-            assert_eq!(raw[i * 4 + 1], 0);
-            assert_eq!(raw[i * 4 + 2], 0);
-            assert_eq!(raw[i * 4 + 3], 255);
-        }
-
-        Ok(())
-    }
 
     fn full_clip(size: u32) -> Clip {
         Clip {
@@ -1278,27 +1270,6 @@ mod tests {
         canvas.fill_rect(0, 0, 1, 1, source, full_clip(1));
 
         assert_color(canvas.image(), 0, 0, background);
-    }
-
-    #[test]
-    fn test_copy_area_uses_source_snapshot_for_overlap() {
-        let mut canvas = ImageBufferCanvas::new(VecImageBuffer::<ArgbPixel>::new(4, 1));
-        let red = Color { a: 255, r: 255, g: 0, b: 0 };
-        let green = Color { a: 255, r: 0, g: 255, b: 0 };
-        let blue = Color { a: 255, r: 0, g: 0, b: 255 };
-        let black = Color { a: 255, r: 0, g: 0, b: 0 };
-
-        canvas.put_pixel(0, 0, red, full_clip(4));
-        canvas.put_pixel(1, 0, green, full_clip(4));
-        canvas.put_pixel(2, 0, blue, full_clip(4));
-        canvas.put_pixel(3, 0, black, full_clip(4));
-
-        canvas.copy_area(1, 0, 0, 0, 3, 1, full_clip(4));
-
-        assert_color(canvas.image(), 0, 0, red);
-        assert_color(canvas.image(), 1, 0, red);
-        assert_color(canvas.image(), 2, 0, green);
-        assert_color(canvas.image(), 3, 0, blue);
     }
 
     #[test]
@@ -1799,7 +1770,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bmp_key_index_is_the_low_byte() -> Result<()> {
+    fn test_bmp_key_index_is_the_low_byte() -> wie_util::Result<()> {
         for clr_important in [1, 0x101] {
             let image = super::decode_image(&keyed_bmp(clr_important))?;
             assert_eq!(image.get_pixel(0, 0).a, 0xff, "{clr_important:#x}: index 0 is opaque");

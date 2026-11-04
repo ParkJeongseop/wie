@@ -4,9 +4,12 @@ use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 
-use wie_backend::canvas::{PixelType, Rgb8Pixel};
+use wie_backend::canvas::{Clip, PixelType, Rgb8Pixel};
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
-use wie_midp::classes::javax::microedition::lcdui::{Graphics, Image};
+use wie_midp::classes::javax::microedition::{
+    lcdui::{Graphics, Image},
+    midlet::MIDlet,
+};
 
 // class com.skt.m.Graphics2D
 pub struct Graphics2D;
@@ -106,8 +109,14 @@ impl Graphics2D {
             return Err(jvm.exception("java/lang/NullPointerException", "graphics is null").await);
         }
 
-        jvm.put_field(&mut this, "graphics", "Ljavax/microedition/lcdui/Graphics;", graphics)
-            .await?;
+        jvm.put_field(
+            &mut this,
+            "com/skt/m/Graphics2D",
+            "graphics",
+            "Ljavax/microedition/lcdui/Graphics;",
+            graphics,
+        )
+        .await?;
 
         Ok(())
     }
@@ -127,7 +136,7 @@ impl Graphics2D {
     }
 
     async fn capture_lcd(jvm: &Jvm, _context: &mut WieJvmContext, x: i32, y: i32, width: i32, height: i32) -> JvmResult<ClassInstanceRef<Image>> {
-        tracing::warn!("stub com.skt.m.Graphics2D::captureLCD({x}, {y}, {width}, {height})");
+        tracing::debug!("com.skt.m.Graphics2D::captureLCD({x}, {y}, {width}, {height})");
 
         if width <= 0 || height <= 0 {
             return Err(jvm
@@ -143,6 +152,35 @@ impl Graphics2D {
                 (width, height),
             )
             .await?;
+
+        let midlet: ClassInstanceRef<MIDlet> = jvm
+            .get_static_field("javax/microedition/midlet/MIDlet", "currentMIDlet", "Ljavax/microedition/midlet/MIDlet;")
+            .await?;
+        let display = MIDlet::display(jvm, &midlet).await?;
+        let screen: ClassInstanceRef<Image> = jvm
+            .get_field(
+                &display,
+                "javax/microedition/lcdui/Display",
+                "screenImage",
+                "Ljavax/microedition/lcdui/Image;",
+            )
+            .await?;
+        let source = Image::image(jvm, &screen).await?;
+        Image::canvas(jvm, &image).await?.draw(
+            0,
+            0,
+            width as _,
+            height as _,
+            &*source,
+            x,
+            y,
+            Clip {
+                x: 0,
+                y: 0,
+                width: width as _,
+                height: height as _,
+            },
+        );
 
         Ok(image)
     }
@@ -186,13 +224,15 @@ impl Graphics2D {
             return Ok(());
         }
 
-        let mut graphics: ClassInstanceRef<Graphics> = jvm.get_field(&this, "graphics", "Ljavax/microedition/lcdui/Graphics;").await?;
+        let mut graphics: ClassInstanceRef<Graphics> = jvm
+            .get_field(&this, "com/skt/m/Graphics2D", "graphics", "Ljavax/microedition/lcdui/Graphics;")
+            .await?;
         if graphics.is_null() {
             return Err(jvm.exception("java/lang/NullPointerException", "graphics is null").await);
         }
 
-        let translate_x: i32 = jvm.get_field(&graphics, "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&graphics, "translateY", "I").await?;
+        let translate_x: i32 = jvm.get_field(&graphics, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
+        let translate_y: i32 = jvm.get_field(&graphics, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
         let clip = Graphics::clip(jvm, &graphics).await?;
         let src_image = Image::image(jvm, &src).await?;
 
@@ -238,13 +278,15 @@ impl Graphics2D {
     async fn get_pixel(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>, x: i32, y: i32) -> JvmResult<i32> {
         tracing::debug!("com.skt.m.Graphics2D::getPixel({this:?}, {x}, {y})");
 
-        let mut graphics: ClassInstanceRef<Graphics> = jvm.get_field(&this, "graphics", "Ljavax/microedition/lcdui/Graphics;").await?;
+        let mut graphics: ClassInstanceRef<Graphics> = jvm
+            .get_field(&this, "com/skt/m/Graphics2D", "graphics", "Ljavax/microedition/lcdui/Graphics;")
+            .await?;
         if graphics.is_null() {
             return Err(jvm.exception("java/lang/NullPointerException", "graphics is null").await);
         }
 
-        let translate_x: i32 = jvm.get_field(&graphics, "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&graphics, "translateY", "I").await?;
+        let translate_x: i32 = jvm.get_field(&graphics, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
+        let translate_y: i32 = jvm.get_field(&graphics, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
         let image = Graphics::image(jvm, &mut graphics).await?;
         let canvas = Image::canvas(jvm, &image).await?;
 
@@ -280,13 +322,15 @@ impl Graphics2D {
             return Ok(());
         }
 
-        let mut graphics: ClassInstanceRef<Graphics> = jvm.get_field(&this, "graphics", "Ljavax/microedition/lcdui/Graphics;").await?;
+        let mut graphics: ClassInstanceRef<Graphics> = jvm
+            .get_field(&this, "com/skt/m/Graphics2D", "graphics", "Ljavax/microedition/lcdui/Graphics;")
+            .await?;
         if graphics.is_null() {
             return Err(jvm.exception("java/lang/NullPointerException", "graphics is null").await);
         }
 
-        let translate_x: i32 = jvm.get_field(&graphics, "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&graphics, "translateY", "I").await?;
+        let translate_x: i32 = jvm.get_field(&graphics, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
+        let translate_y: i32 = jvm.get_field(&graphics, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
         let clip = Graphics::clip(jvm, &graphics).await?;
         let image = Graphics::image(jvm, &mut graphics).await?;
         let mut canvas = Image::canvas(jvm, &image).await?;
@@ -304,13 +348,15 @@ impl Graphics2D {
     async fn set_pixel(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>, x: i32, y: i32, color: i32) -> JvmResult<()> {
         tracing::debug!("com.skt.m.Graphics2D::setPixel({this:?}, {x}, {y}, {color})");
 
-        let mut graphics: ClassInstanceRef<Graphics> = jvm.get_field(&this, "graphics", "Ljavax/microedition/lcdui/Graphics;").await?;
+        let mut graphics: ClassInstanceRef<Graphics> = jvm
+            .get_field(&this, "com/skt/m/Graphics2D", "graphics", "Ljavax/microedition/lcdui/Graphics;")
+            .await?;
         if graphics.is_null() {
             return Err(jvm.exception("java/lang/NullPointerException", "graphics is null").await);
         }
 
-        let translate_x: i32 = jvm.get_field(&graphics, "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&graphics, "translateY", "I").await?;
+        let translate_x: i32 = jvm.get_field(&graphics, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
+        let translate_y: i32 = jvm.get_field(&graphics, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
         let clip = Graphics::clip(jvm, &graphics).await?;
         let image = Graphics::image(jvm, &mut graphics).await?;
         let mut canvas = Image::canvas(jvm, &image).await?;
@@ -332,16 +378,88 @@ impl Graphics2D {
 
 #[cfg(test)]
 mod test {
-    use alloc::boxed::Box;
+    use alloc::{boxed::Box, vec};
 
     use jvm::{Array, ClassInstanceRef, JavaError, Result as JvmResult};
+    use jvm_types::ClassAccessFlags;
     use test_utils::run_jvm_test;
 
-    use wie_midp::classes::javax::microedition::lcdui::{Graphics, Image};
+    use wie_jvm_support::WieJavaClassProto;
+    use wie_midp::classes::javax::microedition::{
+        lcdui::{Graphics, Image},
+        midlet::MIDlet,
+    };
 
     use crate::classes::com::skt::m::SISImage;
 
     use super::Graphics2D;
+
+    #[test]
+    fn captured_lcd_region_is_an_independent_screen_snapshot() {
+        let midlet_proto = WieJavaClassProto {
+            name: "test/LcdMidlet",
+            parent_class: Some("javax/microedition/midlet/MIDlet"),
+            interfaces: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: ClassAccessFlags::PUBLIC,
+        };
+        run_jvm_test(
+            Box::new([wie_midp::get_protos().into(), [Graphics2D::as_proto(), midlet_proto].into()]),
+            |jvm| async move {
+                let midlet: ClassInstanceRef<MIDlet> = jvm.instantiate_class("test/LcdMidlet").await?.into();
+                let _: () = jvm
+                    .invoke_special(&midlet, "javax/microedition/midlet/MIDlet", "<init>", "()V", ())
+                    .await?;
+                let display = MIDlet::display(&jvm, &midlet).await?;
+                let graphics: ClassInstanceRef<Graphics> = jvm
+                    .invoke_virtual(
+                        &display,
+                        "javax/microedition/lcdui/Display",
+                        "getScreenGraphics",
+                        "()Ljavax/microedition/lcdui/Graphics;",
+                        (),
+                    )
+                    .await?;
+                let _: () = jvm
+                    .invoke_virtual(&graphics, "javax/microedition/lcdui/Graphics", "setColor", "(I)V", (0x123456,))
+                    .await?;
+                let _: () = jvm
+                    .invoke_virtual(&graphics, "javax/microedition/lcdui/Graphics", "fillRect", "(IIII)V", (3, 4, 2, 1))
+                    .await?;
+                let _: () = jvm
+                    .invoke_virtual(&graphics, "javax/microedition/lcdui/Graphics", "translate", "(II)V", (10, 20))
+                    .await?;
+                let _: () = jvm
+                    .invoke_virtual(&graphics, "javax/microedition/lcdui/Graphics", "setClip", "(IIII)V", (0, 0, 1, 1))
+                    .await?;
+                let captured: ClassInstanceRef<Image> = jvm
+                    .invoke_static(
+                        "com/skt/m/Graphics2D",
+                        "captureLCD",
+                        "(IIII)Ljavax/microedition/lcdui/Image;",
+                        (3, 4, 2, 1),
+                    )
+                    .await?;
+                let _: () = jvm
+                    .invoke_virtual(&graphics, "javax/microedition/lcdui/Graphics", "reset", "()V", ())
+                    .await?;
+                let _: () = jvm
+                    .invoke_virtual(&graphics, "javax/microedition/lcdui/Graphics", "setColor", "(I)V", (0,))
+                    .await?;
+                let _: () = jvm
+                    .invoke_virtual(&graphics, "javax/microedition/lcdui/Graphics", "fillRect", "(IIII)V", (3, 4, 2, 1))
+                    .await?;
+                let captured = Image::image(&jvm, &captured).await?;
+                assert_eq!((captured.width(), captured.height()), (2, 1));
+                for color in captured.colors() {
+                    assert_eq!((color.a, color.r, color.g, color.b), (255, 0x12, 0x34, 0x56));
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+    }
 
     #[test]
     fn graphics_2d_copy_xor_clip_and_pixel_operations_use_the_target_canvas() {

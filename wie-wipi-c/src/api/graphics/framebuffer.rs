@@ -8,13 +8,10 @@ use wipi_types::wipic::{WIPICFramebuffer, WIPICIndirectPtr, WIPICWord};
 use wie_backend::canvas::{ArgbPixel, Canvas, Color, Image, ImageBufferCanvas, PixelType, Rgb8Pixel, Rgb565Pixel, VecImageBuffer};
 use wie_util::{Result, WieError, read_generic, write_generic};
 
-use crate::context::WIPICContext;
-
-/// Where the screen framebuffer's record pointer lives, and the word that says the C side drew
-/// into it since `MC_grpRepaint` last presented it. The page is the core's global data; the LGT
-/// runtime keeps its own words at 0x7fff1004..0x7fff1010, so the dirty word sits past them.
-pub(super) const SCREEN_FRAMEBUFFER_PTR: u32 = 0x7fff1000;
-pub(super) const SCREEN_FRAMEBUFFER_DIRTY_PTR: u32 = 0x7fff1020;
+use crate::{
+    context::WIPICContext,
+    globals::{SCREEN_FRAMEBUFFER_DIRTY_PTR, SCREEN_FRAMEBUFFER_PTR},
+};
 
 // same 256MB as wie_core_arm's HEAP_SIZE; not referenced directly to avoid the dependency
 const MAX_FRAMEBUFFER_BYTES: u32 = 0x1000_0000;

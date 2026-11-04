@@ -28,6 +28,7 @@ impl Image {
             parent_class: Some("java/lang/Object"),
             interfaces: vec![],
             methods: vec![
+                // SKVM exposes a public no-argument constructor.
                 JavaMethodProto::new("<init>", "()V", Self::init_empty, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("<init>", "(II[BI)V", Self::init, MethodAccessFlags::empty()),
                 JavaMethodProto::new("getWidth", "()I", Self::get_width, MethodAccessFlags::PUBLIC),
@@ -86,10 +87,11 @@ impl Image {
 
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
 
-        jvm.put_field(&mut this, "w", "I", width).await?;
-        jvm.put_field(&mut this, "h", "I", height).await?;
-        jvm.put_field(&mut this, "imgData", "[B", img_data).await?;
-        jvm.put_field(&mut this, "bpl", "I", bpl).await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Image", "w", "I", width).await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Image", "h", "I", height).await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Image", "imgData", "[B", img_data)
+            .await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Image", "bpl", "I", bpl).await?;
 
         Ok(())
     }
@@ -103,10 +105,11 @@ impl Image {
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
 
         let img_data = jvm.instantiate_array("B", 0).await?;
-        jvm.put_field(&mut this, "w", "I", 0).await?;
-        jvm.put_field(&mut this, "h", "I", 0).await?;
-        jvm.put_field(&mut this, "imgData", "[B", img_data).await?;
-        jvm.put_field(&mut this, "bpl", "I", 0).await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Image", "w", "I", 0).await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Image", "h", "I", 0).await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Image", "imgData", "[B", img_data)
+            .await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Image", "bpl", "I", 0).await?;
 
         Ok(())
     }
@@ -199,18 +202,18 @@ impl Image {
     async fn get_width(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Image::getWidth({this:?})");
 
-        jvm.get_field(&this, "w", "I").await
+        jvm.get_field(&this, "javax/microedition/lcdui/Image", "w", "I").await
     }
 
     async fn get_height(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Image::getHeight({this:?})");
 
-        jvm.get_field(&this, "h", "I").await
+        jvm.get_field(&this, "javax/microedition/lcdui/Image", "h", "I").await
     }
 
     pub async fn image(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<Box<dyn BackendImage>> {
-        let width: i32 = jvm.get_field(this, "w", "I").await?;
-        let bpl: i32 = jvm.get_field(this, "bpl", "I").await?;
+        let width: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "w", "I").await?;
+        let bpl: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "bpl", "I").await?;
 
         let bytes_per_pixel = Self::bytes_per_pixel(width, bpl);
 
@@ -223,8 +226,8 @@ impl Image {
     }
 
     pub async fn canvas(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<Box<dyn Canvas>> {
-        let width: i32 = jvm.get_field(this, "w", "I").await?;
-        let bpl: i32 = jvm.get_field(this, "bpl", "I").await?;
+        let width: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "w", "I").await?;
+        let bpl: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "bpl", "I").await?;
 
         let bytes_per_pixel = Self::bytes_per_pixel(width, bpl);
 
@@ -271,11 +274,11 @@ where
     T: PixelType,
 {
     pub async fn new(jvm: &Jvm, this: &ClassInstanceRef<Image>) -> JvmResult<Self> {
-        let mut java_img_data = jvm.get_field(this, "imgData", "[B").await?;
+        let mut java_img_data = jvm.get_field(this, "javax/microedition/lcdui/Image", "imgData", "[B").await?;
         let raw_buffer = jvm.array_raw_buffer_mut(&mut java_img_data).await?;
 
-        let width: i32 = jvm.get_field(this, "w", "I").await?;
-        let height: i32 = jvm.get_field(this, "h", "I").await?;
+        let width: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "w", "I").await?;
+        let height: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "h", "I").await?;
 
         Ok(Self {
             width,
@@ -352,12 +355,8 @@ where
 
         let offset = (((y as u32) * self.width() + (x as u32)) * self.bytes_per_pixel()) as usize;
 
-        let raw_bytes = colors
-            .iter()
-            .flat_map(|color| bytemuck::bytes_of(&T::from_color(*color)).to_vec())
-            .collect::<Vec<_>>();
-
-        self.raw_buffer.write(offset as _, &raw_bytes).unwrap();
+        let raw = colors.iter().copied().map(T::from_color).collect::<Vec<_>>();
+        self.raw_buffer.write(offset, bytemuck::cast_slice(&raw)).unwrap();
     }
 
     fn xor_pixel(&mut self, x: i32, y: i32, color: Color) {
@@ -379,6 +378,99 @@ where
 mod tests {
     use super::*;
 
+    #[test]
+    fn image_can_be_constructed_without_pixel_data() -> wie_util::Result<()> {
+        test_utils::run_jvm_test(Box::new([crate::get_protos().into()]), |jvm| async move {
+            let image = jvm.new_class("javax/microedition/lcdui/Image", "()V", ()).await?;
+            let width: i32 = jvm
+                .invoke_virtual(&image, "javax/microedition/lcdui/Image", "getWidth", "()I", ())
+                .await?;
+            let height: i32 = jvm
+                .invoke_virtual(&image, "javax/microedition/lcdui/Image", "getHeight", "()I", ())
+                .await?;
+            assert_eq!((width, height), (0, 0));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn lbmp_images_preserve_grayscale_and_transparency_when_drawn() -> wie_util::Result<()> {
+        test_utils::run_jvm_test(Box::new([crate::get_protos().into()]), |jvm| async move {
+            for kind in [8u32, 16, 2] {
+                for masked in [0u32, 1] {
+                    let pixels = match kind {
+                        8 => vec![0xe0; 18],
+                        16 => [0x00, 0xf8].repeat(18),
+                        // Vertical bitplanes: first plane carries the high bit.
+                        _ => vec![0xcc, 0xcc, 0, 1, 0xaa, 0xaa, 0, 1],
+                    };
+                    let size = if kind == 2 { pixels.len() / 2 } else { pixels.len() };
+                    let mut data = vec![0];
+                    data.extend_from_slice(b"LBMP");
+                    for value in [kind, 2, 9, size as u32, masked] {
+                        data.extend_from_slice(&value.to_le_bytes());
+                    }
+                    data.extend_from_slice(&pixels);
+                    if masked != 0 {
+                        data.extend_from_slice(&[1, 0, 0, 1]);
+                    }
+                    let mut array = jvm.instantiate_array("B", data.len()).await?;
+                    jvm.array_raw_buffer_mut(&mut array).await?.write(0, &data)?;
+                    let image: ClassInstanceRef<Image> = jvm
+                        .invoke_static(
+                            "javax/microedition/lcdui/Image",
+                            "createImage",
+                            "([BII)Ljavax/microedition/lcdui/Image;",
+                            (array, 1, (data.len() - 1) as i32),
+                        )
+                        .await?;
+                    let background = [0xff0000ffu32; 18];
+                    let target = Image::create_image_instance(&jvm, 2, 9, bytemuck::cast_slice(&background), 4).await?;
+                    let graphics = jvm
+                        .new_class(
+                            "javax/microedition/lcdui/Graphics",
+                            "(Ljavax/microedition/lcdui/Image;)V",
+                            (target.clone(),),
+                        )
+                        .await?;
+                    let _: () = jvm
+                        .invoke_virtual(
+                            &graphics,
+                            "javax/microedition/lcdui/Graphics",
+                            "drawImage",
+                            "(Ljavax/microedition/lcdui/Image;III)V",
+                            (image, 0, 0, 0),
+                        )
+                        .await?;
+                    let rendered = Image::image(&jvm, &target).await?;
+                    for y in 0..9 {
+                        for x in 0..2 {
+                            let expected = if masked != 0 && ((x, y) == (0, 0) || (x, y) == (1, 8)) {
+                                (255, 0, 0, 255)
+                            } else if kind == 2 {
+                                let gray = if y == 8 {
+                                    if x == 0 { 255 } else { 0 }
+                                } else {
+                                    255 - (y % 4) as u8 * 85
+                                };
+                                (255, gray, gray, gray)
+                            } else {
+                                (255, if kind == 8 { 252 } else { 255 }, 0, 0)
+                            };
+                            let actual = rendered.get_pixel(x, y);
+                            assert_eq!(
+                                (actual.a, actual.r, actual.g, actual.b),
+                                expected,
+                                "type {kind}, mask {masked}, ({x}, {y})"
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
     async fn check_pixel_buffer<T: PixelType>(jvm: &Jvm, pixels: [T::DataType; 2]) -> JvmResult<()> {
         let size = size_of::<T::DataType>();
         let image = Image::create_image_instance(jvm, 2, 1, bytemuck::cast_slice(&pixels), size as u32).await?;
@@ -386,6 +478,9 @@ mod tests {
         let actual = buffer.get_pixel(1, 0);
         let expected = T::to_color(pixels[1]);
         assert_eq!((actual.a, actual.r, actual.g, actual.b), (expected.a, expected.r, expected.g, expected.b));
+        let colors = [T::to_color(pixels[1]), T::to_color(pixels[0])];
+        buffer.put_pixels(0, 0, 2, &colors);
+        assert_eq!(&*buffer.raw(), bytemuck::cast_slice(&[pixels[1], pixels[0]]));
 
         let color = Color {
             a: 255,
@@ -394,7 +489,7 @@ mod tests {
             b: 31,
         };
         buffer.xor_pixel(1, 0, color);
-        let expected = [pixels[0], T::xor_color(pixels[1], color)];
+        let expected = [pixels[1], T::xor_color(pixels[0], color)];
         assert_eq!(&*buffer.raw(), bytemuck::cast_slice(&expected));
         Ok(())
     }

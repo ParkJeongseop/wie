@@ -38,7 +38,7 @@ impl InputMethodHandler {
     }
 
     async fn init(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, constraint: i32) -> JvmResult<()> {
-        tracing::debug!("stub org.kwis.msp.lcdui.InputMethodHandler::<init>({this:?}, {constraint})");
+        tracing::warn!("stub org.kwis.msp.lcdui.InputMethodHandler::<init>({this:?}, {constraint})");
 
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
 
@@ -48,7 +48,8 @@ impl InputMethodHandler {
     async fn set_current_mode(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, mode: i32) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.lcdui.InputMethodHandler::setCurrentMode({this:?}, {mode})");
 
-        jvm.put_field(&mut this, "currentMode", "I", mode).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/lcdui/InputMethodHandler", "currentMode", "I", mode)
+            .await?;
 
         Ok(true)
     }
@@ -56,7 +57,7 @@ impl InputMethodHandler {
     async fn get_current_mode(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lcdui.InputMethodHandler::getCurrentMode({this:?})");
 
-        jvm.get_field(&this, "currentMode", "I").await
+        jvm.get_field(&this, "org/kwis/msp/lcdui/InputMethodHandler", "currentMode", "I").await
     }
 
     /// Who is told of text the handler composes (`notifyTextChanged`). Nothing composes text here
@@ -69,8 +70,14 @@ impl InputMethodHandler {
     ) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lcdui.InputMethodHandler::setInputMethodListener({this:?}, {listener:?})");
 
-        jvm.put_field(&mut this, "listener", "Lorg/kwis/msp/lcdui/InputMethodListener;", listener)
-            .await
+        jvm.put_field(
+            &mut this,
+            "org/kwis/msp/lcdui/InputMethodHandler",
+            "listener",
+            "Lorg/kwis/msp/lcdui/InputMethodListener;",
+            listener,
+        )
+        .await
     }
 
     async fn hide_symbol_card(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {

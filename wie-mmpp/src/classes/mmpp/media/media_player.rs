@@ -70,8 +70,9 @@ impl MediaPlayer {
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
 
         let volume = JavaLangString::from_rust_string(jvm, Self::DEFAULT_VOLUME).await?;
-        jvm.put_field(&mut this, "audioHandle", "I", -1).await?;
-        jvm.put_field(&mut this, "volumeLevel", "Ljava/lang/String;", volume).await
+        jvm.put_field(&mut this, "mmpp/media/MediaPlayer", "audioHandle", "I", -1).await?;
+        jvm.put_field(&mut this, "mmpp/media/MediaPlayer", "volumeLevel", "Ljava/lang/String;", volume)
+            .await
     }
 
     async fn set_media_location(
@@ -123,7 +124,7 @@ impl MediaPlayer {
 
     /// Replaces the loaded clip. Data the audio system cannot decode leaves the player without a clip.
     async fn load(jvm: &Jvm, context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, data: &[u8]) -> JvmResult<()> {
-        let previous: i32 = jvm.get_field(&this, "audioHandle", "I").await?;
+        let previous: i32 = jvm.get_field(&this, "mmpp/media/MediaPlayer", "audioHandle", "I").await?;
         let system = context.system();
         if previous >= 0 {
             system.audio().stop(previous as _);
@@ -138,25 +139,25 @@ impl MediaPlayer {
             }
         };
 
-        jvm.put_field(&mut this, "audioHandle", "I", audio_handle).await
+        jvm.put_field(&mut this, "mmpp/media/MediaPlayer", "audioHandle", "I", audio_handle).await
     }
 
     async fn is_play_back_loop(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
         tracing::debug!("mmpp.media.MediaPlayer::isPlayBackLoop({this:?})");
 
-        jvm.get_field(&this, "playBackLoop", "Z").await
+        jvm.get_field(&this, "mmpp/media/MediaPlayer", "playBackLoop", "Z").await
     }
 
     async fn set_play_back_loop(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, value: bool) -> JvmResult<()> {
         tracing::debug!("mmpp.media.MediaPlayer::setPlayBackLoop({this:?}, {value})");
 
-        jvm.put_field(&mut this, "playBackLoop", "Z", value).await
+        jvm.put_field(&mut this, "mmpp/media/MediaPlayer", "playBackLoop", "Z", value).await
     }
 
     async fn get_volume_level(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<String>> {
         tracing::debug!("mmpp.media.MediaPlayer::getVolumeLevel({this:?})");
 
-        jvm.get_field(&this, "volumeLevel", "Ljava/lang/String;").await
+        jvm.get_field(&this, "mmpp/media/MediaPlayer", "volumeLevel", "Ljava/lang/String;").await
     }
 
     async fn set_volume_level(
@@ -170,7 +171,8 @@ impl MediaPlayer {
         if volume.is_null() {
             return Err(jvm.exception("java/lang/NullPointerException", "volume is null").await);
         }
-        jvm.put_field(&mut this, "volumeLevel", "Ljava/lang/String;", volume).await?;
+        jvm.put_field(&mut this, "mmpp/media/MediaPlayer", "volumeLevel", "Ljava/lang/String;", volume)
+            .await?;
 
         // the host mixes every clip at one level, so the only level it can honour is silence
         if Self::is_silent(jvm, &this).await? {
@@ -181,7 +183,7 @@ impl MediaPlayer {
     }
 
     async fn is_silent(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<bool> {
-        let volume: ClassInstanceRef<String> = jvm.get_field(this, "volumeLevel", "Ljava/lang/String;").await?;
+        let volume: ClassInstanceRef<String> = jvm.get_field(this, "mmpp/media/MediaPlayer", "volumeLevel", "Ljava/lang/String;").await?;
 
         Ok(JavaLangString::to_rust_string(jvm, &volume).await?.trim() == Self::SILENT)
     }
@@ -189,11 +191,11 @@ impl MediaPlayer {
     async fn start(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("mmpp.media.MediaPlayer::start({this:?})");
 
-        let audio_handle: i32 = jvm.get_field(&this, "audioHandle", "I").await?;
+        let audio_handle: i32 = jvm.get_field(&this, "mmpp/media/MediaPlayer", "audioHandle", "I").await?;
         if audio_handle < 0 || Self::is_silent(jvm, &this).await? {
             return Ok(());
         }
-        let repeat: bool = jvm.get_field(&this, "playBackLoop", "Z").await?;
+        let repeat: bool = jvm.get_field(&this, "mmpp/media/MediaPlayer", "playBackLoop", "Z").await?;
 
         if let Err(error) = context.system().audio().play(audio_handle as _, repeat) {
             tracing::warn!("mmpp.media.MediaPlayer: cannot play: {error:?}");
@@ -205,7 +207,7 @@ impl MediaPlayer {
     async fn stop(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("mmpp.media.MediaPlayer::stop({this:?})");
 
-        let audio_handle: i32 = jvm.get_field(&this, "audioHandle", "I").await?;
+        let audio_handle: i32 = jvm.get_field(&this, "mmpp/media/MediaPlayer", "audioHandle", "I").await?;
         if audio_handle >= 0 {
             context.system().audio().stop(audio_handle as _);
         }

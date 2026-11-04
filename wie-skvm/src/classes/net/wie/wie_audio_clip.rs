@@ -36,7 +36,7 @@ impl WieAudioClip {
 
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
         // 0 = not opened yet; set by open()
-        jvm.put_field(&mut this, "audioHandle", "I", 0).await?;
+        jvm.put_field(&mut this, "net/wie/WieAudioClip", "audioHandle", "I", 0).await?;
 
         Ok(())
     }
@@ -67,7 +67,8 @@ impl WieAudioClip {
 
         match context.system().audio().load_smaf(&bytes) {
             Ok(audio_handle) => {
-                jvm.put_field(&mut this, "audioHandle", "I", audio_handle as i32).await?;
+                jvm.put_field(&mut this, "net/wie/WieAudioClip", "audioHandle", "I", audio_handle as i32)
+                    .await?;
             }
             Err(e) => {
                 tracing::warn!("net.wie.WieAudioClip::open: unsupported audio data ({e:?})");
@@ -80,7 +81,7 @@ impl WieAudioClip {
     async fn play(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("net.wie.WieAudioClip::play({this:?})");
 
-        let audio_handle: i32 = jvm.get_field(&this, "audioHandle", "I").await?;
+        let audio_handle: i32 = jvm.get_field(&this, "net/wie/WieAudioClip", "audioHandle", "I").await?;
         if audio_handle != 0 {
             context.system().audio().play(audio_handle as u32, false).unwrap();
         }
@@ -91,7 +92,7 @@ impl WieAudioClip {
     async fn r#loop(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("net.wie.WieAudioClip::loop({this:?})");
 
-        let audio_handle: i32 = jvm.get_field(&this, "audioHandle", "I").await?;
+        let audio_handle: i32 = jvm.get_field(&this, "net/wie/WieAudioClip", "audioHandle", "I").await?;
         if audio_handle != 0 {
             context.system().audio().play(audio_handle as u32, true).unwrap();
         }
@@ -114,7 +115,7 @@ impl WieAudioClip {
     async fn stop(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("net.wie.WieAudioClip::stop({this:?})");
 
-        let audio_handle: i32 = jvm.get_field(&this, "audioHandle", "I").await?;
+        let audio_handle: i32 = jvm.get_field(&this, "net/wie/WieAudioClip", "audioHandle", "I").await?;
         if audio_handle != 0 {
             context.system().audio().stop(audio_handle as u32);
         }

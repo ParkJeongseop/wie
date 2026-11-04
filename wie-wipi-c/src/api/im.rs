@@ -1,10 +1,48 @@
-use wie_util::{Result, write_generic};
-
-use alloc::vec::Vec;
+use wie_util::{Result, read_generic, write_generic, write_null_terminated_table};
 
 use wipi_types::wipic::WIPICWord;
 
-use crate::context::WIPICContext;
+use crate::{context::WIPICContext, globals::INPUT_MODES_PTR};
+
+const INPUT_MODES: [&[u8]; 4] = [b"EN/L\0", b"EN/S\0", b"KO\0", b"N123\0"];
+
+pub async fn get_support_mode_count(_context: &mut dyn WIPICContext) -> Result<i32> {
+    tracing::debug!("MC_imGetSurpportModeCount()");
+    Ok(INPUT_MODES.len() as i32)
+}
+
+pub async fn get_supported_modes(context: &mut dyn WIPICContext) -> Result<WIPICWord> {
+    tracing::debug!("MC_imGetSupportedModes()");
+
+    let modes: u32 = read_generic(context, INPUT_MODES_PTR)?;
+    if modes != 0 {
+        return Ok(modes);
+    }
+
+    let table_size = ((INPUT_MODES.len() + 1) * size_of::<u32>()) as u32;
+    let strings_size = INPUT_MODES.iter().map(|mode| mode.len() as u32).sum::<u32>();
+    let modes = context.alloc_raw(table_size + strings_size)?;
+    let mut string_ptr = modes + table_size;
+    let mut pointers = [0; INPUT_MODES.len()];
+    for (pointer, mode) in pointers.iter_mut().zip(INPUT_MODES) {
+        *pointer = string_ptr;
+        context.write_bytes(string_ptr, mode)?;
+        string_ptr += mode.len() as u32;
+    }
+    write_null_terminated_table(context, modes, &pointers)?;
+    write_generic(context, INPUT_MODES_PTR, modes)?;
+    Ok(modes)
+}
+
+pub async fn set_current_mode(_context: &mut dyn WIPICContext, mode: i32) -> Result<i32> {
+    tracing::warn!("stub MC_imSetCurrentMode({mode})");
+    Ok(-1)
+}
+
+pub async fn get_current_mode(_context: &mut dyn WIPICContext) -> Result<i32> {
+    tracing::warn!("stub MC_imGetCurrentMode()");
+    Ok(-1)
+}
 
 pub async fn handle_input(
     context: &mut dyn WIPICContext,
@@ -19,55 +57,43 @@ pub async fn handle_input(
         "stub MC_imHandleInput({key:#x}, {event_type}, {ptr_committed:#x}, {ptr_committed_size:#x}, {ptr_composing:#x}, {ptr_composing_size:#x})"
     );
 
-    write_generic(context, ptr_committed_size, 0i32)?;
+    let capacity: i32 = read_generic(context, ptr_committed_size)?;
+    // shortcut: numeric key presses commit a placeholder until text input is implemented.
+    let size = if event_type == 2 && (u32::from(b'0')..=u32::from(b'9')).contains(&key) {
+        capacity.clamp(0, 4)
+    } else {
+        0
+    };
+    if size > 0 {
+        context.write_bytes(ptr_committed, &b"temp"[..size as usize])?;
+    }
+    write_generic(context, ptr_committed_size, size)?;
     write_generic(context, ptr_composing_size, 0i32)?;
 
-    Ok(0)
+    Ok(i32::from(size > 0))
 }
 
-// Input modes the platform reports, in the specification's vocabulary: an ISO 639
-// language code, "/S" or "/L" for a script with case, and "N123" for digits.
-// LGT titles read the first code to decide whether upper or lower case comes first
-// and then select a mode by index, so the order is part of the contract.
-const INPUT_MODES: [&str; 4] = ["EN/L", "EN/S", "KO", "N123"];
+#[cfg(test)]
+mod tests {
+    use wie_util::{Result, read_null_terminated_string_bytes, read_null_terminated_table};
 
-pub async fn get_supported_mode_count(_context: &mut dyn WIPICContext) -> Result<i32> {
-    tracing::debug!("MC_imGetSupportedModeCount()");
+    use crate::context::test::TestContext;
 
-    Ok(INPUT_MODES.len() as i32)
-}
+    use super::{get_support_mode_count, get_supported_modes};
 
-/// Returns an `M_Char **` table of the mode codes. The caller keeps the table, so it
-/// is allocated in guest memory once per call (games ask once, at start-up).
-pub async fn get_supported_modes(context: &mut dyn WIPICContext) -> Result<WIPICWord> {
-    tracing::debug!("MC_imGetSupportedModes()");
-
-    let strings: Vec<&[u8]> = INPUT_MODES.iter().map(|x| x.as_bytes()).collect();
-    let table_size = (INPUT_MODES.len() * 4) as u32;
-    let total = table_size + strings.iter().map(|x| x.len() as u32 + 1).sum::<u32>();
-    let table = context.alloc_raw(total)?;
-
-    let mut cursor = table + table_size;
-    for (index, string) in strings.iter().enumerate() {
-        write_generic(context, table + index as u32 * 4, cursor)?;
-        context.write_bytes(cursor, string)?;
-        context.write_bytes(cursor + string.len() as u32, &[0])?;
-        cursor += string.len() as u32 + 1;
+    #[futures_test::test]
+    async fn input_mode_queries_reuse_valid_guest_strings() -> Result<()> {
+        let mut context = TestContext::new();
+        let count = get_support_mode_count(&mut context).await?;
+        let modes = get_supported_modes(&mut context).await?;
+        let pointers = read_null_terminated_table(&context, modes)?;
+        let expected = [b"EN/L".as_slice(), b"EN/S", b"KO", b"N123"];
+        assert_eq!(count, expected.len() as i32);
+        assert_eq!(pointers.len(), expected.len());
+        for (pointer, name) in pointers.into_iter().zip(expected) {
+            assert_eq!(read_null_terminated_string_bytes(&context, pointer)?, name);
+        }
+        assert_eq!(get_supported_modes(&mut context).await?, modes);
+        Ok(())
     }
-
-    Ok(table)
-}
-
-/// 1 when the mode was applied, 0 otherwise (the one call in this block that does not
-/// answer with an error code). Input itself is not composed yet, so nothing is kept.
-pub async fn set_current_mode(_context: &mut dyn WIPICContext, mode: i32) -> Result<i32> {
-    tracing::debug!("MC_imSetCurrentMode({mode})");
-
-    Ok(((0..INPUT_MODES.len() as i32).contains(&mode)) as i32)
-}
-
-pub async fn get_current_mode(_context: &mut dyn WIPICContext) -> Result<i32> {
-    tracing::debug!("MC_imGetCurrentMode()");
-
-    Ok(0)
 }

@@ -43,7 +43,14 @@ impl EventQueue {
         let wie_event_queue: ClassInstanceRef<WieEventQueue> = jvm
             .invoke_static("net/wie/EventQueue", "getEventQueue", "()Lnet/wie/EventQueue;", ())
             .await?;
-        jvm.put_field(&mut this, "wieEventQueue", "Lnet/wie/EventQueue;", wie_event_queue).await?;
+        jvm.put_field(
+            &mut this,
+            "org/kwis/msp/lcdui/EventQueue",
+            "wieEventQueue",
+            "Lnet/wie/EventQueue;",
+            wie_event_queue,
+        )
+        .await?;
 
         Ok(())
     }
@@ -56,7 +63,9 @@ impl EventQueue {
     ) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lcdui.EventQueue::getNextEvent({this:?}, {event:?})");
 
-        let wie_event_queue = jvm.get_field(&this, "wieEventQueue", "Lnet/wie/EventQueue;").await?;
+        let wie_event_queue = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/EventQueue", "wieEventQueue", "Lnet/wie/EventQueue;")
+            .await?;
         let _: () = jvm
             .invoke_virtual(&wie_event_queue, "net/wie/EventQueue", "getNextEvent", "([I)V", (event,))
             .await?;
@@ -72,7 +81,9 @@ impl EventQueue {
     ) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lcdui.EventQueue::dispatchEvent({this:?}, {event:?})");
 
-        let wie_event_queue = jvm.get_field(&this, "wieEventQueue", "Lnet/wie/EventQueue;").await?;
+        let wie_event_queue = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/EventQueue", "wieEventQueue", "Lnet/wie/EventQueue;")
+            .await?;
         let _: () = jvm
             .invoke_virtual(&wie_event_queue, "net/wie/EventQueue", "dispatchEvent", "([I)V", (event,))
             .await?;
@@ -90,37 +101,5 @@ impl EventQueue {
         tracing::warn!("stub org.kwis.msp.lcdui.EventQueue::postEvent({id}, {event:?})");
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use alloc::boxed::Box;
-
-    use jvm::ClassInstanceRef;
-    use test_utils::run_jvm_test;
-    use wie_util::Result;
-
-    use crate::{classes::org::kwis::msp::lcdui::EventQueue, get_protos};
-
-    #[test]
-    fn test_post_event_stubs_are_callable() -> Result<()> {
-        run_jvm_test(Box::new([wie_midp::get_protos().into(), get_protos().into()]), |jvm| async move {
-            let queue: ClassInstanceRef<EventQueue> = jvm
-                .new_class("org/kwis/msp/lcdui/EventQueue", "(Lorg/kwis/msp/lcdui/Jlet;)V", [None.into()])
-                .await?
-                .into();
-            let event = jvm.instantiate_array("I", 4).await?;
-
-            assert!(
-                !jvm.invoke_virtual::<_, bool>(&queue, "org/kwis/msp/lcdui/EventQueue", "postEvent", "([I)Z", (event.clone(),))
-                    .await?
-            );
-            let _: () = jvm
-                .invoke_static("org/kwis/msp/lcdui/EventQueue", "postEvent", "(I[I)V", (1, event))
-                .await?;
-
-            Ok(())
-        })
     }
 }

@@ -13,7 +13,7 @@ use wie_jvm_support::JvmSupport;
 use wie_util::{Result, WieError, write_generic};
 
 use crate::{
-    adf::{KtfAdf, class_files, find_client_bin},
+    adf::{KtfAdf, class_files, find_client_bin, validate_client_bin},
     runtime::{KtfJvmSupport, KtfJvmThreadContext},
 };
 
@@ -129,6 +129,23 @@ impl KtfEmulator {
         find_client_bin(jar).is_ok()
     }
 
+    pub fn validate_archive(files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+        let adf = files
+            .get("__adf__")
+            .ok_or_else(|| WieError::FatalError("Missing __adf__ in KTF archive".into()))?;
+        let jar_filename = format!("{}.jar", KtfAdf::parse(adf).aid);
+        let (_, jar) = files
+            .iter()
+            .find(|(path, _)| path.trim_start_matches("P/") == jar_filename)
+            .ok_or_else(|| WieError::FatalError(format!("Missing {jar_filename} in KTF archive")))?;
+        Self::validate_jar(jar)
+    }
+
+    pub fn validate_jar(jar: &[u8]) -> Result<()> {
+        let (_, client_bin) = find_client_bin(jar)?;
+        validate_client_bin(&client_bin)
+    }
+
     fn load(
         platform: Box<dyn Platform>,
         jar_filename: &str,
@@ -136,14 +153,17 @@ impl KtfEmulator {
         aid: &str,
         main_class_name: Option<String>,
         files: &BTreeMap<String, Vec<u8>>,
-        mut options: Options,
+        options: Options,
     ) -> Result<Self> {
-        let mut core = ArmCore::new(options.enable_gdbserver, options.profile.take())?;
+        let mut core = ArmCore::new(options)?;
         let system = System::new(platform, pid, aid, KtfTaskRunner { core: core.clone() });
 
         for (path, data) in files {
             // Bundled app files live under "P/" — some archives use lowercase "p/" (놈3).
             let path = path.trim_start_matches("P/").trim_start_matches("p/");
+            if path == jar_filename {
+                Self::validate_jar(data)?;
+            }
             system.filesystem().add_virtual(path, data.clone());
         }
 
@@ -218,8 +238,6 @@ impl KtfEmulator {
             Err(x) => return Err(JvmSupport::to_wie_err(&jvm, x).await),
         };
 
-        KtfJvmSupport::register_static_classes(core, &jvm, class_loader, &main_class_name).await?;
-
         let mut args_array = jvm.instantiate_array("Ljava/lang/String;", 1).await.unwrap();
         jvm.store_array(&mut args_array, 0, vec![main_class_name_java]).await.unwrap();
         let result: JvmResult<()> = jvm
@@ -239,18 +257,16 @@ impl KtfEmulator {
 }
 
 impl Emulator for KtfEmulator {
+    fn is_preparing(&self) -> bool {
+        self.core.is_preparing()
+    }
+
     fn handle_event(&mut self, event: Event) {
         self.system.event_queue().push(event)
     }
 
     fn tick(&mut self) -> Result<()> {
-        self.system.tick().map_err(|x| {
-            let reg_stack = self.core.dump_reg_stack(IMAGE_BASE);
-            match x {
-                WieError::FatalError(msg) => WieError::FatalError(format!("{msg}\n{reg_stack}")),
-                _ => WieError::FatalError(format!("{x}\n{reg_stack}")),
-            }
-        })
+        self.system.tick()
     }
 }
 
@@ -275,7 +291,11 @@ mod tests {
 
     #[test]
     fn switches_jvm_thread_context_between_tasks() -> Result<()> {
-        let mut core = ArmCore::new(false, None)?;
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })?;
         Allocator::init(&mut core)?;
 
         let mut system = System::new(Box::new(TestPlatform::new()), "", "", KtfTaskRunner { core: core.clone() });

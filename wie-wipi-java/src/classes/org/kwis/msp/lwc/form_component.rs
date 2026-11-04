@@ -2,6 +2,7 @@ use alloc::vec;
 
 use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::JavaMethodProto;
+use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
@@ -15,31 +16,25 @@ impl FormComponent {
             parent_class: Some("org/kwis/msp/lwc/ContainerComponent"),
             interfaces: vec![],
             methods: vec![
-                JavaMethodProto::new("<init>", "()V", Self::init, Default::default()),
-                JavaMethodProto::new("<init>", "(Z)V", Self::init_with_vertical, Default::default()),
+                JavaMethodProto::new("<init>", "()V", Self::init, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("<init>", "(Z)V", Self::init_with_orientation, MethodAccessFlags::PUBLIC),
             ],
             fields: vec![],
-            access_flags: Default::default(),
+            access_flags: ClassAccessFlags::PUBLIC,
         }
     }
 
     async fn init(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::debug!("org.kwis.msp.lwc.FormComponent::<init>({this:?})");
+        tracing::debug!("stub org.kwis.msp.lwc.FormComponent::<init>({this:?})");
 
-        let _: () = jvm
-            .invoke_special(&this, "org/kwis/msp/lwc/ContainerComponent", "<init>", "()V", ())
-            .await?;
-
-        Ok(())
+        jvm.invoke_special(&this, "org/kwis/msp/lwc/ContainerComponent", "<init>", "()V", ())
+            .await
     }
 
-    async fn init_with_vertical(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, vertical: bool) -> JvmResult<()> {
-        tracing::debug!("org.kwis.msp.lwc.FormComponent::<init>({this:?}, {vertical})");
+    async fn init_with_orientation(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, vertical: bool) -> JvmResult<()> {
+        tracing::debug!("stub org.kwis.msp.lwc.FormComponent::<init>({this:?}, {vertical})");
 
-        let _: () = jvm
-            .invoke_special(&this, "org/kwis/msp/lwc/ContainerComponent", "<init>", "()V", ())
-            .await?;
-
-        Ok(())
+        jvm.invoke_special(&this, "org/kwis/msp/lwc/ContainerComponent", "<init>", "()V", ())
+            .await
     }
 }

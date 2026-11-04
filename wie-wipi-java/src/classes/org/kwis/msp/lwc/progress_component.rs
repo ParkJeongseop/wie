@@ -41,8 +41,9 @@ impl ProgressComponent {
 
         let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/Component", "<init>", "()V", ()).await?;
 
-        jvm.put_field(&mut this, "maxValue", "I", max).await?;
-        jvm.put_field(&mut this, "step", "I", 1).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/lwc/ProgressComponent", "maxValue", "I", max)
+            .await?;
+        jvm.put_field(&mut this, "org/kwis/msp/lwc/ProgressComponent", "step", "I", 1).await?;
 
         Ok(())
     }
@@ -50,7 +51,7 @@ impl ProgressComponent {
     async fn get_max_value(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lwc.ProgressComponent::getMaxValue({this:?})");
 
-        jvm.get_field(&this, "maxValue", "I").await
+        jvm.get_field(&this, "org/kwis/msp/lwc/ProgressComponent", "maxValue", "I").await
     }
 
     async fn set_max_value(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, max: i32) -> JvmResult<()> {
@@ -60,8 +61,9 @@ impl ProgressComponent {
             return Err(jvm.exception("java/lang/IllegalArgumentException", "maximum must be positive").await);
         }
 
-        jvm.put_field(&mut this, "maxValue", "I", max).await?;
-        let value: i32 = jvm.get_field(&this, "value", "I").await?;
+        jvm.put_field(&mut this, "org/kwis/msp/lwc/ProgressComponent", "maxValue", "I", max)
+            .await?;
+        let value: i32 = jvm.get_field(&this, "org/kwis/msp/lwc/ProgressComponent", "value", "I").await?;
         Self::store_value(jvm, &mut this, value).await?;
 
         Ok(())
@@ -70,7 +72,7 @@ impl ProgressComponent {
     async fn get_value(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lwc.ProgressComponent::getValue({this:?})");
 
-        jvm.get_field(&this, "value", "I").await
+        jvm.get_field(&this, "org/kwis/msp/lwc/ProgressComponent", "value", "I").await
     }
 
     async fn set_value(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, value: i32) -> JvmResult<i32> {
@@ -82,21 +84,21 @@ impl ProgressComponent {
     async fn get_step(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lwc.ProgressComponent::getStep({this:?})");
 
-        jvm.get_field(&this, "step", "I").await
+        jvm.get_field(&this, "org/kwis/msp/lwc/ProgressComponent", "step", "I").await
     }
 
     async fn set_step(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, step: i32) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lwc.ProgressComponent::setStep({this:?}, {step})");
 
-        let max: i32 = jvm.get_field(&this, "maxValue", "I").await?;
+        let max: i32 = jvm.get_field(&this, "org/kwis/msp/lwc/ProgressComponent", "maxValue", "I").await?;
         if step <= 0 || step > max {
             return Err(jvm
                 .exception("java/lang/IllegalArgumentException", "step must be between 1 and the maximum")
                 .await);
         }
 
-        jvm.put_field(&mut this, "step", "I", step).await?;
-        let value: i32 = jvm.get_field(&this, "value", "I").await?;
+        jvm.put_field(&mut this, "org/kwis/msp/lwc/ProgressComponent", "step", "I", step).await?;
+        let value: i32 = jvm.get_field(&this, "org/kwis/msp/lwc/ProgressComponent", "value", "I").await?;
         Self::store_value(jvm, &mut this, value).await?;
 
         Ok(())
@@ -110,12 +112,12 @@ impl ProgressComponent {
 
     /// Keeps the value within 0..=maximum and on a whole number of steps.
     async fn store_value(jvm: &Jvm, this: &mut ClassInstanceRef<Self>, value: i32) -> JvmResult<i32> {
-        let max: i32 = jvm.get_field(this, "maxValue", "I").await?;
-        let step: i32 = jvm.get_field(this, "step", "I").await?;
+        let max: i32 = jvm.get_field(this, "org/kwis/msp/lwc/ProgressComponent", "maxValue", "I").await?;
+        let step: i32 = jvm.get_field(this, "org/kwis/msp/lwc/ProgressComponent", "step", "I").await?;
 
         let value = value.clamp(0, max.max(0));
         let value = if step > 0 { value - value % step } else { value };
-        jvm.put_field(this, "value", "I", value).await?;
+        jvm.put_field(this, "org/kwis/msp/lwc/ProgressComponent", "value", "I", value).await?;
 
         Ok(value)
     }

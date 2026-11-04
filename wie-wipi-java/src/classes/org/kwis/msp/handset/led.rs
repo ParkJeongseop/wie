@@ -2,7 +2,7 @@ use alloc::vec;
 
 use jvm::{Jvm, Result as JvmResult};
 use jvm_class_proto::JavaMethodProto;
-use jvm_types::MethodAccessFlags;
+use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
@@ -16,12 +16,12 @@ impl LED {
             parent_class: Some("java/lang/Object"),
             interfaces: vec![],
             methods: vec![
-                JavaMethodProto::new("getCount", "()I", Self::get_count, MethodAccessFlags::STATIC),
-                JavaMethodProto::new("set", "(I)V", Self::set, MethodAccessFlags::STATIC),
-                JavaMethodProto::new("get", "()I", Self::get, MethodAccessFlags::STATIC),
+                JavaMethodProto::new("getCount", "()I", Self::get_count, MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC),
+                JavaMethodProto::new("set", "(I)V", Self::set, MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC),
+                JavaMethodProto::new("get", "()I", Self::get, MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC),
             ],
             fields: vec![],
-            access_flags: Default::default(),
+            access_flags: ClassAccessFlags::PUBLIC,
         }
     }
 

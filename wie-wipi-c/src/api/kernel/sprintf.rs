@@ -4,7 +4,7 @@ use wie_util::{ByteRead, Result, read_null_terminated_string_bytes};
 
 const MAX_WIDTH: usize = 4096;
 
-pub fn sprintf(context: &(impl ByteRead + ?Sized), format_bytes: &[u8], args: &[u32]) -> Result<Vec<u8>> {
+pub fn sprintf(context: &(impl ByteRead + ?Sized), format_bytes: &[u8], args: impl Iterator<Item = Result<u32>>) -> Result<Vec<u8>> {
     let format_string = encoding_rs::EUC_KR.decode(format_bytes).0;
     let result = self::format(&format_string, args, &mut |ptr| {
         let bytes = read_null_terminated_string_bytes(context, ptr)?;
@@ -15,10 +15,10 @@ pub fn sprintf(context: &(impl ByteRead + ?Sized), format_bytes: &[u8], args: &[
     Ok(encoding_rs::EUC_KR.encode(&result).0.into_owned())
 }
 
-pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Result<String>) -> Result<String> {
+fn format(format: &str, args: impl Iterator<Item = Result<u32>>, read_string: &mut dyn FnMut(u32) -> Result<String>) -> Result<String> {
     let mut result = String::with_capacity(format.len());
     let mut chars = format.chars();
-    let mut arg_iter = args.iter();
+    let mut arg_iter = args;
 
     while let Some(x) = chars.next() {
         if x != '%' {
@@ -48,9 +48,9 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
                     // ILP32 ABI: long is one word; only long long occupies two
                     let long = longs >= 2;
                     let raw = if long {
-                        next_arg64(&mut arg_iter)
+                        next_arg64(&mut arg_iter)?
                     } else {
-                        next_arg(&mut arg_iter) as u64
+                        next_arg(&mut arg_iter)? as u64
                     };
                     // core::fmt panics on width >= 65536; guest-controlled width must be clamped
                     let width = width.unwrap_or(0).min(MAX_WIDTH);
@@ -80,7 +80,7 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
                 }
                 'f' => {
                     // a double takes two words, low word first
-                    let value = f64::from_bits(next_arg64(&mut arg_iter));
+                    let value = f64::from_bits(next_arg64(&mut arg_iter)?);
                     let width = width.unwrap_or(0).min(MAX_WIDTH);
                     let decimals = precision.unwrap_or(6).min(MAX_WIDTH);
                     if let Some('0') = flag {
@@ -91,7 +91,7 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
                     break;
                 }
                 's' => {
-                    let ptr = next_arg(&mut arg_iter);
+                    let ptr = next_arg(&mut arg_iter)?;
                     if ptr == 0 {
                         result += "(null)";
                         break;
@@ -107,14 +107,14 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
                     break;
                 }
                 'c' => {
-                    result.push(next_arg(&mut arg_iter) as u8 as char);
+                    result.push(next_arg(&mut arg_iter)? as u8 as char);
                     break;
                 }
                 'x' | 'X' => {
                     let arg = if longs >= 2 {
-                        next_arg64(&mut arg_iter)
+                        next_arg64(&mut arg_iter)?
                     } else {
-                        next_arg(&mut arg_iter) as u64
+                        next_arg(&mut arg_iter)? as u64
                     };
                     let width = width.unwrap_or(0).min(MAX_WIDTH);
                     let hex = if c == 'x' { format!("{arg:x}") } else { format!("{arg:X}") };
@@ -147,19 +147,19 @@ pub fn format(format: &str, args: &[u32], read_string: &mut dyn FnMut(u32) -> Re
     Ok(result)
 }
 
-fn next_arg<'a>(arg_iter: &mut impl Iterator<Item = &'a u32>) -> u32 {
-    arg_iter.next().copied().unwrap_or_else(|| {
+fn next_arg(arg_iter: &mut impl Iterator<Item = Result<u32>>) -> Result<u32> {
+    Ok(arg_iter.next().transpose()?.unwrap_or_else(|| {
         tracing::warn!("printf: more format specifiers than arguments");
         0
-    })
+    }))
 }
 
 // long arguments occupy two consecutive words, low word first
-fn next_arg64<'a>(arg_iter: &mut impl Iterator<Item = &'a u32>) -> u64 {
-    let low = next_arg(arg_iter) as u64;
-    let high = next_arg(arg_iter) as u64;
+fn next_arg64(arg_iter: &mut impl Iterator<Item = Result<u32>>) -> Result<u64> {
+    let low = next_arg(arg_iter)? as u64;
+    let high = next_arg(arg_iter)? as u64;
 
-    (high << 32) | low
+    Ok((high << 32) | low)
 }
 
 #[cfg(test)]
@@ -190,7 +190,7 @@ mod test {
     }
 
     fn format(format_string: &str, args: &[u32]) -> Result<String> {
-        super::format(format_string, args, &mut |_| Ok("stub".to_string()))
+        super::format(format_string, args.iter().copied().map(Ok), &mut |_| Ok("stub".to_string()))
     }
 
     #[test]
@@ -272,7 +272,7 @@ mod test {
         memory.bytes[0x40 + guest_string.len()] = 0;
 
         let format = encoding_rs::EUC_KR.encode("안녕 %s %c %d %u %x").0;
-        let result = super::sprintf(&memory, &format, &[0x40, b'A' as u32, (-7i32) as u32, 42, 0xbeef])?;
+        let result = super::sprintf(&memory, &format, [0x40, b'A' as u32, (-7i32) as u32, 42, 0xbeef].into_iter().map(Ok))?;
 
         let expected = "안녕 세계 A -7 42 beef";
         assert_eq!(encoding_rs::EUC_KR.decode(&result).0, expected);
@@ -284,15 +284,18 @@ mod test {
     #[test]
     fn integer_precision_float_and_upper_hex() {
         let mut none = |_: u32| -> Result<String> { unreachable!() };
-        assert_eq!(super::format("ch0%i.mbac", &[3], &mut none).unwrap(), "ch03.mbac");
+        assert_eq!(super::format("ch0%i.mbac", [3].into_iter().map(Ok), &mut none).unwrap(), "ch03.mbac");
         assert_eq!(
-            super::format("%.3d|%5.2d|%-i", &[7, 7, (-7i32) as u32], &mut none).unwrap(),
+            super::format("%.3d|%5.2d|%-i", [7, 7, (-7i32) as u32].into_iter().map(Ok), &mut none).unwrap(),
             "007|   07|%-i"
         );
         assert_eq!(
-            super::format("%.1f %f", &[0x4000_0000, 0x4004_0000, 0, 0x3ff0_0000], &mut none).unwrap(),
+            super::format("%.1f %f", [0x4000_0000, 0x4004_0000, 0, 0x3ff0_0000].into_iter().map(Ok), &mut none).unwrap(),
             "2.5 1.000000"
         );
-        assert_eq!(super::format("%X %04x", &[0xbeef, 0x2a], &mut none).unwrap(), "BEEF 002a");
+        assert_eq!(
+            super::format("%X %04x", [0xbeef, 0x2a].into_iter().map(Ok), &mut none).unwrap(),
+            "BEEF 002a"
+        );
     }
 }

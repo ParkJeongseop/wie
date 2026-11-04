@@ -68,12 +68,32 @@ impl RecordEnumerationImpl {
 
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
 
-        jvm.put_field(&mut this, "store", "Ljavax/microedition/rms/RecordStore;", store).await?;
-        jvm.put_field(&mut this, "filter", "Ljavax/microedition/rms/RecordFilter;", filter)
+        jvm.put_field(
+            &mut this,
+            "net/wie/RecordEnumerationImpl",
+            "store",
+            "Ljavax/microedition/rms/RecordStore;",
+            store,
+        )
+        .await?;
+        jvm.put_field(
+            &mut this,
+            "net/wie/RecordEnumerationImpl",
+            "filter",
+            "Ljavax/microedition/rms/RecordFilter;",
+            filter,
+        )
+        .await?;
+        jvm.put_field(
+            &mut this,
+            "net/wie/RecordEnumerationImpl",
+            "comparator",
+            "Ljavax/microedition/rms/RecordComparator;",
+            comparator,
+        )
+        .await?;
+        jvm.put_field(&mut this, "net/wie/RecordEnumerationImpl", "keptUpdated", "Z", keep_updated)
             .await?;
-        jvm.put_field(&mut this, "comparator", "Ljavax/microedition/rms/RecordComparator;", comparator)
-            .await?;
-        jvm.put_field(&mut this, "keptUpdated", "Z", keep_updated).await?;
 
         jvm.invoke_virtual(&this, "net/wie/RecordEnumerationImpl", "rebuild", "()V", ()).await
     }
@@ -81,9 +101,20 @@ impl RecordEnumerationImpl {
     async fn rebuild(jvm: &Jvm, context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("net.wie.RecordEnumerationImpl::rebuild({this:?})");
 
-        let store: ClassInstanceRef<RecordStore> = jvm.get_field(&this, "store", "Ljavax/microedition/rms/RecordStore;").await?;
-        let filter: ClassInstanceRef<RecordFilter> = jvm.get_field(&this, "filter", "Ljavax/microedition/rms/RecordFilter;").await?;
-        let comparator: ClassInstanceRef<RecordComparator> = jvm.get_field(&this, "comparator", "Ljavax/microedition/rms/RecordComparator;").await?;
+        let store: ClassInstanceRef<RecordStore> = jvm
+            .get_field(&this, "net/wie/RecordEnumerationImpl", "store", "Ljavax/microedition/rms/RecordStore;")
+            .await?;
+        let filter: ClassInstanceRef<RecordFilter> = jvm
+            .get_field(&this, "net/wie/RecordEnumerationImpl", "filter", "Ljavax/microedition/rms/RecordFilter;")
+            .await?;
+        let comparator: ClassInstanceRef<RecordComparator> = jvm
+            .get_field(
+                &this,
+                "net/wie/RecordEnumerationImpl",
+                "comparator",
+                "Ljavax/microedition/rms/RecordComparator;",
+            )
+            .await?;
 
         let database = RecordStore::get_database(jvm, context, &store).await?;
         let mut record_ids = database.get_record_ids().await;
@@ -143,8 +174,8 @@ impl RecordEnumerationImpl {
         let ids = records.iter().map(|record| record.0).collect::<Vec<_>>();
         let mut array = jvm.instantiate_array("I", ids.len()).await?;
         jvm.store_array(&mut array, 0, ids).await?;
-        jvm.put_field(&mut this, "ids", "[I", array).await?;
-        jvm.put_field(&mut this, "index", "I", -1).await?;
+        jvm.put_field(&mut this, "net/wie/RecordEnumerationImpl", "ids", "[I", array).await?;
+        jvm.put_field(&mut this, "net/wie/RecordEnumerationImpl", "index", "I", -1).await?;
 
         Ok(())
     }
@@ -152,7 +183,7 @@ impl RecordEnumerationImpl {
     const PRECEDES: i32 = -1;
 
     async fn ids(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<Vec<i32>> {
-        let ids: ClassInstanceRef<Array<i32>> = jvm.get_field(this, "ids", "[I").await?;
+        let ids: ClassInstanceRef<Array<i32>> = jvm.get_field(this, "net/wie/RecordEnumerationImpl", "ids", "[I").await?;
         let length = jvm.array_length(&ids).await?;
 
         jvm.load_array(&ids, 0, length).await
@@ -168,7 +199,7 @@ impl RecordEnumerationImpl {
         tracing::debug!("net.wie.RecordEnumerationImpl::hasNextElement({this:?})");
 
         let count = Self::ids(jvm, &this).await?.len() as i32;
-        let index: i32 = jvm.get_field(&this, "index", "I").await?;
+        let index: i32 = jvm.get_field(&this, "net/wie/RecordEnumerationImpl", "index", "I").await?;
 
         Ok(index != count - 1)
     }
@@ -177,7 +208,7 @@ impl RecordEnumerationImpl {
         tracing::debug!("net.wie.RecordEnumerationImpl::hasPreviousElement({this:?})");
 
         let count = Self::ids(jvm, &this).await?.len() as i32;
-        let index: i32 = jvm.get_field(&this, "index", "I").await?;
+        let index: i32 = jvm.get_field(&this, "net/wie/RecordEnumerationImpl", "index", "I").await?;
 
         Ok(count != 0 && index != 0)
     }
@@ -186,11 +217,11 @@ impl RecordEnumerationImpl {
         tracing::debug!("net.wie.RecordEnumerationImpl::nextRecordId({this:?})");
 
         let ids = Self::ids(jvm, &this).await?;
-        let index: i32 = jvm.get_field(&this, "index", "I").await?;
+        let index: i32 = jvm.get_field(&this, "net/wie/RecordEnumerationImpl", "index", "I").await?;
         let Some(record_id) = ids.get((index + 1) as usize) else {
             return Err(jvm.exception("javax/microedition/rms/InvalidRecordIDException", "No next record").await);
         };
-        jvm.put_field(&mut this, "index", "I", index + 1).await?;
+        jvm.put_field(&mut this, "net/wie/RecordEnumerationImpl", "index", "I", index + 1).await?;
 
         Ok(*record_id)
     }
@@ -199,7 +230,7 @@ impl RecordEnumerationImpl {
         tracing::debug!("net.wie.RecordEnumerationImpl::previousRecordId({this:?})");
 
         let ids = Self::ids(jvm, &this).await?;
-        let index: i32 = jvm.get_field(&this, "index", "I").await?;
+        let index: i32 = jvm.get_field(&this, "net/wie/RecordEnumerationImpl", "index", "I").await?;
         // before the first call the enumeration is also "after the last record"
         let previous = if index == -1 { ids.len() as i32 - 1 } else { index - 1 };
         if previous < 0 {
@@ -207,7 +238,7 @@ impl RecordEnumerationImpl {
                 .exception("javax/microedition/rms/InvalidRecordIDException", "No previous record")
                 .await);
         }
-        jvm.put_field(&mut this, "index", "I", previous).await?;
+        jvm.put_field(&mut this, "net/wie/RecordEnumerationImpl", "index", "I", previous).await?;
 
         Ok(ids[previous as usize])
     }
@@ -233,7 +264,9 @@ impl RecordEnumerationImpl {
     }
 
     async fn record(jvm: &Jvm, this: &ClassInstanceRef<Self>, record_id: i32) -> JvmResult<ClassInstanceRef<Array<i8>>> {
-        let store: ClassInstanceRef<RecordStore> = jvm.get_field(this, "store", "Ljavax/microedition/rms/RecordStore;").await?;
+        let store: ClassInstanceRef<RecordStore> = jvm
+            .get_field(this, "net/wie/RecordEnumerationImpl", "store", "Ljavax/microedition/rms/RecordStore;")
+            .await?;
 
         jvm.invoke_virtual(&store, "javax/microedition/rms/RecordStore", "getRecord", "(I)[B", (record_id,))
             .await
@@ -242,13 +275,14 @@ impl RecordEnumerationImpl {
     async fn reset(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("net.wie.RecordEnumerationImpl::reset({this:?})");
 
-        jvm.put_field(&mut this, "index", "I", -1).await
+        jvm.put_field(&mut this, "net/wie/RecordEnumerationImpl", "index", "I", -1).await
     }
 
     async fn keep_updated(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, keep_updated: bool) -> JvmResult<()> {
         tracing::debug!("net.wie.RecordEnumerationImpl::keepUpdated({this:?}, {keep_updated})");
 
-        jvm.put_field(&mut this, "keptUpdated", "Z", keep_updated).await?;
+        jvm.put_field(&mut this, "net/wie/RecordEnumerationImpl", "keptUpdated", "Z", keep_updated)
+            .await?;
         if keep_updated {
             // there are no change notifications from the store; rebuilding now is the closest match
             let _: () = jvm.invoke_virtual(&this, "net/wie/RecordEnumerationImpl", "rebuild", "()V", ()).await?;
@@ -260,7 +294,7 @@ impl RecordEnumerationImpl {
     async fn is_kept_updated(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
         tracing::debug!("net.wie.RecordEnumerationImpl::isKeptUpdated({this:?})");
 
-        jvm.get_field(&this, "keptUpdated", "Z").await
+        jvm.get_field(&this, "net/wie/RecordEnumerationImpl", "keptUpdated", "Z").await
     }
 
     async fn destroy(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {

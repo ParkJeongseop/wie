@@ -1,7 +1,7 @@
 use alloc::{format, vec, vec::Vec};
 
 use wipi_types::{
-    ktf::wipic::{WIPICDatabaseInterface, WIPICGraphicsInterface, WIPICKnlInterface},
+    ktf::wipic::{WIPICFsInterface, WIPICGraphicsInterface, WIPICKnlInterface},
     wipic::WIPICWord,
 };
 
@@ -9,13 +9,13 @@ use wie_core_arm::ArmCore;
 use wie_util::{Result, WieError};
 use wie_wipi_c::{
     MethodImpl, WIPICContext, WIPICMethodBody,
-    api::{database, graphics, im, kernel, media, misc, net, uic, util},
+    api::{database, fs, graphics, im, kernel, media, misc, net, uic, util},
 };
 
 use super::user_memory;
 use crate::runtime::{
     SVC_CATEGORY_WIPIC,
-    svc_ids::{WIPICDatabaseMethodId, WIPICGraphicsMethodId, WIPICKernelMethodId, WIPICTableId},
+    svc_ids::{WIPICFsMethodId, WIPICGraphicsMethodId, WIPICKernelMethodId, WIPICTableId},
 };
 
 fn gen_stub(id: WIPICWord, name: &'static str) -> WIPICMethodBody {
@@ -192,27 +192,26 @@ pub fn get_misc_method_table() -> Vec<WIPICMethodBody> {
     ]
 }
 
-pub fn get_database_interface(core: &mut ArmCore) -> Result<WIPICDatabaseInterface> {
-    let table_id = WIPICTableId::Database;
-
-    Ok(WIPICDatabaseInterface {
-        open_database: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::OpenDatabase))?,
-        read_record_single: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::StreamRead))?,
-        write_record_single: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::StreamWrite))?,
-        close_database: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::CloseDatabase))?,
-        select_record: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::SelectRecord))?,
-        update_record: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::UpdateRecord))?,
-        delete_record: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::DeleteRecord))?,
-        list_record: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::ListRecord))?,
-        sort_records: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::SortRecords))?,
-        get_access_mode: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::GetAccessMode))?,
-        get_number_of_records: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::GetNumberOfRecords))?,
-        get_record_size: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::GetRecordSize))?,
-        list_databases: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::ListDatabases))?,
-        unk13: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::Unk13))?,
-        unk14: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::Unk14))?,
-        unk15: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::Unk15))?,
-        unk16: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICDatabaseMethodId::Exists))?,
+pub fn get_fs_interface(core: &mut ArmCore) -> Result<WIPICFsInterface> {
+    let table_id = WIPICTableId::Fs;
+    Ok(WIPICFsInterface {
+        open: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Open))?,
+        read: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Read))?,
+        write: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Write))?,
+        close: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Close))?,
+        seek: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Seek))?,
+        file_attribute: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::FileAttribute))?,
+        remove: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Remove))?,
+        rename: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Rename))?,
+        make_directory: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::MkDir))?,
+        remove_directory: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::RmDir))?,
+        list: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::List))?,
+        total_space: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::TotalSpace))?,
+        available: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Available))?,
+        set_mode: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::SetMode))?,
+        get_counts: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::GetCounts))?,
+        tell: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Tell))?,
+        exists: core.make_svc_stub(SVC_CATEGORY_WIPIC, table_id.function_id(WIPICFsMethodId::Exists))?,
     })
 }
 
@@ -227,9 +226,9 @@ pub fn get_uic_method_table() -> Vec<WIPICMethodBody> {
         gen_stub(6, "MC_uicGetClassName"),
         gen_stub(7, "MC_uicIsInstance"),
         gen_stub(8, "MC_uicHandleEvent"),
-        gen_stub(9, "MC_uicConfigure"),
+        uic::configure.into_body(),
         gen_stub(10, "MC_uicGetGeometry"),
-        gen_stub(11, "MC_uicSetEnable"),
+        uic::set_enable.into_body(),
         gen_stub(12, "MC_uicSetCallback"),
         gen_stub(13, "MC_uicSetEventHandler"),
         gen_stub(14, "MC_uicSetFont"),
@@ -242,16 +241,16 @@ pub fn get_uic_method_table() -> Vec<WIPICMethodBody> {
         gen_stub(21, "MC_uicSetTimeMask"),
         gen_stub(22, "MC_uicSetTime"),
         gen_stub(23, "MC_uicSetTimeLong"),
-        gen_stub(24, "MC_uicGetTime"),
+        uic::get_time.into_body(),
         gen_stub(25, "MC_uicAddMenuItem"),
         uic::get_menu_item.into_body(),
         gen_stub(27, "MC_uicRemoveMenuItem"),
         gen_stub(28, "MC_uicSetActiveMenuItem"),
         gen_stub(29, "MC_uicGetActiveMenuItem"),
-        gen_stub(30, "MC_uicInsertText"),
+        uic::insert_text.into_body(),
         gen_stub(31, "MC_uicDeleteText"),
         gen_stub(32, "MC_uicGetMaxTextSize"),
-        gen_stub(33, "MC_uicSetMaxTextSize"),
+        uic::set_max_text_size.into_body(),
         gen_stub(34, "MC_uicGetTextSize"),
         gen_stub(35, "MC_uicGetText"),
         gen_stub(36, "MC_uicAddListItem"),
@@ -302,10 +301,10 @@ pub fn get_net_method_table() -> Vec<WIPICMethodBody> {
     vec![
         net::connect.into_body(),
         net::close.into_body(),
-        gen_stub(2, "MC_netSocket"),
-        gen_stub(3, "MC_netSocketConnect"),
-        gen_stub(4, "MC_netSocketWrite"),
-        gen_stub(5, "MC_netSocketRead"),
+        net::socket.into_body(),
+        net::socket_connect.into_body(),
+        net::socket_write.into_body(),
+        net::socket_read.into_body(),
         net::socket_close.into_body(),
         gen_stub(7, "MC_netSocketBind"),
         gen_stub(8, "MC_netGetMaxPacketLength"),
@@ -313,8 +312,8 @@ pub fn get_net_method_table() -> Vec<WIPICMethodBody> {
         gen_stub(10, "MC_netSocketRcvFrom"),
         gen_stub(11, "MC_netGetHostAddr"),
         gen_stub(12, "MC_netSocketAccept"),
-        gen_stub(13, "MC_netSetReadCB"),
-        gen_stub(14, "MC_netSetWriteCB"),
+        net::set_read_callback.into_body(),
+        net::set_write_callback.into_body(),
         gen_stub(15, "MC_netHttpOpen"),
         gen_stub(16, "MC_netHttpConnect"),
         gen_stub(17, "MC_netHttpSetRequestMethod"),
@@ -342,21 +341,26 @@ fn gen_unk_stub(id: u32, index: u32) -> WIPICMethodBody {
     body.into_body()
 }
 
-// Table 4 is the input-method block (MC_im*): entries 3 and 4 are the mode count and the mode
-// table, identified from the call sites that walk the answer comparing "KO", "EN/S", "EN/L",
-// "N123"; entries 0..2 are the mode set/get and handleInput in an order no title has shown yet.
-pub fn get_unk3_method_table() -> Vec<WIPICMethodBody> {
+pub fn get_im_method_table() -> Vec<WIPICMethodBody> {
     vec![
-        gen_unk_stub(3, 0),
-        gen_unk_stub(3, 1),
-        gen_unk_stub(3, 2),
-        im::get_supported_mode_count.into_body(),
+        im::handle_input.into_body(),
+        im::set_current_mode.into_body(),
+        im::get_current_mode.into_body(),
+        im::get_support_mode_count.into_body(),
         im::get_supported_modes.into_body(),
     ]
 }
 
+async fn unk_screen_flush(context: &mut dyn WIPICContext) -> Result<()> {
+    tracing::debug!("KTF unk_screen_flush()");
+    let framebuffer = graphics::get_screen_framebuffer(context, 0).await?;
+    let width = graphics::get_framebuffer_width(context, framebuffer).await? as u32;
+    let height = graphics::get_framebuffer_height(context, framebuffer).await? as u32;
+    graphics::flush_lcd(context, 0, framebuffer, 0, 0, width, height).await
+}
+
 pub fn get_unk12_method_table() -> Vec<WIPICMethodBody> {
-    vec![gen_unk_stub(12, 0), gen_unk_stub(12, 1), gen_unk_stub(12, 2)]
+    vec![gen_unk_stub(12, 0), unk_screen_flush.into_body(), gen_unk_stub(12, 2)]
 }
 
 pub fn get_stub_method_table(interface: WIPICWord) -> Vec<WIPICMethodBody> {
@@ -369,7 +373,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICKernelMethodId::Printk => Some(kernel::printk.into_body()),
             WIPICKernelMethodId::Sprintk => Some(kernel::sprintk.into_body()),
             WIPICKernelMethodId::GetExecNames => Some(kernel::get_exec_names.into_body()),
-            WIPICKernelMethodId::Execute => Some(gen_stub(3, "MC_knlExecute")),
+            WIPICKernelMethodId::Execute => Some(kernel::execute.into_body()),
             WIPICKernelMethodId::Mexecute => Some(gen_stub(4, "MC_knlMExecute")),
             WIPICKernelMethodId::Load => Some(gen_stub(5, "MC_knlLoad")),
             WIPICKernelMethodId::Mload => Some(gen_stub(6, "MC_knlMLoad")),
@@ -472,12 +476,12 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICGraphicsMethodId::DecodeNextImage => Some(graphics::decode_next_image.into_body()),
             WIPICGraphicsMethodId::EncodeImage => Some(graphics::encode_image.into_body()),
             WIPICGraphicsMethodId::PostEvent => Some(graphics::post_event.into_body()),
-            WIPICGraphicsMethodId::HandleInput => Some(gen_stub(37, "MC_imHandleInput")),
+            WIPICGraphicsMethodId::HandleInput => Some(im::handle_input.into_body()),
             WIPICGraphicsMethodId::SetCurrentMode => Some(im::set_current_mode.into_body()),
             WIPICGraphicsMethodId::GetCurrentMode => Some(im::get_current_mode.into_body()),
-            WIPICGraphicsMethodId::GetSupportModeCount => Some(im::get_supported_mode_count.into_body()),
+            WIPICGraphicsMethodId::GetSupportModeCount => Some(im::get_support_mode_count.into_body()),
             WIPICGraphicsMethodId::GetSupportedModes => Some(im::get_supported_modes.into_body()),
-            WIPICGraphicsMethodId::FillPolygon => Some(gen_stub(42, "MC_grpFillPolygon")),
+            WIPICGraphicsMethodId::FillPolygon => Some(graphics::fill_polygon.into_body()),
             WIPICGraphicsMethodId::DrawPolygon => Some(gen_stub(43, "MC_grpDrawPolygon")),
             WIPICGraphicsMethodId::ShowAnnunciator => Some(gen_stub(44, "OEMC_grpShowAnnunciator")),
             WIPICGraphicsMethodId::GetAnnunciatorInfo => Some(gen_stub(45, "OEMC_grpGetAnnunciatorInfo")),
@@ -496,7 +500,7 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
             WIPICGraphicsMethodId::EncodeImageEx => Some(gen_stub(58, "OEMC_grpEncodeImageEx")),
             WIPICGraphicsMethodId::GetImageInfo => Some(gen_stub(59, "OEMC_grpGetImageInfo")),
         },
-        WIPICTableId::Interface3 => get_unk3_method_table().into_iter().nth(function_id as usize),
+        WIPICTableId::Interface3 => get_im_method_table().into_iter().nth(function_id as usize),
         // Table 5 is the record database (the specification's MC_db* section in its own order:
         // open, close, delete, insert, select, update, delete-record, list, then the count, the
         // record size and, at 12, what titles read as the storage still available).
@@ -522,26 +526,24 @@ pub fn get_method_body(table_id: WIPICTableId, function_id: u16) -> Option<WIPIC
                 None
             }
         }
-        WIPICTableId::Database => match WIPICDatabaseMethodId::try_from(function_id).ok()? {
-            WIPICDatabaseMethodId::OpenDatabase => Some(database::open_database_ktf.into_body()),
-            WIPICDatabaseMethodId::StreamRead => Some(database::stream_read.into_body()),
-            WIPICDatabaseMethodId::StreamWrite => Some(database::stream_write.into_body()),
-            WIPICDatabaseMethodId::CloseDatabase => Some(database::close_database.into_body()),
-            WIPICDatabaseMethodId::SelectRecord => Some(database::select_record_ktf.into_body()),
-            WIPICDatabaseMethodId::UpdateRecord => Some(database::stat_by_name_ktf.into_body()),
-            WIPICDatabaseMethodId::DeleteRecord => Some(database::delete_record_ktf.into_body()),
-            WIPICDatabaseMethodId::ListRecord => Some(database::rename_or_list_ktf.into_body()),
-            // Slot 8 of this table is MC_fsMkDir(name): nothing here holds a directory, so making
-            // one succeeds (겟앰프드 and 티어즈오브메탈 make one before their first save).
-            WIPICDatabaseMethodId::SortRecords => Some(database::make_directory_ktf.into_body()),
-            WIPICDatabaseMethodId::GetAccessMode => Some(gen_stub(9, "MC_dbGetAccessMode")),
-            WIPICDatabaseMethodId::GetNumberOfRecords => Some(database::get_number_of_records_ktf.into_body()),
-            WIPICDatabaseMethodId::GetRecordSize => Some(database::total_space_ktf.into_body()),
-            WIPICDatabaseMethodId::ListDatabases => Some(database::list_databases.into_body()),
-            WIPICDatabaseMethodId::Unk13 => Some(gen_stub(13, "MC_dbUnk13")),
-            WIPICDatabaseMethodId::Unk14 => Some(gen_stub(14, "MC_dbUnk14")),
-            WIPICDatabaseMethodId::Unk15 => Some(database::tell_ktf.into_body()),
-            WIPICDatabaseMethodId::Exists => Some(database::exists_database_ktf.into_body()),
+        WIPICTableId::Fs => match WIPICFsMethodId::try_from(function_id).ok()? {
+            WIPICFsMethodId::Open => Some(fs::open.into_body()),
+            WIPICFsMethodId::Read => Some(fs::read.into_body()),
+            WIPICFsMethodId::Write => Some(fs::write.into_body()),
+            WIPICFsMethodId::Close => Some(fs::close.into_body()),
+            WIPICFsMethodId::Seek => Some(fs::seek.into_body()),
+            WIPICFsMethodId::FileAttribute => Some(fs::file_attribute.into_body()),
+            WIPICFsMethodId::Remove => Some(fs::remove.into_body()),
+            WIPICFsMethodId::Rename => Some(fs::rename.into_body()),
+            WIPICFsMethodId::MkDir => Some(fs::make_directory.into_body()),
+            WIPICFsMethodId::RmDir => Some(fs::remove_directory.into_body()),
+            WIPICFsMethodId::List => Some(fs::list.into_body()),
+            WIPICFsMethodId::TotalSpace => Some(fs::total_space.into_body()),
+            WIPICFsMethodId::Available => Some(fs::available.into_body()),
+            WIPICFsMethodId::SetMode => Some(fs::set_mode.into_body()),
+            WIPICFsMethodId::GetCounts => Some(fs::get_counts.into_body()),
+            WIPICFsMethodId::Tell => Some(fs::tell.into_body()),
+            WIPICFsMethodId::Exists => Some(fs::exists.into_body()),
         },
         WIPICTableId::Interface7 => {
             if function_id < 64 {

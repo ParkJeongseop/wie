@@ -176,9 +176,14 @@ impl ResultWriter<u32> for u32 {
 impl ResultWriter<u64> for u64 {
     fn write(self, core: &mut ArmCore, next_pc: u32) -> Result<()> {
         core.write_return_value(&[self as u32, (self >> 32) as u32])?;
-        core.set_next_pc(next_pc)?;
+        core.set_next_pc(next_pc)
+    }
+}
 
-        Ok(())
+impl ResultWriter<i64> for i64 {
+    fn write(self, core: &mut ArmCore, next_pc: u32) -> Result<()> {
+        core.write_return_value(&[self as u32, (self as u64 >> 32) as u32])?;
+        core.set_next_pc(next_pc)
     }
 }
 
@@ -187,6 +192,14 @@ impl ResultWriter<()> for () {
         core.set_next_pc(next_pc)?;
 
         Ok(())
+    }
+}
+
+impl ResultWriter<f64> for f64 {
+    fn write(self, core: &mut ArmCore, next_pc: u32) -> Result<()> {
+        let bits = self.to_bits();
+        core.write_return_value(&[bits as u32, (bits >> 32) as u32])?;
+        core.set_next_pc(next_pc)
     }
 }
 

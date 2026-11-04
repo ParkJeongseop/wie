@@ -262,7 +262,7 @@ pub async fn total_space_ktf(_context: &mut dyn WIPICContext) -> Result<i32> {
 pub async fn list_databases(context: &mut dyn WIPICContext) -> Result<i32> {
     let system = context.system();
     let pid = system.pid().to_owned();
-    let usage = system.platform().database_repository().usage(&pid).await;
+    let usage = system.platform().database_repository().usage(&pid);
     let available = KTF_DATABASE_STORAGE_LIMIT.saturating_sub(usage).min(i32::MAX as u64) as i32;
 
     tracing::debug!("MC_dbListDataBase() = {available} (used={usage}, limit={KTF_DATABASE_STORAGE_LIMIT})");

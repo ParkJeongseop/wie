@@ -7,16 +7,16 @@ use alloc::{
 };
 use core::mem::{offset_of, size_of};
 
-use jvm::{ClassInstance, ClassInstanceRef, Jvm, runtime::JavaLangString};
-use rustjava_runtime::classes::java::util::Vector;
+use jvm::{ClassInstance, Jvm, runtime::JavaLangString};
 use wipi_types::ktf::{InitParam2, java::WIPIJBInterface};
 
-use wie_core_arm::{Allocator, ArmCore, EmulatedFunction, ResultWriter, SvcId};
+use wie_core_arm::{Allocator, ArmCore, ArmCoreContext, EmulatedFunction, ResultWriter, SvcId};
 use wie_jvm_support::JvmSupport;
 use wie_util::{ByteRead, Result, WieError, read_generic, read_null_terminated_string_bytes, write_generic};
 
 use crate::runtime::java::jvm_support::{
-    JavaClassDefinition, JavaClassInstance, JavaMethod, JavaMethodResult, JavaVtable, KtfJvmSupport, KtfJvmWord,
+    JavaClassDefinition, JavaClassInstance, JavaMethod, JavaMethodResult, JavaVtable, KtfJvmSupport, KtfJvmSupportContext, KtfJvmWord,
+    SUPPORT_CONTEXT_BASE,
 };
 use crate::runtime::{SVC_CATEGORY_JAVA_INTERFACE, svc_ids::JavaSvcId};
 
@@ -24,14 +24,14 @@ pub fn register_java_interface_svc_handler(core: &mut ArmCore, jvm: &Jvm) -> Res
     core.register_svc_handler(SVC_CATEGORY_JAVA_INTERFACE, handle_java_interface_svc, jvm)
 }
 
-async fn handle_java_interface_svc(core: &mut ArmCore, jvm: &mut Jvm, id: SvcId) -> Result<()> {
+async fn handle_java_interface_svc(core: &mut ArmCore, jvm: &mut Jvm, id: SvcId) -> Result<JavaMethodResult> {
     let (_, lr) = core.read_pc_lr()?;
     tracing::trace!("Java interface {} from {lr:#x}", id.0);
 
     match JavaSvcId::try_from(id)? {
-        JavaSvcId::JavaJump1 => EmulatedFunction::call(&java_jump_1, core, &mut ()).await?.write(core, lr),
-        JavaSvcId::JavaJump2 => EmulatedFunction::call(&java_jump_2, core, &mut ()).await?.write(core, lr),
-        JavaSvcId::JavaJump3 => EmulatedFunction::call(&java_jump_3, core, &mut ()).await?.write(core, lr),
+        JavaSvcId::JavaJump1 => return EmulatedFunction::call(&java_jump_1, core, &mut ()).await,
+        JavaSvcId::JavaJump2 => return EmulatedFunction::call(&java_jump_2, core, &mut ()).await,
+        JavaSvcId::JavaJump3 => return EmulatedFunction::call(&java_jump_3, core, &mut ()).await,
         JavaSvcId::GetJavaMethod => EmulatedFunction::call(&get_java_method, core, &mut ()).await?.write(core, lr),
         JavaSvcId::GetField => EmulatedFunction::call(&get_field, core, &mut ()).await?.write(core, lr),
         JavaSvcId::JbUnk4 => EmulatedFunction::call(&jb_unk4, core, &mut ()).await?.write(core, lr),
@@ -40,8 +40,10 @@ async fn handle_java_interface_svc(core: &mut ArmCore, jvm: &mut Jvm, id: SvcId)
         JavaSvcId::JbUnk8 => EmulatedFunction::call(&monitor_exit, core, jvm).await?.write(core, lr),
         JavaSvcId::RegisterClass => EmulatedFunction::call(&register_class, core, jvm).await?.write(core, lr),
         JavaSvcId::RegisterJavaString => EmulatedFunction::call(&register_java_string, core, jvm).await?.write(core, lr),
-        JavaSvcId::CallNative => EmulatedFunction::call(&call_native, core, &mut ()).await?.write(core, lr),
-    }
+        JavaSvcId::CallNative => return EmulatedFunction::call(&call_native, core, &mut ()).await,
+    }?;
+
+    Ok(JavaMethodResult::new(vec![], None))
 }
 
 pub fn get_wipi_jb_interface(core: &mut ArmCore) -> Result<u32> {
@@ -72,6 +74,7 @@ pub async fn java_class_load(core: &mut ArmCore, jvm: &mut Jvm, ptr_target: u32,
 
     let name_bytes = read_null_terminated_string_bytes(core, ptr_name)?;
     let name = String::from_utf8_lossy(&name_bytes).to_string();
+    let _frame = jvm.push_native_frame(&[]);
     let class = jvm.resolve_class(&name).await;
 
     if let Ok(x) = class {
@@ -94,6 +97,8 @@ pub async fn java_throw(core: &mut ArmCore, jvm: &mut Jvm, ptr_error: KtfJvmWord
     let error_bytes = read_null_terminated_string_bytes(core, ptr_error)?;
     let error = String::from_utf8_lossy(&error_bytes).to_string();
 
+    let support: KtfJvmSupportContext = read_generic(core, SUPPORT_CONTEXT_BASE)?;
+    let _frame = (support.ptr_visit_gc_root != 0).then(|| jvm.push_native_frame(&[]));
     let exception = match jvm.new_class(&error, "()V", ()).await {
         Ok(x) => x,
         Err(x) => return Err(JvmSupport::to_wie_err(jvm, x).await),
@@ -120,7 +125,8 @@ pub async fn java_throw_object(core: &mut ArmCore, jvm: &mut Jvm, ptr_exception:
     JavaMethod::handle_exception(core, jvm, exception).await
 }
 
-fn map_exception_unwind(core: &ArmCore, caller_sp: u32, context_base: u32, target: u32, next_pc: u32) -> Result<JavaMethodResult> {
+fn map_exception_unwind(core: &mut ArmCore, caller: &ArmCoreContext, context_base: u32, target: u32, next_pc: u32) -> Result<JavaMethodResult> {
+    let caller_sp = caller.sp;
     let handler_sp: u32 = read_generic(core, context_base + 9 * 4)?;
     tracing::trace!(
         "Checking Java exception unwind boundary: caller_sp={caller_sp:#x}, handler_sp={handler_sp:#x}, next_pc={next_pc:#x}, target={target:#x}"
@@ -134,19 +140,20 @@ fn map_exception_unwind(core: &ArmCore, caller_sp: u32, context_base: u32, targe
         });
     }
 
+    core.restore_context(caller);
     Ok(JavaMethodResult::new(vec![context_base, target], Some(next_pc)))
 }
 
 /// A jump's callee ran on a context of its own, so both words of its answer are carried back to
 /// the caller (r0 and r1): a `long` from a jumped method used to arrive as its low word only.
-fn map_jump_result(core: &ArmCore, caller_sp: u32, result: core::result::Result<u64, WieError>) -> Result<JavaMethodResult> {
+fn map_jump_result(core: &mut ArmCore, caller: &ArmCoreContext, result: core::result::Result<u64, WieError>) -> Result<JavaMethodResult> {
     match result {
         Ok(result) => Ok(JavaMethodResult::new(vec![result as u32, (result >> 32) as u32], None)),
         Err(WieError::JavaExceptionUnwind {
             context_base,
             target,
             next_pc,
-        }) => map_exception_unwind(core, caller_sp, context_base, target, next_pc),
+        }) => map_exception_unwind(core, caller, context_base, target, next_pc),
         Err(err) => Err(err),
     }
 }
@@ -209,9 +216,9 @@ async fn java_jump_1(core: &mut ArmCore, _: &mut (), arg1: u32, address: u32) ->
         return Err(WieError::FatalError("jump native address is null".to_string()));
     }
 
-    let caller_sp = core.save_context().sp;
+    let caller = core.save_context();
     let result = core.run_function::<u64>(address, &[arg1, 0, 0]).await;
-    map_jump_result(core, caller_sp, result)
+    map_jump_result(core, &caller, result)
 }
 
 async fn register_class(core: &mut ArmCore, jvm: &mut Jvm, ptr_class: u32) -> Result<()> {
@@ -219,6 +226,7 @@ async fn register_class(core: &mut ArmCore, jvm: &mut Jvm, ptr_class: u32) -> Re
 
     let class: JavaClassDefinition = KtfJvmSupport::class_from_raw(core, ptr_class);
     let class_name = class.name()?;
+    let _frame = jvm.push_native_frame(&[]);
     if !jvm.has_class(&class_name) {
         let ktf_class_loader = jvm
             .get_static_field("net/wie/KtfClassLoader", "instance", "Lnet/wie/KtfClassLoader;")
@@ -256,19 +264,9 @@ async fn register_java_string(core: &mut ArmCore, jvm: &mut Jvm, offset: u32, le
 
     let rust_string = String::from_utf16_lossy(&bytes_u16);
 
+    let support: KtfJvmSupportContext = read_generic(core, SUPPORT_CONTEXT_BASE)?;
+    let _frame = (support.ptr_visit_gc_root != 0).then(|| jvm.push_native_frame(&[]));
     let instance = JavaLangString::from_rust_string(jvm, &rust_string).await.unwrap();
-
-    // Add to class loader to not to be garbage collected
-    // TODO encapsulation?
-    let ktf_class_loader = jvm
-        .get_static_field("net/wie/KtfClassLoader", "instance", "Lnet/wie/KtfClassLoader;")
-        .await
-        .unwrap();
-    let strings_field: ClassInstanceRef<Vector> = jvm.get_field(&ktf_class_loader, "nativeStrings", "Ljava/util/Vector;").await.unwrap();
-    let _: bool = jvm
-        .invoke_virtual(&strings_field, "java/util/Vector", "add", "(Ljava/lang/Object;)Z", (instance.clone(),))
-        .await
-        .unwrap();
 
     Ok(KtfJvmSupport::class_instance_raw(&instance) as _)
 }
@@ -331,14 +329,14 @@ async fn call_native(core: &mut ArmCore, _: &mut (), address: u32, ptr_data: u32
     }
 
     // TODO correctly figure out parameter
-    let caller_sp = core.save_context().sp;
+    let caller = core.save_context();
     let result = match core.run_function::<u64>(address, &[ptr_data, ptr_data]).await {
         Ok(result) => result,
         Err(WieError::JavaExceptionUnwind {
             context_base,
             target,
             next_pc,
-        }) => return map_exception_unwind(core, caller_sp, context_base, target, next_pc),
+        }) => return map_exception_unwind(core, &caller, context_base, target, next_pc),
         Err(err) => return Err(err),
     };
 
@@ -357,9 +355,9 @@ async fn java_jump_2(core: &mut ArmCore, _: &mut (), arg1: u32, arg2: u32, addre
         return Err(WieError::FatalError("jump native address is null".to_string()));
     }
 
-    let caller_sp = core.save_context().sp;
+    let caller = core.save_context();
     let result = core.run_function::<u64>(address, &[arg1, arg2, 0]).await;
-    map_jump_result(core, caller_sp, result)
+    map_jump_result(core, &caller, result)
 }
 
 async fn java_jump_3(core: &mut ArmCore, _: &mut (), arg1: u32, arg2: u32, arg3: u32, address: u32) -> Result<JavaMethodResult> {
@@ -369,9 +367,9 @@ async fn java_jump_3(core: &mut ArmCore, _: &mut (), arg1: u32, arg2: u32, arg3:
         return Err(WieError::FatalError("jump native address is null".to_string()));
     }
 
-    let caller_sp = core.save_context().sp;
+    let caller = core.save_context();
     let result = core.run_function::<u64>(address, &[arg1, arg2, arg3]).await;
-    map_jump_result(core, caller_sp, result)
+    map_jump_result(core, &caller, result)
 }
 
 pub async fn java_new(core: &mut ArmCore, jvm: &mut Jvm, ptr_class: u32) -> Result<u32> {
@@ -380,6 +378,8 @@ pub async fn java_new(core: &mut ArmCore, jvm: &mut Jvm, ptr_class: u32) -> Resu
     let class = KtfJvmSupport::class_from_raw(core, ptr_class);
     let class_name = class.name()?;
 
+    let support: KtfJvmSupportContext = read_generic(core, SUPPORT_CONTEXT_BASE)?;
+    let _frame = (support.ptr_visit_gc_root != 0).then(|| jvm.push_native_frame(&[]));
     let result = jvm.instantiate_class(&class_name).await;
     if let Err(x) = result {
         return Err(JvmSupport::to_wie_err(jvm, x).await);
@@ -400,6 +400,8 @@ pub async fn java_array_new(core: &mut ArmCore, jvm: &mut Jvm, element_type: u32
     } else {
         (element_type as u8 as char).to_string()
     };
+    let support: KtfJvmSupportContext = read_generic(core, SUPPORT_CONTEXT_BASE)?;
+    let _frame = (support.ptr_visit_gc_root != 0).then(|| jvm.push_native_frame(&[]));
     let result = jvm.instantiate_array(&element_type_name, count as _).await;
     if let Err(x) = result {
         return Err(JvmSupport::to_wie_err(jvm, x).await);

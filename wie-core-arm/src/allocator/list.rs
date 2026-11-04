@@ -244,7 +244,12 @@ mod tests {
 
     #[test]
     fn test_allocator() -> Result<()> {
-        let mut core = ArmCore::new(false, None).unwrap();
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })
+        .unwrap();
         core.map(0x40000000, 0x1000)?;
 
         ListAllocator::init(&mut core, 0x40000000, 0x1000)?;
@@ -257,7 +262,12 @@ mod tests {
 
     #[test]
     fn test_coalesce_adjacent_free_blocks() -> Result<()> {
-        let mut core = ArmCore::new(false, None).unwrap();
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })
+        .unwrap();
         core.map(0x40000000, 0x1000)?;
 
         ListAllocator::init(&mut core, 0x40000000, 0x400)?;
@@ -276,7 +286,12 @@ mod tests {
 
     #[test]
     fn test_double_free_is_tolerated() -> Result<()> {
-        let mut core = ArmCore::new(false, None).unwrap();
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })
+        .unwrap();
         core.map(0x40000000, 0x1000)?;
 
         ListAllocator::init(&mut core, 0x40000000, 0x1000)?;
@@ -294,7 +309,12 @@ mod tests {
 
     #[test]
     fn test_reconstruct_corrupt_free_tail() -> Result<()> {
-        let mut core = ArmCore::new(false, None).unwrap();
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })
+        .unwrap();
         core.map(0x40000000, 0x100000)?;
 
         let base = 0x40000000;
@@ -318,7 +338,12 @@ mod tests {
 
     #[test]
     fn test_reconstruct_corrupt_header_with_in_use_bit() -> Result<()> {
-        let mut core = ArmCore::new(false, None).unwrap();
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })
+        .unwrap();
         core.map(0x40000000, 0x100000)?;
 
         let base = 0x40000000;
@@ -340,7 +365,12 @@ mod tests {
 
     #[test]
     fn test_reconstruct_stops_at_inuse_block() -> Result<()> {
-        let mut core = ArmCore::new(false, None).unwrap();
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })
+        .unwrap();
         core.map(0x40000000, 0x100000)?;
 
         let base = 0x40000000;
@@ -365,7 +395,12 @@ mod tests {
 
     #[test]
     fn test_corrupted_canary_returns_error() -> Result<()> {
-        let mut core = ArmCore::new(false, None).unwrap();
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })
+        .unwrap();
         core.map(0x40000000, 0x1000)?;
 
         ListAllocator::init(&mut core, 0x40000000, 0x1000)?;

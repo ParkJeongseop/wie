@@ -137,8 +137,9 @@ impl Font {
         tracing::debug!("javax.microedition.lcdui.Font::<init>({this:?})");
 
         let (point_size, height) = Self::sizes(jvm).await?[1];
-        jvm.put_field(&mut this, "pointSize", "F", point_size).await?;
-        jvm.put_field(&mut this, "height", "I", height).await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Font", "pointSize", "F", point_size)
+            .await?;
+        jvm.put_field(&mut this, "javax/microedition/lcdui/Font", "height", "I", height).await?;
 
         Ok(())
     }
@@ -146,13 +147,13 @@ impl Font {
     async fn get_height(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::getHeight({this:?})");
 
-        jvm.get_field(&this, "height", "I").await
+        jvm.get_field(&this, "javax/microedition/lcdui/Font", "height", "I").await
     }
 
     async fn get_baseline_position(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::getBaselinePosition({this:?})");
 
-        let height: i32 = jvm.get_field(&this, "height", "I").await?;
+        let height: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Font", "height", "I").await?;
 
         // the bundled font keeps a sixth of its cell below the baseline
         Ok((height * 5 + 3) / 6)
@@ -161,7 +162,7 @@ impl Font {
     async fn get_size(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::getSize({this:?})");
 
-        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
+        let point_size: f32 = jvm.get_field(&this, "javax/microedition/lcdui/Font", "pointSize", "F").await?;
         let [(small, _), _, (large, _)] = Self::sizes(jvm).await?;
 
         // SIZE_SMALL=8, SIZE_MEDIUM=0, SIZE_LARGE=16
@@ -208,8 +209,10 @@ impl Font {
         };
 
         let mut instance: ClassInstanceRef<Font> = jvm.new_class("javax/microedition/lcdui/Font", "()V", []).await?.into();
-        jvm.put_field(&mut instance, "pointSize", "F", point_size).await?;
-        jvm.put_field(&mut instance, "height", "I", height).await?;
+        jvm.put_field(&mut instance, "javax/microedition/lcdui/Font", "pointSize", "F", point_size)
+            .await?;
+        jvm.put_field(&mut instance, "javax/microedition/lcdui/Font", "height", "I", height)
+            .await?;
 
         Ok(instance)
     }
@@ -217,7 +220,7 @@ impl Font {
     async fn string_width(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>, string: ClassInstanceRef<String>) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::stringWidth({this:?}, {string:?})");
 
-        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
+        let point_size: f32 = jvm.get_field(&this, "javax/microedition/lcdui/Font", "pointSize", "F").await?;
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
 
         Ok(string_width(context.system().platform().font(), &string, point_size) as _)
@@ -233,7 +236,7 @@ impl Font {
     ) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::substringWidth({this:?}, {string:?}, {offset}, {len})");
 
-        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
+        let point_size: f32 = jvm.get_field(&this, "javax/microedition/lcdui/Font", "pointSize", "F").await?;
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
         let substring = string.chars().skip(offset as usize).take(len as usize).collect::<RustString>();
 
@@ -243,7 +246,7 @@ impl Font {
     async fn char_width(jvm: &Jvm, context: &mut WieJvmContext, this: ClassInstanceRef<Self>, char: JavaChar) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::charWidth({this:?}, {char})");
 
-        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
+        let point_size: f32 = jvm.get_field(&this, "javax/microedition/lcdui/Font", "pointSize", "F").await?;
         let string = RustString::from_utf16(&[char]).unwrap();
 
         Ok(string_width(context.system().platform().font(), &string, point_size) as _)
@@ -259,7 +262,7 @@ impl Font {
     ) -> JvmResult<i32> {
         tracing::debug!("javax.microedition.lcdui.Font::charsWidth({this:?}, {chars:?}, {offset}, {len})");
 
-        let point_size: f32 = jvm.get_field(&this, "pointSize", "F").await?;
+        let point_size: f32 = jvm.get_field(&this, "javax/microedition/lcdui/Font", "pointSize", "F").await?;
         let chars = jvm.load_array(&chars, offset as _, len as _).await?;
         let string = RustString::from_utf16(&chars).unwrap();
 

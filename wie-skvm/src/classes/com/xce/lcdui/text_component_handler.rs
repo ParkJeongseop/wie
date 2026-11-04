@@ -117,7 +117,14 @@ impl TextComponentHandler {
     ) -> JvmResult<()> {
         tracing::debug!("com.xce.lcdui.TextComponentHandler::setTextComponent({this:?}, {component:?})");
 
-        jvm.put_field(&mut this, "component", "Lcom/xce/lcdui/TextComponent;", component).await?;
+        jvm.put_field(
+            &mut this,
+            "com/xce/lcdui/TextComponentHandler",
+            "component",
+            "Lcom/xce/lcdui/TextComponent;",
+            component,
+        )
+        .await?;
 
         let mut automata = Self::load(jvm, &this).await?;
         automata.commit();
@@ -127,13 +134,14 @@ impl TextComponentHandler {
     async fn get_text_component(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<TextComponent>> {
         tracing::debug!("com.xce.lcdui.TextComponentHandler::getTextComponent({this:?})");
 
-        jvm.get_field(&this, "component", "Lcom/xce/lcdui/TextComponent;").await
+        jvm.get_field(&this, "com/xce/lcdui/TextComponentHandler", "component", "Lcom/xce/lcdui/TextComponent;")
+            .await
     }
 
     async fn get_input_mode(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("com.xce.lcdui.TextComponentHandler::getInputMode({this:?})");
 
-        let mode: i32 = jvm.get_field(&this, "mode", "I").await?;
+        let mode: i32 = jvm.get_field(&this, "com/xce/lcdui/TextComponentHandler", "mode", "I").await?;
 
         Ok(Mode::from_index(mode).vendor_value())
     }
@@ -149,7 +157,9 @@ impl TextComponentHandler {
     async fn key_pressed(jvm: &Jvm, _context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, key: i32) -> JvmResult<bool> {
         tracing::debug!("com.xce.lcdui.TextComponentHandler::keyPressed({this:?}, {key})");
 
-        let component: ClassInstanceRef<TextComponent> = jvm.get_field(&this, "component", "Lcom/xce/lcdui/TextComponent;").await?;
+        let component: ClassInstanceRef<TextComponent> = jvm
+            .get_field(&this, "com/xce/lcdui/TextComponentHandler", "component", "Lcom/xce/lcdui/TextComponent;")
+            .await?;
         if component.is_null() {
             // Nothing to compose into: the key is the title's.
             return Ok(false);
@@ -191,33 +201,48 @@ impl TextComponentHandler {
     }
 
     async fn load(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<Automata> {
-        let mode: i32 = jvm.get_field(this, "mode", "I").await?;
+        let mode: i32 = jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "mode", "I").await?;
 
         Ok(Automata {
             mode: Mode::from_index(mode),
-            composing_key: jvm.get_field(this, "composingKey", "I").await?,
-            composing_index: jvm.get_field(this, "composingIndex", "I").await?,
+            composing_key: jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "composingKey", "I").await?,
+            composing_index: jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "composingIndex", "I").await?,
             korean: Korean {
-                choseong: jvm.get_field(this, "choseong", "I").await?,
-                jungseong: jvm.get_field(this, "jungseong", "I").await?,
-                jongseong: jvm.get_field(this, "jongseong", "I").await?,
-                composing: jvm.get_field(this, "composing", "Z").await?,
-                last_key: jvm.get_field(this, "lastKey", "I").await?,
-                last_index: jvm.get_field(this, "lastIndex", "I").await?,
+                choseong: jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "choseong", "I").await?,
+                jungseong: jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "jungseong", "I").await?,
+                jongseong: jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "jongseong", "I").await?,
+                composing: jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "composing", "Z").await?,
+                last_key: jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "lastKey", "I").await?,
+                last_index: jvm.get_field(this, "com/xce/lcdui/TextComponentHandler", "lastIndex", "I").await?,
             },
         })
     }
 
     async fn store(jvm: &Jvm, this: &mut ClassInstanceRef<Self>, automata: &Automata) -> JvmResult<()> {
-        jvm.put_field(this, "mode", "I", automata.mode.index()).await?;
-        jvm.put_field(this, "composingKey", "I", automata.composing_key).await?;
-        jvm.put_field(this, "composingIndex", "I", automata.composing_index).await?;
-        jvm.put_field(this, "choseong", "I", automata.korean.choseong).await?;
-        jvm.put_field(this, "jungseong", "I", automata.korean.jungseong).await?;
-        jvm.put_field(this, "jongseong", "I", automata.korean.jongseong).await?;
-        jvm.put_field(this, "composing", "Z", automata.korean.composing).await?;
-        jvm.put_field(this, "lastKey", "I", automata.korean.last_key).await?;
-        jvm.put_field(this, "lastIndex", "I", automata.korean.last_index).await
+        jvm.put_field(this, "com/xce/lcdui/TextComponentHandler", "mode", "I", automata.mode.index())
+            .await?;
+        jvm.put_field(this, "com/xce/lcdui/TextComponentHandler", "composingKey", "I", automata.composing_key)
+            .await?;
+        jvm.put_field(
+            this,
+            "com/xce/lcdui/TextComponentHandler",
+            "composingIndex",
+            "I",
+            automata.composing_index,
+        )
+        .await?;
+        jvm.put_field(this, "com/xce/lcdui/TextComponentHandler", "choseong", "I", automata.korean.choseong)
+            .await?;
+        jvm.put_field(this, "com/xce/lcdui/TextComponentHandler", "jungseong", "I", automata.korean.jungseong)
+            .await?;
+        jvm.put_field(this, "com/xce/lcdui/TextComponentHandler", "jongseong", "I", automata.korean.jongseong)
+            .await?;
+        jvm.put_field(this, "com/xce/lcdui/TextComponentHandler", "composing", "Z", automata.korean.composing)
+            .await?;
+        jvm.put_field(this, "com/xce/lcdui/TextComponentHandler", "lastKey", "I", automata.korean.last_key)
+            .await?;
+        jvm.put_field(this, "com/xce/lcdui/TextComponentHandler", "lastIndex", "I", automata.korean.last_index)
+            .await
     }
 }
 
@@ -258,11 +283,12 @@ mod tests {
         async fn init(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
             let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
             let buffer = jvm.new_class("java/lang/StringBuffer", "()V", ()).await?;
-            jvm.put_field(&mut this, "buffer", "Ljava/lang/StringBuffer;", buffer).await
+            jvm.put_field(&mut this, "test/BufferComponent", "buffer", "Ljava/lang/StringBuffer;", buffer)
+                .await
         }
 
         async fn insert(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, c: JavaChar) -> JvmResult<()> {
-            let buffer = jvm.get_field(&this, "buffer", "Ljava/lang/StringBuffer;").await?;
+            let buffer = jvm.get_field(&this, "test/BufferComponent", "buffer", "Ljava/lang/StringBuffer;").await?;
             let _: ClassInstanceRef<()> = jvm
                 .invoke_virtual(&buffer, "java/lang/StringBuffer", "append", "(C)Ljava/lang/StringBuffer;", (c,))
                 .await?;
@@ -275,7 +301,7 @@ mod tests {
         }
 
         async fn delete(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-            let buffer = jvm.get_field(&this, "buffer", "Ljava/lang/StringBuffer;").await?;
+            let buffer = jvm.get_field(&this, "test/BufferComponent", "buffer", "Ljava/lang/StringBuffer;").await?;
             let length: i32 = jvm.invoke_virtual(&buffer, "java/lang/StringBuffer", "length", "()I", ()).await?;
             let _: () = jvm
                 .invoke_virtual(&buffer, "java/lang/StringBuffer", "setLength", "(I)V", ((length - 1).max(0),))
@@ -284,7 +310,7 @@ mod tests {
         }
 
         async fn text(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<String>> {
-            let buffer = jvm.get_field(&this, "buffer", "Ljava/lang/StringBuffer;").await?;
+            let buffer = jvm.get_field(&this, "test/BufferComponent", "buffer", "Ljava/lang/StringBuffer;").await?;
             jvm.invoke_virtual(&buffer, "java/lang/StringBuffer", "toString", "()Ljava/lang/String;", ())
                 .await
         }

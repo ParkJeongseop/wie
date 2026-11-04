@@ -156,8 +156,16 @@ impl DialogComponent {
         title: ClassInstanceRef<String>,
         r#type: i32,
     ) -> JvmResult<()> {
-        jvm.put_field(this, "dataComponent", "Lorg/kwis/msp/lwc/Component;", component).await?;
-        jvm.put_field(this, "title", "Ljava/lang/String;", title).await?;
+        jvm.put_field(
+            this,
+            "org/kwis/msp/lwc/DialogComponent",
+            "dataComponent",
+            "Lorg/kwis/msp/lwc/Component;",
+            component,
+        )
+        .await?;
+        jvm.put_field(this, "org/kwis/msp/lwc/DialogComponent", "title", "Ljava/lang/String;", title)
+            .await?;
         Self::apply_type(jvm, this, r#type).await
     }
 
@@ -165,14 +173,16 @@ impl DialogComponent {
     // seconds; one with buttons waits for them.
     async fn apply_type(jvm: &Jvm, this: &mut ClassInstanceRef<Self>, r#type: i32) -> JvmResult<()> {
         let timeout = if r#type == TYPE_NONE { DEFAULT_TIMEOUT_MILLIS } else { TIMEOUT_INFINITE };
-        jvm.put_field(this, "dialogType", "I", r#type).await?;
-        jvm.put_field(this, "timeout", "I", timeout).await?;
+        jvm.put_field(this, "org/kwis/msp/lwc/DialogComponent", "dialogType", "I", r#type).await?;
+        jvm.put_field(this, "org/kwis/msp/lwc/DialogComponent", "timeout", "I", timeout).await?;
 
         Ok(())
     }
 
     async fn title(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<RustString> {
-        let title: ClassInstanceRef<String> = jvm.get_field(this, "title", "Ljava/lang/String;").await?;
+        let title: ClassInstanceRef<String> = jvm
+            .get_field(this, "org/kwis/msp/lwc/DialogComponent", "title", "Ljava/lang/String;")
+            .await?;
         if title.is_null() {
             return Ok(RustString::new());
         }
@@ -182,7 +192,7 @@ impl DialogComponent {
 
     // TODO: the modal answer. See the comment at the call site in do_modal.
     async fn do_modal(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        let r#type: i32 = jvm.get_field(&this, "dialogType", "I").await?;
+        let r#type: i32 = jvm.get_field(&this, "org/kwis/msp/lwc/DialogComponent", "dialogType", "I").await?;
         let title = Self::title(jvm, &this).await?;
         let action = match r#type {
             TYPE_NONE => DLG_TIMEOUT,
@@ -190,7 +200,8 @@ impl DialogComponent {
         };
         tracing::warn!("stub org.kwis.msp.lwc.DialogComponent::doModal({this:?}) type {type} title {title:?} -> {action}");
 
-        jvm.put_field(&mut this, "actionState", "I", action).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/lwc/DialogComponent", "actionState", "I", action)
+            .await?;
 
         Ok(action)
     }
@@ -205,19 +216,20 @@ impl DialogComponent {
     async fn get_action_state(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lwc.DialogComponent::getActionState({this:?})");
 
-        jvm.get_field(&this, "actionState", "I").await
+        jvm.get_field(&this, "org/kwis/msp/lwc/DialogComponent", "actionState", "I").await
     }
 
     async fn get_timeout(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lwc.DialogComponent::getTimeout({this:?})");
 
-        jvm.get_field(&this, "timeout", "I").await
+        jvm.get_field(&this, "org/kwis/msp/lwc/DialogComponent", "timeout", "I").await
     }
 
     async fn set_timeout(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, timeout: i32) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lwc.DialogComponent::setTimeout({this:?}, {timeout})");
 
-        jvm.put_field(&mut this, "timeout", "I", timeout).await
+        jvm.put_field(&mut this, "org/kwis/msp/lwc/DialogComponent", "timeout", "I", timeout)
+            .await
     }
 
     async fn set_type(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, r#type: i32) -> JvmResult<()> {
@@ -236,8 +248,14 @@ impl DialogComponent {
         tracing::debug!("org.kwis.msp.lwc.DialogComponent::setButtonString({this:?}, {button_type}, {label:?})");
 
         match button_type {
-            OK_BUTTON => jvm.put_field(&mut this, "okString", "Ljava/lang/String;", label).await,
-            CANCEL_BUTTON => jvm.put_field(&mut this, "cancelString", "Ljava/lang/String;", label).await,
+            OK_BUTTON => {
+                jvm.put_field(&mut this, "org/kwis/msp/lwc/DialogComponent", "okString", "Ljava/lang/String;", label)
+                    .await
+            }
+            CANCEL_BUTTON => {
+                jvm.put_field(&mut this, "org/kwis/msp/lwc/DialogComponent", "cancelString", "Ljava/lang/String;", label)
+                    .await
+            }
             _ => {
                 tracing::warn!("org.kwis.msp.lwc.DialogComponent::setButtonString: unknown button type {button_type}");
                 Ok(())

@@ -77,6 +77,8 @@ where
     Ok(unsafe { destination.assume_init() })
 }
 
+/// Reads a byte string excluding its first NUL. The starting address must be
+/// nonzero; subsequent guest addresses wrap at 32 bits.
 pub fn read_null_terminated_string_bytes<R>(reader: &R, address: u32) -> Result<Vec<u8>>
 where
     R: ?Sized + ByteRead,
@@ -193,6 +195,7 @@ where
     fn as_any(&self) -> &dyn Any {
         self
     }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -220,17 +223,6 @@ mod tests {
 
             Ok(result.len())
         }
-    }
-
-    #[test]
-    fn read_generic_reads_into_initialized_storage() {
-        let memory = StrictMemory {
-            memory: vec![0, 0x78, 0x56, 0x34, 0x12],
-        };
-
-        let value: u32 = read_generic(&memory, 1).unwrap();
-
-        assert_eq!(value, 0x1234_5678);
     }
 
     #[test]

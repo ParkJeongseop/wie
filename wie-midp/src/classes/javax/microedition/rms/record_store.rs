@@ -68,7 +68,8 @@ impl RecordStore {
 
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
 
-        jvm.put_field(&mut this, "dbName", "Ljava/lang/String;", db_name).await?;
+        jvm.put_field(&mut this, "javax/microedition/rms/RecordStore", "dbName", "Ljava/lang/String;", db_name)
+            .await?;
 
         Ok(())
     }
@@ -282,8 +283,10 @@ impl RecordStore {
         Ok(result.into())
     }
 
-    pub(crate) async fn get_database(jvm: &Jvm, context: &mut WieJvmContext, this: &ClassInstanceRef<Self>) -> JvmResult<Box<dyn Database>> {
-        let db_name = jvm.get_field(this, "dbName", "Ljava/lang/String;").await?;
+    pub async fn get_database(jvm: &Jvm, context: &mut WieJvmContext, this: &ClassInstanceRef<Self>) -> JvmResult<Box<dyn Database>> {
+        let db_name = jvm
+            .get_field(this, "javax/microedition/rms/RecordStore", "dbName", "Ljava/lang/String;")
+            .await?;
         let db_name_str = JavaLangString::to_rust_string(jvm, &db_name).await?;
 
         let system = context.system();

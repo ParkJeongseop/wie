@@ -63,8 +63,14 @@ impl GameCanvas {
             )
             .await?;
 
-        jvm.put_field(&mut this, "offscreenImage", "Ljavax/microedition/lcdui/Image;", image)
-            .await?;
+        jvm.put_field(
+            &mut this,
+            "javax/microedition/lcdui/game/GameCanvas",
+            "offscreenImage",
+            "Ljavax/microedition/lcdui/Image;",
+            image,
+        )
+        .await?;
 
         Ok(())
     }
@@ -72,7 +78,14 @@ impl GameCanvas {
     async fn get_graphics(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Graphics>> {
         tracing::debug!("javax.microedition.lcdui.game.GameCanvas::getGraphics({this:?})");
 
-        let offscreen_image: ClassInstanceRef<Image> = jvm.get_field(&this, "offscreenImage", "Ljavax/microedition/lcdui/Image;").await?;
+        let offscreen_image: ClassInstanceRef<Image> = jvm
+            .get_field(
+                &this,
+                "javax/microedition/lcdui/game/GameCanvas",
+                "offscreenImage",
+                "Ljavax/microedition/lcdui/Image;",
+            )
+            .await?;
         Graphics::new_for_image(jvm, offscreen_image).await
     }
 
@@ -87,7 +100,14 @@ impl GameCanvas {
     async fn paint(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>, g: ClassInstanceRef<Graphics>) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.game.GameCanvas::paint({this:?}, {g:?})");
 
-        let offscreen_image: ClassInstanceRef<Image> = jvm.get_field(&this, "offscreenImage", "Ljavax/microedition/lcdui/Image;").await?;
+        let offscreen_image: ClassInstanceRef<Image> = jvm
+            .get_field(
+                &this,
+                "javax/microedition/lcdui/game/GameCanvas",
+                "offscreenImage",
+                "Ljavax/microedition/lcdui/Image;",
+            )
+            .await?;
 
         let _: () = jvm
             .invoke_virtual(

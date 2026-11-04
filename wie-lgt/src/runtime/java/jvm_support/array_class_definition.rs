@@ -51,7 +51,7 @@ impl ArrayClassDefinition for JavaArrayClassDefinition {
         let mut instance = JavaArrayClassInstance::new(&mut self.core.clone(), self, length);
         if matches!(instance, Err(WieError::AllocationFailure)) {
             // Titles that never call System.gc() otherwise fill the guest heap with garbage.
-            jvm.collect_garbage()?;
+            jvm.collect_garbage().unwrap();
             instance = JavaArrayClassInstance::new(&mut self.core.clone(), self, length);
         }
         match instance {

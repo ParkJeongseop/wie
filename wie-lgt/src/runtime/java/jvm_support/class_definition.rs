@@ -410,6 +410,7 @@ impl JavaClassDefinition {
 
         jvm.put_field(
             class_object,
+            "java/lang/Class",
             CLASS_NATIVE_NAME_FIELD,
             WORD_FIELD_DESCRIPTOR,
             self.descriptor()?.ptr_name as i32,
@@ -795,7 +796,13 @@ impl EmulatedFunction<(), u32, ()> for JavaClassGetterProxy {
                 JavaError::JavaException(instance) => WieError::JavaException(JavaValueCodec::new(core).object_to_raw(&*instance)),
             })?;
             self.jvm
-                .put_field(&mut java_class, CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR, 5i32)
+                .put_field(
+                    &mut java_class,
+                    "java/lang/Class",
+                    CLASS_INITIALIZATION_STATE_FIELD,
+                    WORD_FIELD_DESCRIPTOR,
+                    5i32,
+                )
                 .await
                 .map_err(|error| match error {
                     JavaError::JavaException(instance) => WieError::JavaException(JavaValueCodec::new(core).object_to_raw(&*instance)),
@@ -848,7 +855,7 @@ impl ClassDefinition for JavaClassDefinition {
         let mut instance = JavaClassInstance::new(&mut self.core.clone(), self);
         if matches!(instance, Err(WieError::AllocationFailure)) {
             // Titles that never call System.gc() otherwise fill the guest heap with garbage.
-            jvm.collect_garbage()?;
+            jvm.collect_garbage().unwrap();
             instance = JavaClassInstance::new(&mut self.core.clone(), self);
         }
         match instance {
@@ -890,7 +897,15 @@ impl ClassDefinition for JavaClassDefinition {
             .collect::<Vec<_>>();
         let descriptor = self.descriptor().unwrap();
         if descriptor.ptr_instance_reference_bitmap != 0 {
-            for word_index in 0..descriptor.instance_field_word_count as u32 {
+            // The JVM visits parents separately, using their actual runtime field layouts.
+            let inherited_word_count = if descriptor.ptr_super_class == 0 {
+                0
+            } else {
+                Self::from_raw(descriptor.ptr_super_class, &self.core)
+                    .instance_field_word_count()
+                    .unwrap() as u32
+            };
+            for word_index in inherited_word_count..descriptor.instance_field_word_count as u32 {
                 let byte: u8 = read_generic(&self.core, descriptor.ptr_instance_reference_bitmap + word_index / 8).unwrap();
                 if byte & (0x80 >> (word_index % 8)) != 0 {
                     fields.push(Box::new(JavaReferenceField { word_index }));

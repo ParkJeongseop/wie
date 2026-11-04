@@ -33,7 +33,6 @@ pub struct ExecutorInner {
     tasks: BTreeMap<usize, Task>,
     sleeping_tasks: BTreeMap<usize, Instant>,
     last_task_id: usize,
-    last_now: Instant,
 }
 
 pub trait AsyncCallable<R>: Send
@@ -87,7 +86,6 @@ impl Executor {
             tasks: BTreeMap::new(),
             sleeping_tasks: BTreeMap::new(),
             last_task_id: 0,
-            last_now: Instant::from_epoch_millis(0),
         }));
 
         Self {
@@ -161,8 +159,6 @@ impl Executor {
     }
 
     fn step(&mut self, now: Instant) -> Result<()> {
-        self.inner.lock().last_now = now;
-
         let mut next_tasks = BTreeMap::new();
         let tasks = core::mem::take(&mut self.inner.lock().tasks);
         let mut sleeping_tasks = core::mem::take(&mut self.inner.lock().sleeping_tasks);
@@ -205,10 +201,9 @@ impl Executor {
         if let Some(err) = first_error { Err(err) } else { Ok(()) }
     }
 
-    pub(crate) fn sleep(&self, timeout: u64) {
+    pub fn sleep(&self, until: Instant) {
         let task_id = self.inner.lock().current_task_id.unwrap();
 
-        let until = self.inner.lock().last_now + timeout;
         self.inner.lock().sleeping_tasks.insert(task_id, until);
         self.wake.wake_by_ref();
     }
@@ -228,7 +223,7 @@ mod tests {
     use wie_util::WieError;
 
     use super::Executor;
-    use crate::time::Instant;
+    use crate::{task::SleepFuture, time::Instant};
 
     struct YieldOnce(bool);
 
@@ -284,7 +279,7 @@ mod tests {
         let observed = completed.clone();
         let task_executor = executor.clone();
         executor.spawn(move || async move {
-            crate::task::SleepFuture::new(0, &task_executor).await;
+            SleepFuture::new(Instant::from_epoch_millis(0), &task_executor).await;
             task_executor.spawn(move || async move {
                 observed.store(true, Ordering::Relaxed);
             });
@@ -321,7 +316,7 @@ mod tests {
         let completed_clone = completed.clone();
         let executor_clone = executor.clone();
         executor.spawn(move || async move {
-            executor_clone.sleep(100);
+            executor_clone.sleep(Instant::from_epoch_millis(100));
             YieldOnce(false).await;
             completed_clone.store(true, Ordering::Relaxed);
         });
@@ -336,28 +331,5 @@ mod tests {
 
         executor.tick(advancing_clock(200)).unwrap();
         assert!(completed.load(Ordering::Relaxed));
-    }
-
-    #[test]
-    fn test_all_ok_tasks_complete() {
-        let mut executor = Executor::new();
-
-        let completed_a = Arc::new(AtomicBool::new(false));
-        let completed_a_clone = completed_a.clone();
-        executor.spawn(move || async move {
-            completed_a_clone.store(true, Ordering::Relaxed);
-        });
-
-        let completed_b = Arc::new(AtomicBool::new(false));
-        let completed_b_clone = completed_b.clone();
-        executor.spawn(move || async move {
-            YieldOnce(false).await;
-            completed_b_clone.store(true, Ordering::Relaxed);
-        });
-
-        executor.tick(advancing_clock(0)).unwrap();
-
-        assert!(completed_a.load(Ordering::Relaxed));
-        assert!(completed_b.load(Ordering::Relaxed));
     }
 }

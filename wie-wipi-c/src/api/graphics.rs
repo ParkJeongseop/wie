@@ -10,16 +10,18 @@ use core::mem::size_of;
 
 use wie_backend::{
     Event,
-    canvas::{Clip, Color, PixelType, Rgb565Pixel, encode_bmp, string_width},
+    canvas::{Clip, Color, PixelType, Rgb565Pixel, encode_bmp_region, string_width},
 };
 use wie_util::{Result, read_generic, write_generic};
 
 use wipi_types::wipic::{WIPICDisplayInfo, WIPICFramebuffer, WIPICGraphicsContext, WIPICIndirectPtr, WIPICWord};
 
-use crate::context::WIPICContext;
+use crate::{
+    context::WIPICContext,
+    globals::{SCREEN_FRAMEBUFFER_DIRTY_PTR, SCREEN_FRAMEBUFFER_PTR},
+};
 
 use self::{
-    framebuffer::{SCREEN_FRAMEBUFFER_DIRTY_PTR, SCREEN_FRAMEBUFFER_PTR},
     grp_context::WIPICGraphicsContextIdx,
     image::{ImageRecord, create_wipi_image, image_with_mask},
 };
@@ -48,6 +50,19 @@ fn with_context_clip(context: &dyn WIPICContext, pgc: WIPICWord, clip: Clip) -> 
         width: (right - left) as u32,
         height: (bottom - top) as u32,
     }))
+}
+
+pub async fn fill_polygon(
+    _context: &mut dyn WIPICContext,
+    dst: WIPICIndirectPtr,
+    x_points: WIPICWord,
+    y_points: WIPICWord,
+    n_points: i32,
+    pgc: WIPICWord,
+) -> Result<()> {
+    tracing::warn!("stub MC_grpFillPolygon({:#x}, {x_points:#x}, {y_points:#x}, {n_points}, {pgc:#x})", dst.0);
+
+    Ok(())
 }
 
 pub async fn get_screen_framebuffer(context: &mut dyn WIPICContext, a0: WIPICWord) -> Result<WIPICIndirectPtr> {
@@ -89,12 +104,16 @@ pub async fn set_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, o
         // A null clip clears it: a context that was never given one reads as zeroes, which means
         // "no clip" (MC_grpInitContext zeroes the record). 짜요짜요타이쿤3 resets its clip this way
         // before every frame and the null was read as an array.
-        WIPICGraphicsContextIdx::ClipIdx if pv == 0 => {
-            grp_ctx.clip = [0; 4];
-        }
         WIPICGraphicsContextIdx::ClipIdx => {
-            let clip: [i32; 4] = read_generic(context, pv)?;
-            grp_ctx.clip = clip.map(|value| value as u16);
+            // MC_GRP_CONTEXT_CLIP_MASK is cleared when clipping is disabled.
+            if pv == 0 {
+                grp_ctx.clip = [0; 4];
+                grp_ctx.mask &= !1;
+            } else {
+                let clip: [i32; 4] = read_generic(context, pv)?;
+                grp_ctx.clip = clip.map(|value| value as u16);
+                grp_ctx.mask |= 1;
+            }
         }
         WIPICGraphicsContextIdx::FgPixelIdx => {
             grp_ctx.fgpxl = pv as _;
@@ -317,8 +336,8 @@ pub async fn encode_image(
         return Ok(WIPICIndirectPtr(0));
     }
 
-    let image = framebuffer.image(context)?;
-    let encoded = encode_bmp(&*image, x as u32, y as u32, width as u32, height as u32);
+    let source = framebuffer.image(context)?;
+    let encoded = encode_bmp_region(&*source, x as u32, y as u32, width as u32, height as u32)?;
 
     let memory = context.alloc(encoded.len() as WIPICWord)?;
     context.write_bytes(context.data_ptr(memory)?, &encoded)?;
@@ -655,6 +674,7 @@ pub async fn repaint(context: &mut dyn WIPICContext, lcd: i32, x: i32, y: i32, w
     let platform = context.system().platform();
     let screen = platform.screen();
     screen.request_redraw().unwrap();
+    context.system().event_queue().push(Event::Repaint);
 
     Ok(())
 }
@@ -837,11 +857,129 @@ pub async fn get_framebuffer_bpp(context: &mut dyn WIPICContext, framebuffer: WI
 
 #[cfg(test)]
 mod tests {
-    use alloc::boxed::Box;
+    use alloc::{boxed::Box, vec};
+
+    use test_utils::TestPlatform;
+
+    use wie_backend::{DefaultTaskRunner, System};
+    use wie_util::ByteWrite;
 
     use crate::{MethodImpl, context::test::TestContext};
 
     use super::*;
+
+    #[futures_test::test]
+    async fn strings_are_positioned_at_the_requested_baseline() -> Result<()> {
+        let system = System::new(Box::new(TestPlatform::new()), "test-pid", "test-aid", DefaultTaskRunner);
+        let mut context = TestContext::with_system(system);
+        let destination = create_offscreen_framebuffer(&mut context, 32, 32).await?;
+        let framebuffer = FrameBuffer(read_generic(&context, context.data_ptr(destination)?)?);
+        framebuffer.write(&mut context, &[0; 32 * 32 * 2])?;
+        let graphics = context.alloc_raw(size_of::<WIPICGraphicsContext>() as u32)?;
+        init_context(&mut context, graphics).await?;
+        set_context(&mut context, graphics, WIPICGraphicsContextIdx::FgPixelIdx, 0xffff).await?;
+        let text = context.alloc_raw(3)?;
+        context.write_bytes(text, &[0xb0, 0xa1, 0])?;
+        draw_string(&mut context, destination, 2, 16, text, -1, graphics).await?;
+
+        let bottom = 16 + get_font_descent(&mut context, 0).await?;
+        let image = framebuffer.image(&mut context)?;
+        assert!((0..16).any(|y| (0..32).any(|x| image.get_pixel(x, y).r != 0)));
+        assert!((bottom..32).all(|y| (0..32).all(|x| image.get_pixel(x, y).r == 0)));
+        Ok(())
+    }
+
+    #[futures_test::test]
+    async fn encoded_framebuffer_region_can_be_loaded_as_an_image() -> Result<()> {
+        let mut context = TestContext::new();
+        let source = create_offscreen_framebuffer(&mut context, 3, 2).await?;
+        let framebuffer = FrameBuffer(read_generic(&context, context.data_ptr(source)?)?);
+        framebuffer.write(&mut context, &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0xf8, 0xe0, 0x07])?;
+        let length_ptr = context.alloc_raw(4)?;
+        let output = context.alloc_raw(4)?;
+        for (x, y, width, height) in [(0, 0, 3, 2), (1, 1, 2, 1)] {
+            let encoded = encode_image(&mut context, source, x, y, width, height, length_ptr).await?;
+            assert_ne!(encoded.0, 0);
+            let length: u32 = read_generic(&context, length_ptr)?;
+            assert!(length > 0);
+            assert_eq!(read_generic::<[u8; 2], _>(&context, context.data_ptr(encoded)?)?, *b"BM");
+            create_image(&mut context, output, encoded, 0, length).await?;
+            let handle: WIPICIndirectPtr = read_generic(&context, output)?;
+            let image: ImageRecord = read_generic(&context, context.data_ptr(handle)?)?;
+            let decoded = FrameBuffer(read_generic(&context, context.data_ptr(image.img)?)?).image(&mut context)?;
+            assert_eq!((decoded.width(), decoded.height()), (width as u32, height as u32));
+            let original = framebuffer.image(&mut context)?;
+            for row in 0..height {
+                for col in 0..width {
+                    let expected = original.get_pixel(x + col, y + row);
+                    let actual = decoded.get_pixel(col, row);
+                    assert_eq!([actual.r, actual.g, actual.b], [expected.r, expected.g, expected.b]);
+                }
+            }
+        }
+        // The region is clipped to the framebuffer; one that leaves nothing answers 0.
+        for (x, y, width, height) in [(-1, 0, 1, 1), (0, 0, 0, 1), (3, 0, 1, 1)] {
+            assert_eq!(encode_image(&mut context, source, x, y, width, height, length_ptr).await?.0, 0);
+            assert_eq!(read_generic::<u32, _>(&context, length_ptr)?, 0);
+        }
+        Ok(())
+    }
+
+    #[futures_test::test]
+    async fn indexed_images_preserve_transparency_and_context_clipping() -> Result<()> {
+        for (reserved, important, transparent) in [(1u16, 0x101u32, Some(1)), (1, 0x100, Some(0)), (0, 0x101, None), (1, 3, None)] {
+            let mut bmp = vec![0u8; 70];
+            bmp[..2].copy_from_slice(b"BM");
+            bmp[2..6].copy_from_slice(&70u32.to_le_bytes());
+            bmp[6..8].copy_from_slice(&reserved.to_le_bytes());
+            bmp[10..14].copy_from_slice(&66u32.to_le_bytes());
+            bmp[14..18].copy_from_slice(&40u32.to_le_bytes());
+            bmp[18..22].copy_from_slice(&3u32.to_le_bytes());
+            bmp[22..26].copy_from_slice(&1u32.to_le_bytes());
+            bmp[26..28].copy_from_slice(&1u16.to_le_bytes());
+            bmp[28..30].copy_from_slice(&8u16.to_le_bytes());
+            bmp[34..38].copy_from_slice(&4u32.to_le_bytes());
+            bmp[46..50].copy_from_slice(&3u32.to_le_bytes());
+            bmp[50..54].copy_from_slice(&important.to_le_bytes());
+            // Equal RGB values at distinct indices must retain independent transparency. The colour is
+            // not magenta, which mask-less images leave out of a draw regardless of the palette.
+            bmp[54..66].copy_from_slice(&[255, 0, 128, 0, 255, 0, 128, 0, 0, 0, 0, 0]);
+            bmp[66..70].copy_from_slice(&[0, 1, 2, 0]);
+
+            let mut context = TestContext::new();
+            let buffer = context.alloc(bmp.len() as u32)?;
+            context.write_bytes(context.data_ptr(buffer)?, &bmp)?;
+            let output = context.alloc_raw(4)?;
+            create_image(&mut context, output, buffer, 0, bmp.len() as u32).await?;
+            let image: WIPICIndirectPtr = read_generic(&context, output)?;
+            let destination = create_offscreen_framebuffer(&mut context, 4, 1).await?;
+            let framebuffer = FrameBuffer(read_generic(&context, context.data_ptr(destination)?)?);
+            let graphics_context = context.alloc_raw(size_of::<WIPICGraphicsContext>() as u32)?;
+            init_context(&mut context, graphics_context).await?;
+            let clip = context.alloc_raw(16)?;
+            write_generic(&mut context, clip, [2i32, 0, 3, 1])?;
+            for clip_ptr in [clip, 0] {
+                set_context(&mut context, graphics_context, WIPICGraphicsContextIdx::ClipIdx, clip_ptr).await?;
+                framebuffer.write(&mut context, &[0xe0, 0x07, 0xe0, 0x07, 0xe0, 0x07, 0xe0, 0x07])?;
+                draw_image(&mut context, destination, 1, 0, 3, 1, image, 0, 0, graphics_context).await?;
+
+                let drawn = framebuffer.image(&mut context)?;
+                assert_eq!(drawn.get_pixel(0, 0).g, 255);
+                for index in 0..3 {
+                    let color = drawn.get_pixel(index + 1, 0);
+                    let expected = if transparent == Some(index) || (clip_ptr != 0 && index != 1) {
+                        [0, 255, 0]
+                    } else if index == 2 {
+                        [0, 0, 0]
+                    } else {
+                        [132, 0, 255]
+                    };
+                    assert_eq!([color.r, color.g, color.b], expected);
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[futures_test::test]
     async fn context_values_are_written_to_the_output_pointer() -> Result<()> {
@@ -877,6 +1015,13 @@ mod tests {
         write_generic(&mut context, output, [999i32; 5])?;
         get.call(&mut context, Box::new([ptr_context, 0, output])).await?;
         assert_eq!(read_generic::<[i32; 5], _>(&context, output)?, [-5, -8, 176, 220, 999]);
+
+        let graphics: WIPICGraphicsContext = read_generic(&context, ptr_context)?;
+        assert_eq!(graphics.mask & 1, 1);
+        set.call(&mut context, Box::new([ptr_context, 0, 0])).await?;
+        let graphics: WIPICGraphicsContext = read_generic(&context, ptr_context)?;
+        assert_eq!(graphics.mask & 1, 0);
+        assert_eq!(graphics.fgpxl, 0x12345678);
 
         write_generic(&mut context, input, [-12i32, 34])?;
         set.call(&mut context, Box::new([ptr_context, 10, input])).await?;

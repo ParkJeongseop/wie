@@ -6,6 +6,9 @@ members = [
     "wie-backend",
     "wie-util",
     "wie-core-arm",
+    "wie-core-arm-aot",
+    "wie-core-arm-wasm",
+    "wie-core-arm-native",
     "wie-jvm-support",
     "wie-wipi-java",
     "wie-wipi-c",
@@ -26,10 +29,11 @@ opt-level = 1
 opt-level = 1
 
 [profile.release]
-lto = true
+debug = 2
+lto = "thin"
 
 [workspace.package]
-version = "0.1.5"
+version = "0.2.19"
 edition = "2024"
 license = "MIT"
 description = "WIPI and J2ME emulator components"
@@ -45,13 +49,13 @@ clap = { version = "^4.6", features = ["derive"] }
 dyn-clone = { version = "^1.0", default-features = false }
 encoding_rs = { version = "^0.8", default-features = false, features = ["alloc"] }
 futures = { version = "^0.3", default-features = false, features = ["alloc"] }
-jvm = { version = "^0.2.0" }
-jvm-bytecode = { version = "^0.2.0" }
-jvm-class-proto = { version = "^0.2.0" }
-jvm-types = { version = "^0.2.0" }
+jvm = { version = "^0.4.1" }
+jvm-bytecode = { version = "^0.4.1" }
+jvm-class-proto = { version = "^0.4.1" }
+jvm-types = { version = "^0.4.1" }
 lazy_static = { version = "^1.5", default-features = false }
 md5 = { version = "^0.8", default-features = false }
-rustjava-runtime = { version = "^0.2.0" }
+rustjava-runtime = { version = "^0.4.1" }
 serde = { version = "^1", default-features = false, features = ["derive", "alloc"] }
 # Use Rustls with ureq to support Android without OpenSSL or JVM certificate-verifier setup.
 sentry = { version = "^0.49", default-features = false, features = [
@@ -59,7 +63,6 @@ sentry = { version = "^0.49", default-features = false, features = [
     "backtrace",
     "contexts",
     "debug-images",
-    "logs",
     "metrics",
     "panic",
     "release-health",
@@ -71,21 +74,26 @@ spin = { version = "^0.12", features = ["spin_mutex", "rwlock"], default-feature
 toml = { version = "^1", default-features = false, features = ["parse", "serde"] }
 tracing = { version = "^0.1", default-features = false, features = ["attributes"] }
 tracing-subscriber = { version = "^0.3", features = ["env-filter", "time"] }
-wipi-types = { version = "^0.0.2" }
+wipi-types = { version = "^0.0.4" }
+zip = { version = "^9.0", features = ["deflate"], default-features = false }
 
-wie-backend = { version = "0.1.0", path = "wie-backend" }
-wie-j2me = { version = "0.1.0", path = "wie-j2me" }
-wie-ktf = { version = "0.1.0", path = "wie-ktf" }
-wie-lgt = { version = "0.1.0", path = "wie-lgt" }
-wie-midp = { version = "0.1.0", path = "wie-midp" }
-wie-skt = { version = "0.1.0", path = "wie-skt" }
-wie-util = { version = "0.1.0", path = "wie-util" }
-wie-core-arm = { version = "0.1.0", path = "wie-core-arm" }
-wie-jvm-support = { version = "0.1.0", path = "wie-jvm-support" }
-wie-mmpp = { version = "0.1.0", path = "wie-mmpp" }
-wie-skvm = { version = "0.1.0", path = "wie-skvm" }
-wie-wipi-c = { version = "0.1.0", path = "wie-wipi-c" }
-wie-wipi-java = { version = "0.1.0", path = "wie-wipi-java" }
+wie = { version = "0.2.19", path = ".", default-features = false }
+wie-backend = { version = "0.2.19", path = "wie-backend" }
+wie-j2me = { version = "0.2.19", path = "wie-j2me" }
+wie-ktf = { version = "0.2.19", path = "wie-ktf" }
+wie-lgt = { version = "0.2.19", path = "wie-lgt" }
+wie-midp = { version = "0.2.19", path = "wie-midp" }
+wie-skt = { version = "0.2.19", path = "wie-skt" }
+wie-util = { version = "0.2.19", path = "wie-util" }
+wie-core-arm = { version = "0.2.19", path = "wie-core-arm" }
+wie-core-arm-aot = { version = "0.2.19", path = "wie-core-arm-aot" }
+wie-core-arm-wasm = { version = "0.2.19", path = "wie-core-arm-wasm" }
+wie-core-arm-native = { version = "0.2.19", path = "wie-core-arm-native" }
+wie-jvm-support = { version = "0.2.19", path = "wie-jvm-support" }
+wie-mmpp = { version = "0.2.19", path = "wie-mmpp" }
+wie-skvm = { version = "0.2.19", path = "wie-skvm" }
+wie-wipi-c = { version = "0.2.19", path = "wie-wipi-c" }
+wie-wipi-java = { version = "0.2.19", path = "wie-wipi-java" }
 
 # dev-dependencies
 futures-test = { version = "^0.3" }
@@ -101,30 +109,17 @@ description = "WIPI and J2ME emulator"
 repository.workspace = true
 exclude = ["docs"]
 
-[lib]
-name = "wie"
-
 [[bin]]
 name = "wie"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:directories", "dep:fast_image_resize", "dep:midir", "dep:rodio", "dep:sentry", "dep:softbuffer", "dep:tempfile", "dep:tracing-subscriber", "dep:winit", "dep:wie-core-arm-native"]
 
 [dependencies]
 anyhow = { workspace = true, features = ["backtrace"] }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-async-trait = { workspace = true }
-clap = { workspace = true }
-sentry = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-
-directories = { version = "^6.0" }
-fast_image_resize = "6.0.0"
-midir = { version = "^0.11" }
-rodio = { version = "^0.22", features = ["playback"] }
-softbuffer = { version = "^0.4" }
-winit = { version = "^0.30", features = ["x11", "wayland"] }
-
 wie-backend = { workspace = true }
 wie-j2me = { workspace = true }
 wie-ktf = { workspace = true }
@@ -132,11 +127,27 @@ wie-lgt = { workspace = true }
 wie-skt = { workspace = true }
 wie-util = { workspace = true }
 
+async-trait = { workspace = true }
+clap = { workspace = true, optional = true }
+sentry = { workspace = true, optional = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+directories = { version = "^6.0", optional = true }
+fast_image_resize = { version = "6.0.0", optional = true }
+midir = { version = "^0.11", optional = true }
+rodio = { version = "^0.22", features = ["playback"], optional = true }
+softbuffer = { version = "^0.4", optional = true }
+tempfile = { version = "3", optional = true }
+winit = { version = "^0.30", features = ["x11", "wayland"], optional = true }
+wie-core-arm-native = { workspace = true, optional = true }
+
 # RustJava is consumed from crates.io upstream; our fork carries only the
-# unmerged delta (currently: quieter String.valueOf logging), applied as a patch.
+# unmerged delta (handset runtime extensions, deterministic GC order, time
+# slices), applied as a patch.
 [patch.crates-io]
-jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
-jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
-jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
-jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
-rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "c320364" }
+jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "04c7afe" }
+jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "04c7afe" }
+jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "04c7afe" }
+jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "04c7afe" }
+rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "04c7afe" }

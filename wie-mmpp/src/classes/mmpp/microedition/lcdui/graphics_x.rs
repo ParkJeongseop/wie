@@ -79,7 +79,8 @@ impl GraphicsX {
         }
 
         // MMPP counts 0..=256, the MIDP layer 0..=255
-        jvm.put_field(&mut this, "alpha", "I", alpha * 255 / Self::DEFAULT_ALPHA).await
+        jvm.put_field(&mut this, GRAPHICS_X, "alpha", "I", alpha * 255 / Self::DEFAULT_ALPHA)
+            .await
     }
 
     async fn set_xor_mode(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, rgb: i32) -> JvmResult<()> {
@@ -88,11 +89,11 @@ impl GraphicsX {
         let color = Self::paint_color(jvm, &this).await?;
         let xor_color = rgb & 0xffffff;
 
-        jvm.put_field(&mut this, "xorColor", "I", xor_color).await?;
-        jvm.put_field(&mut this, "xorMode", "Z", true).await?;
-        jvm.put_field(&mut this, "color", "I", color ^ xor_color).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "xorColor", "I", xor_color).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "xorMode", "Z", true).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "color", "I", color ^ xor_color).await?;
         // entering XOR mode puts the alpha back to its default
-        jvm.put_field(&mut this, "alpha", "I", 255).await
+        jvm.put_field(&mut this, GRAPHICS_X, "alpha", "I", 255).await
     }
 
     async fn set_paint_mode(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
@@ -100,20 +101,20 @@ impl GraphicsX {
 
         let color = Self::paint_color(jvm, &this).await?;
 
-        jvm.put_field(&mut this, "xorMode", "Z", false).await?;
-        jvm.put_field(&mut this, "color", "I", color).await
+        jvm.put_field(&mut this, GRAPHICS_X, "xorMode", "Z", false).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "color", "I", color).await
     }
 
     /// The colour the application chose, whichever mode is on.
     async fn paint_color(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<i32> {
-        let color: i32 = jvm.get_field(this, "color", "I").await?;
+        let color: i32 = jvm.get_field(this, GRAPHICS_X, "color", "I").await?;
 
         Ok(color ^ Self::xor_mask(jvm, this).await?)
     }
 
     async fn xor_mask(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<i32> {
-        if jvm.get_field(this, "xorMode", "Z").await? {
-            jvm.get_field(this, "xorColor", "I").await
+        if jvm.get_field(this, GRAPHICS_X, "xorMode", "Z").await? {
+            jvm.get_field(this, GRAPHICS_X, "xorColor", "I").await
         } else {
             Ok(0)
         }
@@ -143,8 +144,8 @@ impl GraphicsX {
 
     async fn translation(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<(i32, i32)> {
         Ok((
-            jvm.get_field(this, "translateX", "I").await?,
-            jvm.get_field(this, "translateY", "I").await?,
+            jvm.get_field(this, GRAPHICS_X, "translateX", "I").await?,
+            jvm.get_field(this, GRAPHICS_X, "translateY", "I").await?,
         ))
     }
 
@@ -170,18 +171,18 @@ impl GraphicsX {
         tracing::debug!("mmpp.microedition.lcdui.GraphicsX::setPixel({this:?}, {x}, {y}, {rgb:#x})");
 
         // the pixel takes exactly this colour, whatever colour, mode and alpha are current
-        let color: i32 = jvm.get_field(&this, "color", "I").await?;
-        let xor_mode: bool = jvm.get_field(&this, "xorMode", "Z").await?;
-        let alpha: i32 = jvm.get_field(&this, "alpha", "I").await?;
+        let color: i32 = jvm.get_field(&this, GRAPHICS_X, "color", "I").await?;
+        let xor_mode: bool = jvm.get_field(&this, GRAPHICS_X, "xorMode", "Z").await?;
+        let alpha: i32 = jvm.get_field(&this, GRAPHICS_X, "alpha", "I").await?;
 
-        jvm.put_field(&mut this, "color", "I", rgb & 0xffffff).await?;
-        jvm.put_field(&mut this, "xorMode", "Z", false).await?;
-        jvm.put_field(&mut this, "alpha", "I", 255).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "color", "I", rgb & 0xffffff).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "xorMode", "Z", false).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "alpha", "I", 255).await?;
         let result: JvmResult<()> = jvm.invoke_virtual(&this, GRAPHICS, "fillRect", "(IIII)V", (x, y, 1, 1)).await;
 
-        jvm.put_field(&mut this, "color", "I", color).await?;
-        jvm.put_field(&mut this, "xorMode", "Z", xor_mode).await?;
-        jvm.put_field(&mut this, "alpha", "I", alpha).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "color", "I", color).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "xorMode", "Z", xor_mode).await?;
+        jvm.put_field(&mut this, GRAPHICS_X, "alpha", "I", alpha).await?;
 
         result
     }

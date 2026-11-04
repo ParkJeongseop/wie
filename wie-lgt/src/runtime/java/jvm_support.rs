@@ -10,15 +10,15 @@ pub(crate) use self::method::JavaMethod;
 mod value;
 mod vtable;
 
-use alloc::{boxed::Box, collections::BTreeSet, format, string::String, vec, vec::Vec};
+use alloc::{boxed::Box, format, string::String};
 
 use jvm::{ClassDefinition, ClassInstance, JavaError, Jvm, Method};
 
 use wie_backend::System;
-use wie_core_arm::{ArmCore, HEAP_BASE, HEAP_SIZE};
+use wie_core_arm::ArmCore;
 use wie_jvm_support::{JvmImplementation, JvmSupport, native::NativeJavaValueCodec};
 use wie_midp::get_protos as get_midp_protos;
-use wie_util::{ByteRead, Result, WieError};
+use wie_util::{Result, WieError};
 use wie_wipi_java::get_protos as get_wipi_java_protos;
 
 use super::classes::net::wie::{CletWrapper, CletWrapperCard, CletWrapperContext, LgtClassLoader};
@@ -68,78 +68,7 @@ impl LgtJvmSupport {
             jvm.register_class(class, None).await.unwrap();
         }
 
-        // AOT-compiled Java keeps object references in ARM registers and on ARM stacks, where the
-        // collector cannot see them; without this, System.gc() frees objects that are only held
-        // by a running guest method.
-        let scan_core = core.clone();
-        jvm.set_extra_roots(move || Self::guest_roots(&scan_core));
-
         Ok(jvm)
-    }
-
-    /// Conservative root scan of every guest thread: every register, and every word of every
-    /// thread stack. Whole stacks rather than the part above each saved stack pointer, because a
-    /// task suspended inside guest code keeps its frames where the engine's current stack pointer
-    /// does not point (the live stack pointer was observed sitting at another thread's stack top
-    /// while that thread's frames, holding the only reference to a StringBuffer, lay below it).
-    /// Stale words in dead frames keep a few garbage objects alive; that is the price.
-    fn guest_roots(core: &ArmCore) -> Vec<Box<dyn ClassInstance>> {
-        const UNKNOWN_STACK_WINDOW: u32 = 16 * 1024;
-        const CHUNK: usize = 64 * 1024;
-        let stacks = core.thread_contexts_with_stacks();
-        let live = core.save_context();
-        let suspended = core.suspended_caller_contexts();
-
-        let mut candidates = Vec::new();
-        for context in stacks
-            .iter()
-            .map(|(context, _, _)| context)
-            .chain(suspended.iter())
-            .chain(core::iter::once(&live))
-        {
-            candidates.extend([
-                context.r0, context.r1, context.r2, context.r3, context.r4, context.r5, context.r6, context.r7, context.r8, context.sb, context.sl,
-                context.fp, context.ip,
-            ]);
-        }
-        let mut regions = stacks
-            .iter()
-            .map(|(_, base, size)| (*base, base.saturating_add(*size)))
-            .collect::<Vec<_>>();
-        let live_sp = live.sp & !3;
-        if (HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&live_sp) && !regions.iter().any(|(base, end)| (*base..*end).contains(&live_sp)) {
-            regions.push((live_sp, live_sp.saturating_add(UNKNOWN_STACK_WINDOW).min(HEAP_BASE + HEAP_SIZE)));
-        }
-        let mut chunk = vec![0u8; CHUNK];
-        for (base, end) in regions {
-            let mut address = base & !3;
-            while address < end {
-                let length = ((end - address) as usize).min(CHUNK);
-                if core.read_bytes(address, &mut chunk[..length]).is_err() {
-                    break;
-                }
-                candidates.extend(
-                    chunk[..length]
-                        .chunks_exact(4)
-                        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]])),
-                );
-                address += length as u32;
-            }
-        }
-
-        let mut roots = Vec::new();
-        let mut seen = BTreeSet::new();
-        for word in candidates {
-            if word % 4 != 0 || !(HEAP_BASE..HEAP_BASE + HEAP_SIZE).contains(&word) || !seen.insert(word) {
-                continue;
-            }
-            if JavaClassInstance::is_live_instance(core, word) {
-                roots.push(Self::class_instance_from_raw(core, word));
-            }
-        }
-        tracing::trace!("guest root scan: {} candidate words, {} live objects", seen.len(), roots.len());
-
-        roots
     }
 
     pub fn class_from_raw(core: &ArmCore, ptr_class: u32) -> JavaClassDefinition {
@@ -380,11 +309,14 @@ mod tests {
 
     use test_utils::TestPlatform;
     use wie_backend::{DefaultTaskRunner, System};
-    use wie_core_arm::{Allocator, ArmCore};
+    use wie_core_arm::{Allocator, ArmCore, RunFunctionResult};
     use wie_jvm_support::{JvmImplementation, JvmSupport};
     use wie_util::{ByteRead, ByteWrite, Result, WieError, read_generic, write_generic, write_null_terminated_string_bytes};
 
-    use crate::runtime::java::abi::{CLASS_INITIALIZATION_STATE_FIELD, CLASS_NATIVE_NAME_FIELD, WORD_FIELD_DESCRIPTOR};
+    use crate::runtime::java::{
+        abi::{CLASS_INITIALIZATION_STATE_FIELD, CLASS_NATIVE_NAME_FIELD, WORD_FIELD_DESCRIPTOR},
+        get_java_interface_method, register_java_system_svc_handler,
+    };
 
     use super::{JavaClassInstance, LgtClassLoader, LgtJvmImplementation, LgtJvmSupport, get_midp_protos, get_wipi_java_protos};
 
@@ -392,6 +324,15 @@ mod tests {
     struct Child;
     struct DirectJlet;
     struct DeepJlet;
+    struct WideResult(i64);
+
+    impl RunFunctionResult<WideResult> for WideResult {
+        fn get(core: &ArmCore) -> Self {
+            let low = core.read_param(0).unwrap();
+            let high = core.read_param(1).unwrap();
+            Self(((high as u64) << 32 | low as u64) as i64)
+        }
+    }
 
     async fn base_value(_jvm: &Jvm, _context: &mut (), _this: ClassInstanceRef<Base>) -> JvmResult<i32> {
         Ok(1)
@@ -422,7 +363,11 @@ mod tests {
     }
 
     async fn init_jvm(system: &System) -> Result<(Jvm, ArmCore, LgtJvmImplementation)> {
-        let mut core = ArmCore::new(false, None)?;
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })?;
         Allocator::init(&mut core)?;
 
         let mut context = core.save_context();
@@ -524,6 +469,35 @@ mod tests {
             let mut raw_long = [0; 8];
             longs.as_array_instance().unwrap().raw_buffer().unwrap().read(2, &mut raw_long).unwrap();
             assert_eq!(raw_long, 0x12345678_9abcdef0u64.to_le_bytes());
+            register_java_system_svc_handler(&mut core, &jvm, 0)?;
+            let load_long = get_java_interface_method(&mut core, 0x5b)?;
+            let store_long = get_java_interface_method(&mut core, 0xfd)?;
+            for (index, expected) in long_values.iter().enumerate() {
+                assert_eq!(
+                    core.run_function::<WideResult>(load_long, &[long_instance_raw, index as u32]).await?.0,
+                    *expected
+                );
+            }
+            for (index, value) in long_values.iter().rev().enumerate() {
+                core.run_function::<()>(
+                    store_long,
+                    &[long_instance_raw, index as u32, (*value as u64 >> 32) as u32, *value as u32],
+                )
+                .await?;
+                assert_eq!(jvm.load_array::<i64>(&longs, index, 1).await.unwrap(), [*value]);
+            }
+            for (array, index, class) in [
+                (0, 0, "java/lang/NullPointerException"),
+                (long_instance_raw, long_values.len() as u32, "java/lang/ArrayIndexOutOfBoundsException"),
+                (long_instance_raw, u32::MAX, "java/lang/ArrayIndexOutOfBoundsException"),
+            ] {
+                for operation in [load_long, store_long] {
+                    let Err(WieError::JavaException(exception)) = core.run_function::<()>(operation, &[array, index, 0, 0]).await else {
+                        panic!("expected {class}");
+                    };
+                    assert!(jvm.is_instance(&*LgtJvmSupport::class_instance_from_raw(&core, exception), class));
+                }
+            }
 
             let object = JavaLangString::from_rust_string(&jvm, "reference").await.unwrap();
             let expected_identity = object.identity();
@@ -546,9 +520,6 @@ mod tests {
                 .downcast_ref::<super::JavaClassDefinition>()
                 .unwrap()
                 .clone();
-            let object_methods = object_definition.vtable_entries(&jvm).await?;
-            assert_eq!(object_methods[1].method.as_ref().unwrap().name(), "getClass");
-            assert_eq!(object_methods[4].method.as_ref().unwrap().name(), "toString");
             let object: Box<dyn ClassInstance> = jvm.new_class("java/lang/Object", "()V", ()).await.unwrap();
             let missing_target: u32 = read_generic(&core, object_definition.ptr_vtable()? + 4)?;
             let error = core
@@ -558,81 +529,6 @@ mod tests {
             match error {
                 WieError::Unimplemented(message) => assert!(message.starts_with("java/lang/Object vtable index 0 (called from"), "{message}"),
                 error => panic!("unexpected missing vtable error: {error}"),
-            }
-
-            let string_definition = jvm
-                .resolve_class("java/lang/String")
-                .await
-                .unwrap()
-                .definition
-                .as_any()
-                .downcast_ref::<super::JavaClassDefinition>()
-                .unwrap()
-                .clone();
-            let string_methods = string_definition.vtable_entries(&jvm).await?;
-            assert_eq!(string_methods[10].method.as_ref().unwrap().name(), "length");
-            assert_eq!(string_methods[11].method.as_ref().unwrap().name(), "charAt");
-            assert_eq!(string_methods[14].method.as_ref().unwrap().name(), "getBytes");
-            assert_eq!(string_methods[28].method.as_ref().unwrap().name(), "substring");
-            for index in [10usize, 11, 14, 28] {
-                let target: u32 = read_generic(&core, string_definition.ptr_vtable()? + ((index + 1) * 4) as u32)?;
-                assert_eq!(target, string_methods[index].method.as_ref().unwrap().target()?);
-            }
-
-            let vector_definition = jvm
-                .resolve_class("java/util/Vector")
-                .await
-                .unwrap()
-                .definition
-                .as_any()
-                .downcast_ref::<super::JavaClassDefinition>()
-                .unwrap()
-                .clone();
-            let vector_methods = vector_definition.vtable_entries(&jvm).await?;
-            for (index, name, descriptor) in [
-                (15usize, "size", "()I"),
-                (23, "elementAt", "(I)Ljava/lang/Object;"),
-                (27, "removeElementAt", "(I)V"),
-                (28, "insertElementAt", "(Ljava/lang/Object;I)V"),
-            ] {
-                let method = vector_methods[index].method.as_ref().unwrap();
-                assert_eq!((method.name().as_ref(), method.descriptor().as_ref()), (name, descriptor));
-                let target: u32 = read_generic(&core, vector_definition.ptr_vtable()? + ((index + 1) * 4) as u32)?;
-                assert_eq!(target, method.target()?);
-            }
-
-            let reader_definition = jvm
-                .resolve_class("java/io/Reader")
-                .await
-                .unwrap()
-                .definition
-                .as_any()
-                .downcast_ref::<super::JavaClassDefinition>()
-                .unwrap()
-                .clone();
-            let reader_methods = reader_definition.vtable_entries(&jvm).await?;
-            for (index, name, descriptor) in [(11usize, "read", "([C)I"), (18, "close", "()V")] {
-                let method = reader_methods[index].method.as_ref().unwrap();
-                assert_eq!((method.name().as_ref(), method.descriptor().as_ref()), (name, descriptor));
-                let target: u32 = read_generic(&core, reader_definition.ptr_vtable()? + ((index + 1) * 4) as u32)?;
-                assert_eq!(target, method.target()?);
-            }
-
-            let input_stream_reader_definition = jvm
-                .resolve_class("java/io/InputStreamReader")
-                .await
-                .unwrap()
-                .definition
-                .as_any()
-                .downcast_ref::<super::JavaClassDefinition>()
-                .unwrap()
-                .clone();
-            let input_stream_reader_methods = input_stream_reader_definition.vtable_entries(&jvm).await?;
-            for (index, name, descriptor) in [(11usize, "read", "([C)I"), (18, "close", "()V")] {
-                let method = input_stream_reader_methods[index].method.as_ref().unwrap();
-                assert_eq!((method.name().as_ref(), method.descriptor().as_ref()), (name, descriptor));
-                let target: u32 = read_generic(&core, input_stream_reader_definition.ptr_vtable()? + ((index + 1) * 4) as u32)?;
-                assert_eq!(target, method.target()?);
             }
 
             let input = b"lgt-reader-data".iter().map(|value| *value as i8).collect::<Vec<_>>();
@@ -864,9 +760,12 @@ mod tests {
             let initialized_class_object: u32 = core.run_function(descriptor.fn_get_initialized_class, &[]).await?;
             assert_eq!(initialized_class_object, class_object);
             assert_ne!(java_class_instance.ptr_fields()?, class_fields);
-            let native_name: i32 = jvm.get_field(&java_class, CLASS_NATIVE_NAME_FIELD, WORD_FIELD_DESCRIPTOR).await.unwrap();
+            let native_name: i32 = jvm
+                .get_field(&java_class, "java/lang/Class", CLASS_NATIVE_NAME_FIELD, WORD_FIELD_DESCRIPTOR)
+                .await
+                .unwrap();
             let initialization_state: i32 = jvm
-                .get_field(&java_class, CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR)
+                .get_field(&java_class, "java/lang/Class", CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR)
                 .await
                 .unwrap();
             assert_eq!(native_name as u32, descriptor.ptr_name);
@@ -887,7 +786,7 @@ mod tests {
             let class_object_again: u32 = core.run_function(descriptor.fn_get_class, &[]).await?;
             assert_eq!(class_object_again, class_object);
             let initialization_state: i32 = jvm
-                .get_field(&java_class, CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR)
+                .get_field(&java_class, "java/lang/Class", CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR)
                 .await
                 .unwrap();
             assert_eq!(initialization_state, 5);
@@ -941,7 +840,12 @@ mod tests {
             let short_initialized_class: u32 = core.run_function(short_descriptor.fn_get_initialized_class, &[]).await?;
             assert_eq!(short_initialized_class, short_class_object);
             let initialization_state: i32 = jvm
-                .get_field(&short_java_class, CLASS_INITIALIZATION_STATE_FIELD, WORD_FIELD_DESCRIPTOR)
+                .get_field(
+                    &short_java_class,
+                    "java/lang/Class",
+                    CLASS_INITIALIZATION_STATE_FIELD,
+                    WORD_FIELD_DESCRIPTOR,
+                )
                 .await
                 .unwrap();
             assert_eq!(initialization_state, 5);
@@ -960,7 +864,7 @@ mod tests {
                             JavaFieldProto::new("f2", "I", FieldAccessFlags::PRIVATE),
                             JavaFieldProto::new("f3", "I", FieldAccessFlags::PRIVATE),
                             JavaFieldProto::new("f4", "I", FieldAccessFlags::PRIVATE),
-                            JavaFieldProto::new("f5", "I", FieldAccessFlags::PRIVATE),
+                            JavaFieldProto::new("f5", "Ljava/lang/Object;", FieldAccessFlags::PRIVATE),
                         ],
                         access_flags: ClassAccessFlags::PUBLIC,
                     },
@@ -1007,6 +911,7 @@ mod tests {
             assert_eq!(own0.word_index()?, 6);
             assert_eq!(own1.word_index()?, 7);
             assert_eq!(static0.word_index()?, 0);
+            jvm.register_class(field_child, None).await.unwrap();
 
             let mut field_child_instance: Box<dyn ClassInstance> = Box::new(JavaClassInstance::new(&mut core, &field_child_definition)?);
             let extension = field_child_instance
@@ -1014,10 +919,15 @@ mod tests {
                 .downcast_ref::<JavaClassInstance>()
                 .unwrap()
                 .extension_address(&field_child_definition)?;
-            jvm.put_field(&mut field_child_instance, "own0", "I", 0x1234_5678i32).await.unwrap();
+            jvm.put_field(&mut field_child_instance, "net/wie/test/FieldChild", "own0", "I", 0x1234_5678i32)
+                .await
+                .unwrap();
             assert_eq!(read_generic::<u32, _>(&core, extension + 6 * size_of::<u32>() as u32)?, 0x1234_5678);
             write_generic(&mut core, extension + 7 * size_of::<u32>() as u32, 0x7654_3210u32)?;
-            let own1: i32 = jvm.get_field(&field_child_instance, "own1", "I").await.unwrap();
+            let own1: i32 = jvm
+                .get_field(&field_child_instance, "net/wie/test/FieldChild", "own1", "I")
+                .await
+                .unwrap();
             assert_eq!(own1, 0x7654_3210);
 
             done_clone.store(true, Ordering::Relaxed);

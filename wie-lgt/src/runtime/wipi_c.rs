@@ -5,22 +5,19 @@ pub(super) mod graphics;
 
 use jvm::{Jvm, Result as JvmResult, runtime::JavaLangString};
 use wipi_types::lgt::CletFunctions;
-use wipi_types::wipic::WIPICIndirectPtr;
 
 use wie_backend::System;
 use wie_core_arm::{ArmCore, EmulatedFunction, EmulatedFunctionParam, ResultWriter, SvcId};
 use wie_jvm_support::JvmSupport;
-use wie_util::{Result, read_generic, write_generic, write_null_terminated_string_bytes};
+use wie_util::{Result, read_generic, write_null_terminated_string_bytes};
 use wie_wipi_c::{
     MethodImpl, WIPICContext, WIPICMethodBody, WIPICResult,
-    api::{database, graphics as shared_graphics, im, kernel, media, misc, net, util},
+    api::{fs, graphics as shared_graphics, im, kernel, media, misc, net, serial, term_res, uic, util},
 };
 
 use context::LgtWIPICContext;
 
 use crate::runtime::{SVC_CATEGORY_WIPIC, svc_ids::WIPICSvcId};
-
-const TIME_VALUE_PTR: u32 = 0x7fff1004;
 
 struct WIPICMethodResult {
     result: WIPICResult,
@@ -41,6 +38,7 @@ struct CMethodProxy {
 }
 
 async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm), id: SvcId) -> Result<()> {
+    let _frame = jvm.push_native_frame(&[]);
     let wipic_context = LgtWIPICContext::new(core.clone(), system.clone(), jvm.clone());
     let (_, lr) = core.read_pc_lr()?;
     let method = match WIPICSvcId::try_from(id)? {
@@ -56,6 +54,7 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::GetFramebufferBpp => graphics::get_framebuffer_bpp.into_body(),
         WIPICSvcId::Printk => kernel::printk.into_body(),
         WIPICSvcId::Sprintk => kernel::sprintk.into_body(),
+        WIPICSvcId::Execute => kernel::execute.into_body(),
         WIPICSvcId::GetCurProgramId => kernel::get_cur_program_id.into_body(),
         WIPICSvcId::Exit => kernel::exit.into_body(),
         WIPICSvcId::GetParentProgramId => get_parent_program_id.into_body(),
@@ -105,58 +104,93 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::GetFontDescent => shared_graphics::get_font_descent.into_body(),
         WIPICSvcId::GetStringWidth => shared_graphics::get_string_width.into_body(),
         WIPICSvcId::CreateImage => graphics::create_image.into_body(),
+        WIPICSvcId::DestroyImage => graphics::destroy_image.into_body(),
         WIPICSvcId::DecodeNextImage => graphics::decode_next_image.into_body(),
+        WIPICSvcId::EncodeImage => shared_graphics::encode_image.into_body(),
         WIPICSvcId::PostEvent => shared_graphics::post_event.into_body(),
-        WIPICSvcId::GetSupportedModeCount => im::get_supported_mode_count.into_body(),
+        WIPICSvcId::FillPolygon => shared_graphics::fill_polygon.into_body(),
+        WIPICSvcId::GetSupportModeCount => im::get_support_mode_count.into_body(),
         WIPICSvcId::GetSupportedModes => im::get_supported_modes.into_body(),
         WIPICSvcId::SetCurrentMode => im::set_current_mode.into_body(),
         WIPICSvcId::GetCurrentMode => im::get_current_mode.into_body(),
         WIPICSvcId::HandleInput => im::handle_input.into_body(),
-        WIPICSvcId::TimeNow => time_now.into_body(),
-        WIPICSvcId::TimeComponent => time_component.into_body(),
-        WIPICSvcId::TimeConvert => time_convert.into_body(),
-        WIPICSvcId::TimeToTm => time_to_tm.into_body(),
-        WIPICSvcId::DateTimeToTm => time_to_tm.into_body(),
-        WIPICSvcId::OpenDatabase => database::open_database.into_body(),
-        WIPICSvcId::ReadRecordSingle => database::stream_read.into_body(),
-        WIPICSvcId::WriteRecordSingle => database::stream_write.into_body(),
-        WIPICSvcId::CloseDatabase => database::close_database.into_body(),
-        WIPICSvcId::Unk12 => database::seek_record_single.into_body(),
-        WIPICSvcId::Unk9 => database::file_attribute.into_body(),
-        WIPICSvcId::DeleteRecord => database::delete_database.into_body(),
-        WIPICSvcId::ListRecord => database::list_record.into_body(),
-        WIPICSvcId::UpdateRecord => database::update_record.into_body(),
-        WIPICSvcId::SelectRecord => database::select_record.into_body(),
-        WIPICSvcId::ListDatabases => database::list_databases.into_body(),
-        WIPICSvcId::FsList => database::fs_list_lgt.into_body(),
-        WIPICSvcId::Unk8 => database::exists_database.into_body(),
+        WIPICSvcId::UicCreateApplicationContext => uic::create_application_context.into_body(),
+        WIPICSvcId::UicGetClass => uic::get_class.into_body(),
+        WIPICSvcId::UicCreate => uic::create.into_body(),
+        WIPICSvcId::UicDestroy => uic::destroy.into_body(),
+        WIPICSvcId::UicPaint => uic::paint.into_body(),
+        WIPICSvcId::UicHandleEvent => uic::handle_event.into_body(),
+        WIPICSvcId::UicConfigure => uic::configure.into_body(),
+        WIPICSvcId::UicSetEnable => uic::set_enable.into_body(),
+        WIPICSvcId::UicSetFgColor => uic::set_fg_color.into_body(),
+        WIPICSvcId::UicSetBgColor => uic::set_bg_color.into_body(),
+        WIPICSvcId::UicSetLabelAlignment => uic::set_label_alignment.into_body(),
+        WIPICSvcId::UicGetTime => uic::get_time.into_body(),
+        WIPICSvcId::UicInsertText => uic::insert_text.into_body(),
+        WIPICSvcId::UicDeleteText => uic::delete_text.into_body(),
+        WIPICSvcId::UicSetMaxTextSize => uic::set_max_text_size.into_body(),
+        WIPICSvcId::UicGetTextSize => uic::get_text_size.into_body(),
+        WIPICSvcId::UicGetText => uic::get_text.into_body(),
+        WIPICSvcId::FsOpen => fs::open.into_body(),
+        WIPICSvcId::FsRead => fs::read.into_body(),
+        WIPICSvcId::FsWrite => fs::write.into_body(),
+        WIPICSvcId::FsClose => fs::close.into_body(),
+        WIPICSvcId::FsSeek => fs::seek.into_body(),
+        WIPICSvcId::FsFileAttribute => fs::file_attribute.into_body(),
+        WIPICSvcId::FsRemove => fs::remove.into_body(),
+        WIPICSvcId::FsRename => fs::rename.into_body(),
+        WIPICSvcId::FsMkDir => fs::make_directory.into_body(),
+        WIPICSvcId::FsRmDir => fs::remove_directory.into_body(),
+        WIPICSvcId::FsList => fs::list.into_body(),
+        WIPICSvcId::FsAvailable => fs::available.into_body(),
+        WIPICSvcId::FsTell => fs::tell.into_body(),
+        WIPICSvcId::FsExists => fs::exists.into_body(),
         WIPICSvcId::Connect => net::connect.into_body(),
         WIPICSvcId::Close => net::close.into_body(),
         WIPICSvcId::SocketClose => net::socket_close.into_body(),
+        WIPICSvcId::Socket => net::socket.into_body(),
+        WIPICSvcId::UnkSocket => unk_socket.into_body(),
+        WIPICSvcId::SocketConnect => net::socket_connect.into_body(),
+        WIPICSvcId::SocketWrite => net::socket_write.into_body(),
+        WIPICSvcId::SocketRead => net::socket_read.into_body(),
+        WIPICSvcId::SetReadCallback => net::set_read_callback.into_body(),
+        WIPICSvcId::SetWriteCallback => net::set_write_callback.into_body(),
+        WIPICSvcId::SerialOpen => serial::open.into_body(),
+        WIPICSvcId::SerialWrite => serial::write.into_body(),
+        WIPICSvcId::SerialSetWriteCallback => serial::set_write_callback.into_body(),
+        WIPICSvcId::SerialClose => serial::close.into_body(),
+        WIPICSvcId::Htonl => util::htonl.into_body(),
+        WIPICSvcId::Htons => util::htons.into_body(),
+        WIPICSvcId::Ntohs => util::ntohs.into_body(),
+        WIPICSvcId::InetAddr => util::inet_addr.into_body(),
+        WIPICSvcId::TermResGetSupportedGroups => term_res::get_supported_groups.into_body(),
+        WIPICSvcId::TermResGetCount => term_res::get_count.into_body(),
+        WIPICSvcId::TermResGetList => term_res::get_list.into_body(),
+        WIPICSvcId::TermResGetFormat => term_res::get_format.into_body(),
+        WIPICSvcId::TermResGetSize => term_res::get_size.into_body(),
+        WIPICSvcId::TermResGetUiName => term_res::get_ui_name.into_body(),
         WIPICSvcId::ClipCreate => media::clip_create.into_body(),
         WIPICSvcId::ClipFree => media::clip_free.into_body(),
         WIPICSvcId::ClipPutData => media::clip_put_data.into_body(),
-        WIPICSvcId::Unk15 => unk15.into_body(),
+        WIPICSvcId::ClipClearData => media::clip_clear_data.into_body(),
         WIPICSvcId::ClipGetVolume => media::clip_get_volume.into_body(),
         WIPICSvcId::ClipSetVolume => media::clip_set_volume.into_body(),
         WIPICSvcId::Play => media::play.into_body(),
+        WIPICSvcId::Pause => media::pause.into_body(),
+        WIPICSvcId::Resume => media::resume.into_body(),
         WIPICSvcId::Stop => media::stop.into_body(),
-        WIPICSvcId::Unk5 => unk5.into_body(),
+        WIPICSvcId::GetVolume => media::get_volume.into_body(),
+        WIPICSvcId::SetVolume => media::set_volume.into_body(),
         WIPICSvcId::Vibrator => media::vibrator.into_body(),
         WIPICSvcId::Unk14 => unk14.into_body(),
         WIPICSvcId::ClipAllocPlayer => media::clip_alloc_player.into_body(),
         WIPICSvcId::ClipFreePlayer => media::clip_free_player.into_body(),
-        WIPICSvcId::Unk10 => unk10.into_body(),
+        WIPICSvcId::GetDefaultVolume => media::get_default_volume.into_body(),
         WIPICSvcId::SetMuteState => media::set_mute_state.into_body(),
         WIPICSvcId::GetMuteState => media::get_mute_state.into_body(),
         WIPICSvcId::BackLight => misc::back_light.into_body(),
         WIPICSvcId::Unk16 => unk16.into_body(),
-        WIPICSvcId::ListDatabaseNames => database::list_database_names.into_body(),
-        WIPICSvcId::Htonl => util::htonl.into_body(),
-        WIPICSvcId::Htons => util::htons.into_body(),
         WIPICSvcId::Ntohl => util::ntohl.into_body(),
-        WIPICSvcId::Ntohs => util::ntohs.into_body(),
-        WIPICSvcId::InetAddrInt => util::inet_addr_int.into_body(),
     };
 
     EmulatedFunction::call(
@@ -242,6 +276,12 @@ async fn clet_register(core: &mut ArmCore, (system, jvm): &mut (System, Jvm), fu
     Ok(())
 }
 
+async fn unk_socket(_context: &mut dyn WIPICContext, domain: i32, socket_type: i32) -> Result<i32> {
+    tracing::warn!("stub unk_socket({domain}, {socket_type})");
+
+    Ok(-1)
+}
+
 async fn unk2(context: &mut dyn WIPICContext) -> Result<u32> {
     tracing::warn!("stub unk2");
 
@@ -251,98 +291,6 @@ async fn unk2(context: &mut dyn WIPICContext) -> Result<u32> {
     write_null_terminated_string_bytes(context, result, app_id.as_bytes())?;
 
     Ok(result)
-}
-
-async fn unk5(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk5({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
-    // media
-
-    Ok(0)
-}
-
-async fn time_now(context: &mut dyn WIPICContext, component_class: u32) -> Result<u32> {
-    let epoch_seconds = context.system().platform().now().raw() / 1000;
-    tracing::debug!("LGT_timeNow({component_class:#x}) -> {epoch_seconds}");
-
-    write_time_value(context, epoch_seconds as u32)
-}
-
-async fn time_component(_context: &mut dyn WIPICContext, name: u32) -> Result<u32> {
-    tracing::debug!("LGT_timeComponent({name:#x})");
-
-    Ok(name)
-}
-
-async fn time_convert(context: &mut dyn WIPICContext, date_time: u32, component: u32) -> Result<u32> {
-    tracing::debug!("LGT_timeConvert({date_time:#x}, {component:#x})");
-
-    let timestamp = read_time_value(context, date_time)?;
-    write_time_value(context, timestamp)
-}
-
-async fn time_to_tm(context: &mut dyn WIPICContext, time_value: u32, out_ptr: u32) -> Result<i32> {
-    tracing::debug!("LGT_timeToTm({time_value:#x}, {out_ptr:#x})");
-
-    let timestamp = read_time_value(context, time_value)?;
-    let (year, month, day, hour, minute, second) = unix_seconds_to_utc(timestamp as i64);
-    write_generic(context, out_ptr, second)?;
-    write_generic(context, out_ptr + 4, minute)?;
-    write_generic(context, out_ptr + 8, hour)?;
-    write_generic(context, out_ptr + 12, day)?;
-    write_generic(context, out_ptr + 16, month - 1)?;
-    write_generic(context, out_ptr + 20, year - 1900)?;
-
-    Ok(0)
-}
-
-fn write_time_value(context: &mut dyn WIPICContext, timestamp: u32) -> Result<u32> {
-    let time_value_ptr: u32 = read_generic(context, TIME_VALUE_PTR)?;
-    let memory = if time_value_ptr != 0 {
-        WIPICIndirectPtr(time_value_ptr)
-    } else {
-        let memory = context.alloc(4)?;
-        write_generic(context, TIME_VALUE_PTR, memory.0)?;
-        memory
-    };
-    write_generic(context, context.data_ptr(memory)?, timestamp)?;
-    Ok(memory.0)
-}
-
-fn read_time_value(context: &mut dyn WIPICContext, handle: u32) -> Result<u32> {
-    read_generic(context, context.data_ptr(WIPICIndirectPtr(handle))?)
-}
-
-fn unix_seconds_to_utc(timestamp: i64) -> (i32, i32, i32, i32, i32, i32) {
-    let days = timestamp.div_euclid(86_400);
-    let seconds_of_day = timestamp.rem_euclid(86_400);
-    let (year, month, day) = civil_from_days(days);
-    let hour = (seconds_of_day / 3600) as i32;
-    let minute = ((seconds_of_day % 3600) / 60) as i32;
-    let second = (seconds_of_day % 60) as i32;
-
-    (year, month, day, hour, minute, second)
-}
-
-fn civil_from_days(days: i64) -> (i32, i32, i32) {
-    let days = days + 719_468;
-    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
-    let day_of_era = days - era * 146_097;
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let mut year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_param = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_param + 2) / 5 + 1;
-    let month = month_param + if month_param < 10 { 3 } else { -9 };
-    year += if month <= 2 { 1 } else { 0 };
-
-    (year as i32, month as i32, day as i32)
-}
-
-async fn unk10(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk10({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
-    Ok(0)
 }
 
 /// A title launched from the handset's own menu has no parent program.
@@ -360,18 +308,63 @@ async fn unk14(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u
     Ok(0)
 }
 
-async fn unk15(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk15({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
-    // media
-
-    Ok(0)
-}
-
 async fn unk16(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
     tracing::warn!("stub unk16({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
 
     // misc
 
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{boxed::Box, sync::Arc};
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    use test_utils::TestPlatform;
+    use wie_backend::{DefaultTaskRunner, Options, System};
+    use wie_core_arm::{Allocator, ArmCore};
+    use wie_util::{Result, write_null_terminated_string_bytes};
+
+    use crate::runtime::{LgtJvmSupport, SVC_CATEGORY_WIPIC, svc_ids::WIPICSvcId};
+
+    use super::register_wipic_svc_handler;
+
+    #[test]
+    fn resource_calls_release_java_temporaries() -> Result<()> {
+        let mut system = System::new(Box::new(TestPlatform::new()), "", "", DefaultTaskRunner);
+        let task_system = system.clone();
+        let done = Arc::new(AtomicBool::new(false));
+        let task_done = done.clone();
+        system.spawn(async move || {
+            let mut core = ArmCore::new(Options {
+                enable_gdbserver: false,
+                aot: None,
+                profile: None,
+            })?;
+            Allocator::init(&mut core)?;
+            let mut registers = core.save_context();
+            registers.sp = Allocator::alloc(&mut core, 0x100)? + 0x100;
+            core.restore_context(&registers);
+            let jvm = LgtJvmSupport::init(&mut core, &task_system, None).await?;
+            register_wipic_svc_handler(&mut core, &task_system, &jvm)?;
+            let name = Allocator::alloc(&mut core, 8)?;
+            write_null_terminated_string_bytes(&mut core, name, b"missing")?;
+            let lookup = core.make_svc_stub(SVC_CATEGORY_WIPIC, WIPICSvcId::GetResourceId)?;
+            for _ in 0..8 {
+                let result: u32 = core.run_function(lookup, &[name, 0, 0, 0, 0, 0, 0, 0, 0]).await?;
+                assert_eq!(result as i32, -12);
+                assert!(
+                    jvm.collect_garbage().unwrap() >= 2,
+                    "Resource lookup strings must not accumulate in the guest frame"
+                );
+            }
+            task_done.store(true, Ordering::Relaxed);
+            Ok(())
+        });
+        while !done.load(Ordering::Relaxed) {
+            system.tick()?;
+        }
+        Ok(())
+    }
 }

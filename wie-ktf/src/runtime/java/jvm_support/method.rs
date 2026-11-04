@@ -28,12 +28,11 @@ use wie_core_arm::{
 use wie_jvm_support::native::{NativeJavaValueCodec, decode_method_arguments, encode_method_arguments, method_argument_word_count};
 use wie_util::{ByteWrite, Result, WieError, read_generic, write_generic};
 
-use crate::{
-    emulator::IMAGE_BASE,
-    runtime::{SVC_CATEGORY_JAVA, java::JavaSvcFunctions, java::jvm_support::JavaClassDefinition},
-};
+use crate::runtime::{SVC_CATEGORY_JAVA, java::JavaSvcFunctions, java::jvm_support::JavaClassDefinition, with_arm_context};
 
-use super::{KtfJvmSupport, class_instance::JavaClassInstance, name::JavaFullName, value::JavaValueCodec};
+use super::{
+    KtfJvmSupport, KtfJvmSupportContext, SUPPORT_CONTEXT_BASE, class_instance::JavaClassInstance, name::JavaFullName, value::JavaValueCodec,
+};
 
 pub struct JavaMethod {
     pub ptr_raw: u32,
@@ -141,35 +140,27 @@ impl JavaMethod {
         // outermost frame whose caller is the Rust JVM rather than another ARM trampoline.
         async fn run_with_unwind(core: &mut ArmCore, mut pc: u32, mut args: Vec<u32>) -> Result<JavaMethodRunResult> {
             let caller_context = core.save_context();
-
             loop {
                 match core.run_function::<JavaMethodRunResult>(pc, &args).await {
-                    Ok(r) => {
-                        core.restore_context(&caller_context);
-                        return Ok(r);
-                    }
+                    Ok(r) => return Ok(r),
                     Err(WieError::JavaExceptionUnwind {
                         context_base,
                         target,
                         next_pc,
                     }) => {
                         tracing::debug!("Resuming via exception restore: pc={next_pc:#x}, context_base={context_base:#x}, target={target:#x}");
+                        core.restore_context(&caller_context);
                         pc = next_pc;
                         args = vec![context_base, target];
                     }
                     Err(e) => {
                         let error = match e {
-                            error @ WieError::JavaException(_) => error,
-                            error => {
-                                let context = core.dump_reg_stack(IMAGE_BASE);
-                                match error {
-                                    WieError::Unimplemented(message) => WieError::Unimplemented(format!("{message}{context}")),
-                                    WieError::FatalError(message) => WieError::FatalError(format!("{message}{context}")),
-                                    error => WieError::FatalError(format!("{error}{context}")),
-                                }
+                            error @ WieError::JavaException(_) => {
+                                core.restore_context(&caller_context);
+                                error
                             }
+                            error => with_arm_context(core, error),
                         };
-                        core.restore_context(&caller_context);
                         return Err(error);
                     }
                 }
@@ -246,7 +237,7 @@ impl JavaMethod {
         let exception_class = exception.class_definition().name().into_owned();
         // The message names what failed, such as the resource a title could not open.
         let message: ClassInstanceRef<JavaString> = jvm
-            .get_class_field(&exception, "java/lang/Throwable", "detailMessage", "Ljava/lang/String;")
+            .get_field(&exception, "java/lang/Throwable", "detailMessage", "Ljava/lang/String;")
             .await
             .unwrap_or_else(|_| None.into());
         let message = if message.is_null() {
@@ -264,16 +255,25 @@ impl JavaMethod {
             return Err(WieError::JavaException(KtfJvmSupport::class_instance_raw(&exception)));
         }
 
-        let exception_handler: RawJavaExceptionHandler = read_generic(core, current_java_exception_handler)?;
-
-        let method = JavaMethod::from_raw(exception_handler.ptr_method, core);
+        let ptr_method = read_generic(core, current_java_exception_handler)?;
+        let method = JavaMethod::from_raw(ptr_method, core);
         let exception_table = method.exception_table()?;
+        if exception_table.is_empty() {
+            return Err(WieError::JavaException(KtfJvmSupport::class_instance_raw(&exception)));
+        }
+        let exception_handler: RawJavaExceptionHandler = read_generic(core, current_java_exception_handler)?;
 
         for entry in exception_table {
             if entry.from_pc <= exception_handler.current_pc
                 && exception_handler.current_pc < entry.to_pc
                 && Self::exception_class_matches(core, jvm, &*exception, entry.ptr_class)?
             {
+                // The guest catch block reads the thrown object from this frame slot.
+                write_generic(
+                    core,
+                    current_java_exception_handler + offset_of!(RawJavaExceptionHandler, ptr_exception_class_instance) as u32,
+                    KtfJvmSupport::class_instance_raw(&exception),
+                )?;
                 let restore_context: u32 = read_generic(core, exception_handler.ptr_functions + 4)?;
                 let contexts_base = current_java_exception_handler + 24;
 
@@ -282,16 +282,6 @@ impl JavaMethod {
                     entry.target,
                     exception_handler.ptr_method
                 );
-
-                // The catch block takes the thrown object from the handler record: the method's
-                // setjmp returns the entry's target, the block compares it and loads the object
-                // from this word (미니게임파티 `catch (DataBaseException e) { ... + e }` read a
-                // stale word here and called toString on it).
-                write_generic(
-                    core,
-                    current_java_exception_handler + offset_of!(RawJavaExceptionHandler, unk3) as u32,
-                    KtfJvmSupport::class_instance_raw(&exception),
-                )?;
 
                 return Err(WieError::JavaExceptionUnwind {
                     context_base: contexts_base,
@@ -428,6 +418,8 @@ where
 
         let codec = JavaValueCodec::new(core);
         let args = decode_method_arguments(&codec, &self.parameter_types, &raw_args);
+        let support: KtfJvmSupportContext = read_generic(core, SUPPORT_CONTEXT_BASE)?;
+        let _frame = (support.ptr_visit_gc_root != 0).then(|| self.jvm.push_native_frame(&args));
 
         // 디버깅 계측: 배열 파라미터 자리에 비배열 객체가 오면 (게임의 인자 오염 —
         // 놈3 등에서 관찰) 어느 메서드에 어떤 인자들이 왔는지 남긴다.

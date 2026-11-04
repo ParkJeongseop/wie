@@ -1,6 +1,5 @@
-use alloc::{string::ToString, vec};
+use alloc::vec;
 
-use futures::TryFutureExt;
 use jvm::{Array, ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::{JavaClassProto, JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
@@ -69,15 +68,18 @@ impl CletWrapper {
                 (clet_wrapper_card,),
             )
             .await?;
-        let midp_display: ClassInstanceRef<MidpDisplay> = jvm.get_field(&display, "midpDisplay", "Ljavax/microedition/lcdui/Display;").await?;
+        let midp_display: ClassInstanceRef<MidpDisplay> = jvm
+            .get_field(
+                &display,
+                "org/kwis/msp/lcdui/Display",
+                "midpDisplay",
+                "Ljavax/microedition/lcdui/Display;",
+            )
+            .await?;
         let _: () = jvm
             .invoke_virtual(&midp_display, "javax/microedition/lcdui/Display", "disablePaint", "()V", ())
             .await?;
 
-        context
-            .core
-            .run_function(start_clet as _, &[])
-            .or_else(async move |x| Err(jvm.exception("net/wie/WieError", &x.to_string()).await))
-            .await
+        context.call_function(jvm, start_clet as _, &[]).await
     }
 }

@@ -72,19 +72,32 @@ impl BaseClip {
 
         // Data appended to a loaded clip replaces its player; the PlayListener a title set on the
         // clip in between (kept on the player, see Clip::setListener) moves to the new one.
-        let previous: ClassInstanceRef<Player> = jvm.get_field(&this, "player", "Ljavax/microedition/media/Player;").await?;
+        let previous: ClassInstanceRef<Player> = jvm
+            .get_field(&this, "org/kwis/msp/media/BaseClip", "player", "Ljavax/microedition/media/Player;")
+            .await?;
         if !previous.is_null()
             && !player.is_null()
             && jvm.is_instance(&**previous, "net/wie/SmafPlayer")
             && jvm.is_instance(&**player, "net/wie/SmafPlayer")
         {
-            let listener: ClassInstanceRef<Object> = jvm.get_field(&previous, "wipiListener", "Ljava/lang/Object;").await?;
-            let generation: i32 = jvm.get_field(&previous, "playGeneration", "I").await?;
-            jvm.put_field(&mut player, "wipiListener", "Ljava/lang/Object;", listener).await?;
-            jvm.put_field(&mut player, "playGeneration", "I", generation).await?;
+            let listener: ClassInstanceRef<Object> = jvm
+                .get_field(&previous, "net/wie/SmafPlayer", "wipiListener", "Ljava/lang/Object;")
+                .await?;
+            let generation: i32 = jvm.get_field(&previous, "net/wie/SmafPlayer", "playGeneration", "I").await?;
+            jvm.put_field(&mut player, "net/wie/SmafPlayer", "wipiListener", "Ljava/lang/Object;", listener)
+                .await?;
+            jvm.put_field(&mut player, "net/wie/SmafPlayer", "playGeneration", "I", generation)
+                .await?;
         }
 
-        jvm.put_field(&mut this, "player", "Ljavax/microedition/media/Player;", player).await?;
+        jvm.put_field(
+            &mut this,
+            "org/kwis/msp/media/BaseClip",
+            "player",
+            "Ljavax/microedition/media/Player;",
+            player,
+        )
+        .await?;
 
         Ok(length)
     }
@@ -92,14 +105,23 @@ impl BaseClip {
     async fn clear_data(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.media.BaseClip::clearData({this:?})");
 
-        let player: ClassInstanceRef<Player> = jvm.get_field(&this, "player", "Ljavax/microedition/media/Player;").await?;
+        let player: ClassInstanceRef<Player> = jvm
+            .get_field(&this, "org/kwis/msp/media/BaseClip", "player", "Ljavax/microedition/media/Player;")
+            .await?;
         if player.is_null() {
             return Ok(());
         }
 
         let _: () = jvm.invoke_virtual(&player, "javax/microedition/media/Player", "close", "()V", ()).await?;
 
-        jvm.put_field(&mut this, "player", "Ljavax/microedition/media/Player;", None).await?;
+        jvm.put_field(
+            &mut this,
+            "org/kwis/msp/media/BaseClip",
+            "player",
+            "Ljavax/microedition/media/Player;",
+            None,
+        )
+        .await?;
 
         Ok(())
     }

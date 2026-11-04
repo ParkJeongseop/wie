@@ -137,14 +137,16 @@ impl TextFieldX {
         }
         let font: ClassInstanceRef<Font> = jvm.invoke_static(FONT, "getDefaultFont", "()Ljavax/microedition/lcdui/Font;", ()).await?;
 
-        jvm.put_field(&mut this, "label", "Ljava/lang/String;", label).await?;
-        jvm.put_field(&mut this, "maxSize", "I", max_size).await?;
-        jvm.put_field(&mut this, "constraints", "I", constraints).await?;
-        jvm.put_field(&mut this, "width", "I", Self::DEFAULT_WIDTH).await?;
-        jvm.put_field(&mut this, "maxRow", "I", 1).await?;
-        jvm.put_field(&mut this, "font", "Ljavax/microedition/lcdui/Font;", font).await?;
-        jvm.put_field(&mut this, "inputMode", "I", Self::first_input_mode(constraints)).await?;
-        jvm.put_field(&mut this, "tapKey", "I", Self::NO_KEY).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "label", "Ljava/lang/String;", label).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "maxSize", "I", max_size).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "constraints", "I", constraints).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "width", "I", Self::DEFAULT_WIDTH).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "maxRow", "I", 1).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "font", "Ljavax/microedition/lcdui/Font;", font)
+            .await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "inputMode", "I", Self::first_input_mode(constraints))
+            .await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "tapKey", "I", Self::NO_KEY).await?;
 
         Self::store_text(jvm, &mut this, &text).await
     }
@@ -162,17 +164,17 @@ impl TextFieldX {
     }
 
     async fn text(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<RustString> {
-        let text: ClassInstanceRef<String> = jvm.get_field(this, "text", "Ljava/lang/String;").await?;
+        let text: ClassInstanceRef<String> = jvm.get_field(this, TEXT_FIELD_X, "text", "Ljava/lang/String;").await?;
 
         JavaLangString::to_rust_string(jvm, &text).await
     }
 
     async fn store_text(jvm: &Jvm, this: &mut ClassInstanceRef<Self>, text: &str) -> JvmResult<()> {
         let text = JavaLangString::from_rust_string(jvm, text).await?;
-        jvm.put_field(this, "text", "Ljava/lang/String;", text).await?;
+        jvm.put_field(this, TEXT_FIELD_X, "text", "Ljava/lang/String;", text).await?;
 
         // the owner draws the field, so new contents need a repaint of the owner
-        let owner: ClassInstanceRef<Canvas> = jvm.get_field(this, "owner", "Ljavax/microedition/lcdui/Canvas;").await?;
+        let owner: ClassInstanceRef<Canvas> = jvm.get_field(this, TEXT_FIELD_X, "owner", "Ljavax/microedition/lcdui/Canvas;").await?;
         if !owner.is_null() {
             let _: () = jvm
                 .invoke_virtual(&owner, "javax/microedition/lcdui/Canvas", "repaint", "()V", ())
@@ -184,8 +186,8 @@ impl TextFieldX {
 
     /// Replaces the contents after checking them against the size limit and the constraints.
     async fn replace_text(jvm: &Jvm, this: &mut ClassInstanceRef<Self>, text: &str) -> JvmResult<()> {
-        let max_size: i32 = jvm.get_field(this, "maxSize", "I").await?;
-        let constraints: i32 = jvm.get_field(this, "constraints", "I").await?;
+        let max_size: i32 = jvm.get_field(this, TEXT_FIELD_X, "maxSize", "I").await?;
+        let constraints: i32 = jvm.get_field(this, TEXT_FIELD_X, "constraints", "I").await?;
 
         if text.chars().count() > max_size as usize {
             return Err(jvm.exception("java/lang/IllegalArgumentException", "text longer than maxSize").await);
@@ -195,7 +197,7 @@ impl TextFieldX {
                 .exception("java/lang/IllegalArgumentException", "text does not match the constraints")
                 .await);
         }
-        jvm.put_field(this, "tapKey", "I", Self::NO_KEY).await?;
+        jvm.put_field(this, TEXT_FIELD_X, "tapKey", "I", Self::NO_KEY).await?;
 
         Self::store_text(jvm, this, text).await
     }
@@ -203,15 +205,16 @@ impl TextFieldX {
     async fn set_owner(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, owner: ClassInstanceRef<Canvas>) -> JvmResult<()> {
         tracing::debug!("mmpp.microedition.lcdui.TextFieldX::setOwner({this:?}, {owner:?})");
 
-        jvm.put_field(&mut this, "owner", "Ljavax/microedition/lcdui/Canvas;", owner).await
+        jvm.put_field(&mut this, TEXT_FIELD_X, "owner", "Ljavax/microedition/lcdui/Canvas;", owner)
+            .await
     }
 
     async fn get_owner(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Canvas>> {
-        jvm.get_field(&this, "owner", "Ljavax/microedition/lcdui/Canvas;").await
+        jvm.get_field(&this, TEXT_FIELD_X, "owner", "Ljavax/microedition/lcdui/Canvas;").await
     }
 
     async fn get_width(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        jvm.get_field(&this, "width", "I").await
+        jvm.get_field(&this, TEXT_FIELD_X, "width", "I").await
     }
 
     async fn set_width(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, width: i32) -> JvmResult<()> {
@@ -221,23 +224,23 @@ impl TextFieldX {
             return Err(jvm.exception("java/lang/IllegalArgumentException", "width must be positive").await);
         }
 
-        jvm.put_field(&mut this, "width", "I", width).await
+        jvm.put_field(&mut this, TEXT_FIELD_X, "width", "I", width).await
     }
 
     async fn line_height(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<i32> {
-        let font: ClassInstanceRef<Font> = jvm.get_field(this, "font", "Ljavax/microedition/lcdui/Font;").await?;
+        let font: ClassInstanceRef<Font> = jvm.get_field(this, TEXT_FIELD_X, "font", "Ljavax/microedition/lcdui/Font;").await?;
 
         jvm.invoke_virtual(&font, FONT, "getHeight", "()I", ()).await
     }
 
     async fn get_height(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        let max_row: i32 = jvm.get_field(&this, "maxRow", "I").await?;
+        let max_row: i32 = jvm.get_field(&this, TEXT_FIELD_X, "maxRow", "I").await?;
 
         Ok(max_row * Self::line_height(jvm, &this).await? + 2 * Self::PADDING)
     }
 
     async fn get_max_row(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        jvm.get_field(&this, "maxRow", "I").await
+        jvm.get_field(&this, TEXT_FIELD_X, "maxRow", "I").await
     }
 
     async fn set_max_row(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, max_row: i32) -> JvmResult<()> {
@@ -247,11 +250,11 @@ impl TextFieldX {
             return Err(jvm.exception("java/lang/IllegalArgumentException", "maxRow must be positive").await);
         }
 
-        jvm.put_field(&mut this, "maxRow", "I", max_row).await
+        jvm.put_field(&mut this, TEXT_FIELD_X, "maxRow", "I", max_row).await
     }
 
     async fn get_font(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Font>> {
-        jvm.get_field(&this, "font", "Ljavax/microedition/lcdui/Font;").await
+        jvm.get_field(&this, TEXT_FIELD_X, "font", "Ljavax/microedition/lcdui/Font;").await
     }
 
     async fn set_font(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, font: ClassInstanceRef<Font>) -> JvmResult<()> {
@@ -259,39 +262,40 @@ impl TextFieldX {
             return Ok(());
         }
 
-        jvm.put_field(&mut this, "font", "Ljavax/microedition/lcdui/Font;", font).await
+        jvm.put_field(&mut this, TEXT_FIELD_X, "font", "Ljavax/microedition/lcdui/Font;", font)
+            .await
     }
 
     async fn next_input_mode(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("mmpp.microedition.lcdui.TextFieldX::nextInputMode({this:?})");
 
-        if !jvm.get_field::<bool>(&this, "focus", "Z").await? {
+        if !jvm.get_field::<bool>(&this, TEXT_FIELD_X, "focus", "Z").await? {
             return Ok(Self::IM_NONE);
         }
-        let constraints: i32 = jvm.get_field(&this, "constraints", "I").await?;
-        let input_mode: i32 = jvm.get_field(&this, "inputMode", "I").await?;
+        let constraints: i32 = jvm.get_field(&this, TEXT_FIELD_X, "constraints", "I").await?;
+        let input_mode: i32 = jvm.get_field(&this, TEXT_FIELD_X, "inputMode", "I").await?;
         let next = match input_mode {
             _ if Self::numeric_only(constraints) => Self::IM_NUMERIC,
             Self::IM_ROMAN_SMALL => Self::IM_ROMAN_CAPS,
             Self::IM_ROMAN_CAPS => Self::IM_NUMERIC,
             _ => Self::IM_ROMAN_SMALL,
         };
-        jvm.put_field(&mut this, "inputMode", "I", next).await?;
-        jvm.put_field(&mut this, "tapKey", "I", Self::NO_KEY).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "inputMode", "I", next).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "tapKey", "I", Self::NO_KEY).await?;
 
         Ok(next)
     }
 
     async fn get_input_mode(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        if !jvm.get_field::<bool>(&this, "focus", "Z").await? {
+        if !jvm.get_field::<bool>(&this, TEXT_FIELD_X, "focus", "Z").await? {
             return Ok(Self::IM_NONE);
         }
 
-        jvm.get_field(&this, "inputMode", "I").await
+        jvm.get_field(&this, TEXT_FIELD_X, "inputMode", "I").await
     }
 
     async fn get_string(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<String>> {
-        jvm.get_field(&this, "text", "Ljava/lang/String;").await
+        jvm.get_field(&this, TEXT_FIELD_X, "text", "Ljava/lang/String;").await
     }
 
     async fn set_string(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, text: ClassInstanceRef<String>) -> JvmResult<()> {
@@ -402,14 +406,14 @@ impl TextFieldX {
     }
 
     async fn get_max_size(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        jvm.get_field(&this, "maxSize", "I").await
+        jvm.get_field(&this, TEXT_FIELD_X, "maxSize", "I").await
     }
 
     async fn set_max_size(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, max_size: i32) -> JvmResult<i32> {
         if max_size <= 0 {
             return Err(jvm.exception("java/lang/IllegalArgumentException", "maxSize must be positive").await);
         }
-        jvm.put_field(&mut this, "maxSize", "I", max_size).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "maxSize", "I", max_size).await?;
 
         let text = Self::text(jvm, &this).await?.chars().take(max_size as usize).collect::<RustString>();
         Self::replace_text(jvm, &mut this, &text).await?;
@@ -422,23 +426,24 @@ impl TextFieldX {
     }
 
     async fn get_constraints(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
-        jvm.get_field(&this, "constraints", "I").await
+        jvm.get_field(&this, TEXT_FIELD_X, "constraints", "I").await
     }
 
     async fn set_constraints(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, constraints: i32) -> JvmResult<()> {
-        jvm.put_field(&mut this, "constraints", "I", constraints).await?;
-        jvm.put_field(&mut this, "inputMode", "I", Self::first_input_mode(constraints)).await
+        jvm.put_field(&mut this, TEXT_FIELD_X, "constraints", "I", constraints).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "inputMode", "I", Self::first_input_mode(constraints))
+            .await
     }
 
     async fn set_focus(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, focus: bool) -> JvmResult<()> {
         tracing::debug!("mmpp.microedition.lcdui.TextFieldX::setFocus({this:?}, {focus})");
 
-        jvm.put_field(&mut this, "focus", "Z", focus).await?;
-        jvm.put_field(&mut this, "tapKey", "I", Self::NO_KEY).await
+        jvm.put_field(&mut this, TEXT_FIELD_X, "focus", "Z", focus).await?;
+        jvm.put_field(&mut this, TEXT_FIELD_X, "tapKey", "I", Self::NO_KEY).await
     }
 
     async fn has_focus(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
-        jvm.get_field(&this, "focus", "Z").await
+        jvm.get_field(&this, TEXT_FIELD_X, "focus", "Z").await
     }
 
     /// The characters a keypad key cycles through in the roman modes, lower case.
@@ -460,7 +465,7 @@ impl TextFieldX {
     async fn key_pressed(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, key_code: i32) -> JvmResult<()> {
         tracing::debug!("mmpp.microedition.lcdui.TextFieldX::keyPressed({this:?}, {key_code})");
 
-        if !jvm.get_field::<bool>(&this, "focus", "Z").await? {
+        if !jvm.get_field::<bool>(&this, TEXT_FIELD_X, "focus", "Z").await? {
             return Ok(());
         }
         // the title passes on what its Canvas received; name the key in the MIDP layer's own codes
@@ -469,14 +474,14 @@ impl TextFieldX {
             None => key_code,
         };
         let mut chars = Self::text(jvm, &this).await?.chars().collect::<Vec<_>>();
-        let tap_key: i32 = jvm.get_field(&this, "tapKey", "I").await?;
+        let tap_key: i32 = jvm.get_field(&this, TEXT_FIELD_X, "tapKey", "I").await?;
 
         if key == MIDPKeyCode::CLEAR as i32 {
             chars.pop();
-            jvm.put_field(&mut this, "tapKey", "I", Self::NO_KEY).await?;
+            jvm.put_field(&mut this, TEXT_FIELD_X, "tapKey", "I", Self::NO_KEY).await?;
         } else if (b'0' as i32..=b'9' as i32).contains(&key) {
-            let input_mode: i32 = jvm.get_field(&this, "inputMode", "I").await?;
-            let max_size: i32 = jvm.get_field(&this, "maxSize", "I").await?;
+            let input_mode: i32 = jvm.get_field(&this, TEXT_FIELD_X, "inputMode", "I").await?;
+            let max_size: i32 = jvm.get_field(&this, TEXT_FIELD_X, "maxSize", "I").await?;
             let upper_case = input_mode == Self::IM_ROMAN_CAPS;
 
             if input_mode == Self::IM_NUMERIC {
@@ -487,7 +492,7 @@ impl TextFieldX {
                 let letters = Self::letters(key as u8).chars().collect::<Vec<_>>();
                 let cycling = tap_key == key && !chars.is_empty();
                 let tap_index = if cycling {
-                    (jvm.get_field::<i32>(&this, "tapIndex", "I").await? + 1) % letters.len() as i32
+                    (jvm.get_field::<i32>(&this, TEXT_FIELD_X, "tapIndex", "I").await? + 1) % letters.len() as i32
                 } else {
                     0
                 };
@@ -502,13 +507,13 @@ impl TextFieldX {
                 }
                 if chars.len() < max_size as usize {
                     chars.push(letter);
-                    jvm.put_field(&mut this, "tapKey", "I", key).await?;
-                    jvm.put_field(&mut this, "tapIndex", "I", tap_index).await?;
+                    jvm.put_field(&mut this, TEXT_FIELD_X, "tapKey", "I", key).await?;
+                    jvm.put_field(&mut this, TEXT_FIELD_X, "tapIndex", "I", tap_index).await?;
                 }
             }
         } else {
             // any other key ends the letter being cycled
-            jvm.put_field(&mut this, "tapKey", "I", Self::NO_KEY).await?;
+            jvm.put_field(&mut this, TEXT_FIELD_X, "tapKey", "I", Self::NO_KEY).await?;
             return Ok(());
         }
 
@@ -525,11 +530,11 @@ impl TextFieldX {
     async fn paint(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, graphics: ClassInstanceRef<Graphics>) -> JvmResult<()> {
         tracing::debug!("mmpp.microedition.lcdui.TextFieldX::paint({this:?}, {graphics:?})");
 
-        let width: i32 = jvm.get_field(&this, "width", "I").await?;
-        let max_row: i32 = jvm.get_field(&this, "maxRow", "I").await?;
-        let constraints: i32 = jvm.get_field(&this, "constraints", "I").await?;
-        let focus: bool = jvm.get_field(&this, "focus", "Z").await?;
-        let font: ClassInstanceRef<Font> = jvm.get_field(&this, "font", "Ljavax/microedition/lcdui/Font;").await?;
+        let width: i32 = jvm.get_field(&this, TEXT_FIELD_X, "width", "I").await?;
+        let max_row: i32 = jvm.get_field(&this, TEXT_FIELD_X, "maxRow", "I").await?;
+        let constraints: i32 = jvm.get_field(&this, TEXT_FIELD_X, "constraints", "I").await?;
+        let focus: bool = jvm.get_field(&this, TEXT_FIELD_X, "focus", "Z").await?;
+        let font: ClassInstanceRef<Font> = jvm.get_field(&this, TEXT_FIELD_X, "font", "Ljavax/microedition/lcdui/Font;").await?;
         let line_height = Self::line_height(jvm, &this).await?;
         let height = max_row * line_height + 2 * Self::PADDING;
 

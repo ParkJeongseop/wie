@@ -17,7 +17,7 @@ use wipi_types::lgt::java::{LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor
 use wie_core_arm::ArmCore;
 use wie_util::{Result, read_generic, read_null_terminated_string_bytes};
 
-use crate::runtime::java::jvm_support::LgtJvmSupport;
+use crate::runtime::{java::jvm_support::LgtJvmSupport, with_arm_context};
 
 type ClassLoaderProto = JavaClassProto<ArmCore>;
 
@@ -62,9 +62,11 @@ impl LgtClassLoader {
         let _: () = jvm
             .invoke_special(&this, "java/lang/ClassLoader", "<init>", "(Ljava/lang/ClassLoader;)V", (parent,))
             .await?;
-        jvm.put_field(&mut this, "generatedClasses", "I", generated_classes).await?;
+        jvm.put_field(&mut this, "net/wie/LgtClassLoader", "generatedClasses", "I", generated_classes)
+            .await?;
         let native_strings: ClassInstanceRef<Vector> = jvm.new_class("java/util/Vector", "()V", ()).await?.into();
-        jvm.put_field(&mut this, "nativeStrings", "Ljava/util/Vector;", native_strings).await?;
+        jvm.put_field(&mut this, "net/wie/LgtClassLoader", "nativeStrings", "Ljava/util/Vector;", native_strings)
+            .await?;
         jvm.put_static_field("net/wie/LgtClassLoader", "instance", "Lnet/wie/LgtClassLoader;", this)
             .await
     }
@@ -94,7 +96,7 @@ impl LgtClassLoader {
         name: ClassInstanceRef<String>,
     ) -> JvmResult<ClassInstanceRef<Class>> {
         let name = JavaLangString::to_rust_string(jvm, &name).await?.replace('.', "/");
-        let generated_classes: i32 = jvm.get_field(&this, "generatedClasses", "I").await?;
+        let generated_classes: i32 = jvm.get_field(&this, "net/wie/LgtClassLoader", "generatedClasses", "I").await?;
         let ptr_class = match Self::find_raw_class(core, generated_classes as u32, &name) {
             Ok(Some(ptr_class)) => ptr_class,
             Ok(None) => return Ok(None.into()),
@@ -107,7 +109,7 @@ impl LgtClassLoader {
             Err(wie_util::WieError::JavaException(ptr_exception)) => {
                 Err(JavaError::JavaException(LgtJvmSupport::class_instance_from_raw(core, ptr_exception)))
             }
-            Err(error) => Err(jvm.exception("net/wie/WieError", &error.to_string()).await),
+            Err(error) => Err(jvm.exception("net/wie/WieError", &with_arm_context(core, error).to_string()).await),
         }
     }
 }
@@ -125,7 +127,11 @@ mod tests {
 
     #[test]
     fn generated_class_lookup_includes_last_bucket() -> Result<()> {
-        let mut core = ArmCore::new(false, None)?;
+        let mut core = ArmCore::new(wie_backend::Options {
+            enable_gdbserver: false,
+            aot: None,
+            profile: None,
+        })?;
         Allocator::init(&mut core)?;
 
         let ptr_name = Allocator::alloc(&mut core, 5)?;

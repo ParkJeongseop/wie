@@ -30,6 +30,7 @@ impl TextComponent {
                 JavaFieldProto::new("maxLength", "I", FieldAccessFlags::PROTECTED),
                 JavaFieldProto::new("m_td", "[C", FieldAccessFlags::PROTECTED),
                 JavaFieldProto::new("imHandler", "Lorg/kwis/msp/lcdui/InputMethodHandler;", FieldAccessFlags::PROTECTED),
+                JavaFieldProto::new("iMode", "I", FieldAccessFlags::PROTECTED),
             ],
             access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::ABSTRACT,
         }
@@ -43,8 +44,14 @@ impl TextComponent {
         // TODO constant. 0: CONSTRAINT_ANY
         let im_handler = jvm.new_class("org/kwis/msp/lcdui/InputMethodHandler", "(I)V", (0,)).await?;
 
-        jvm.put_field(&mut this, "imHandler", "Lorg/kwis/msp/lcdui/InputMethodHandler;", im_handler)
-            .await?;
+        jvm.put_field(
+            &mut this,
+            "org/kwis/msp/lwc/TextComponent",
+            "imHandler",
+            "Lorg/kwis/msp/lcdui/InputMethodHandler;",
+            im_handler,
+        )
+        .await?;
 
         Ok(())
     }
@@ -52,7 +59,8 @@ impl TextComponent {
     async fn set_max_length(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<TextComponent>, max_length: i32) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lwc.TextComponent::setMaxLength({this:?}, {max_length})");
 
-        jvm.put_field(&mut this, "maxLength", "I", max_length).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/lwc/TextComponent", "maxLength", "I", max_length)
+            .await?;
 
         Ok(())
     }
@@ -75,7 +83,7 @@ impl TextComponent {
         };
         let mut array: ClassInstanceRef<Array<JavaChar>> = jvm.instantiate_array("C", chars.len()).await?.into();
         jvm.store_array(&mut array, 0, chars).await?;
-        jvm.put_field(&mut this, "m_td", "[C", array).await?;
+        jvm.put_field(&mut this, "org/kwis/msp/lwc/TextComponent", "m_td", "[C", array).await?;
 
         Ok(())
     }
@@ -83,7 +91,7 @@ impl TextComponent {
     async fn get_string(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<TextComponent>) -> JvmResult<ClassInstanceRef<String>> {
         tracing::debug!("org.kwis.msp.lwc.TextComponent::getString({this:?})");
 
-        let array: ClassInstanceRef<Array<JavaChar>> = jvm.get_field(&this, "m_td", "[C").await?;
+        let array: ClassInstanceRef<Array<JavaChar>> = jvm.get_field(&this, "org/kwis/msp/lwc/TextComponent", "m_td", "[C").await?;
         let text = if array.is_null() {
             RustString::new()
         } else {

@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use hashbrown::HashMap;
 use spin::Mutex;
-use wie_backend::{AudioSink, Database, DatabaseRepository, Filesystem, Font, Instant, Platform, RecordId, Screen, canvas::Image};
+use wie_backend::{AudioCommand, AudioSink, Database, DatabaseRepository, Filesystem, Font, Instant, Platform, RecordId, Screen, canvas::Image};
 use wie_util::Result;
 
 use crate::filesystem::MemoryFilesystem;
@@ -42,6 +42,7 @@ pub enum TestPlatformEvent {
 pub struct TestPlatform {
     screen: TestScreen,
     event_handler: Option<Box<dyn Fn(TestPlatformEvent) + Sync + Send>>,
+    audio_handler: Option<Arc<dyn Fn(AudioCommand) + Sync + Send>>,
     fs: Arc<MemoryFilesystem>,
     db: Arc<MemoryDatabaseRepository>,
     font: Font,
@@ -59,6 +60,7 @@ impl TestPlatform {
         Self {
             screen: TestScreen::default(),
             event_handler: None,
+            audio_handler: None,
             fs: Arc::new(MemoryFilesystem::default()),
             db: Arc::new(MemoryDatabaseRepository::default()),
             font: Font::try_from_static(include_bytes!("../../assets/neodgm.ttf")).unwrap(),
@@ -73,6 +75,7 @@ impl TestPlatform {
         Self {
             screen: TestScreen::default(),
             event_handler: Some(Box::new(event_handler)),
+            audio_handler: None,
             fs: Arc::new(MemoryFilesystem::default()),
             db: Arc::new(MemoryDatabaseRepository::default()),
             font: Font::try_from_static(include_bytes!("../../assets/neodgm.ttf")).unwrap(),
@@ -84,10 +87,34 @@ impl TestPlatform {
         Self {
             screen: TestScreen::default(),
             event_handler: None,
+            audio_handler: None,
             fs: Arc::new(MemoryFilesystem::default()),
             db: Arc::new(MemoryDatabaseRepository::default()),
             font: Font::try_from_static(include_bytes!("../../assets/neodgm.ttf")).unwrap(),
             clock: Some(clock),
+        }
+    }
+
+    pub fn with_audio_handler<T>(audio_handler: T) -> Self
+    where
+        T: Fn(AudioCommand) + Sync + Send + 'static,
+    {
+        Self {
+            audio_handler: Some(Arc::new(audio_handler)),
+            ..Self::new()
+        }
+    }
+
+    pub fn with_paint_handler<T>(paint_handler: T) -> Self
+    where
+        T: Fn(&dyn Image) + Sync + Send + 'static,
+    {
+        Self {
+            screen: TestScreen {
+                paint_handler: Some(Box::new(paint_handler)),
+                ..TestScreen::default()
+            },
+            ..Self::new()
         }
     }
 }
@@ -119,7 +146,7 @@ impl Platform for TestPlatform {
     }
 
     fn audio_sink(&self) -> Box<dyn AudioSink> {
-        Box::new(TestAudioSink)
+        Box::new(TestAudioSink(self.audio_handler.clone()))
     }
 
     fn write_stdout(&self, buf: &[u8]) {
@@ -166,7 +193,7 @@ impl DatabaseRepository for MemoryDatabaseRepository {
         self.store.lock().remove(&(app_id.to_string(), name.to_string())).is_some()
     }
 
-    async fn usage(&self, app_id: &str) -> u64 {
+    fn usage(&self, app_id: &str) -> u64 {
         self.store
             .lock()
             .iter()
@@ -223,15 +250,22 @@ impl Database for MemoryDatabase {
     }
 }
 
-pub struct TestAudioSink;
+pub struct TestAudioSink(Option<Arc<dyn Fn(AudioCommand) + Sync + Send>>);
 
 impl AudioSink for TestAudioSink {
-    fn send(&self, _command: wie_backend::AudioCommand) {}
+    fn send(&self, command: AudioCommand) {
+        if let Some(handler) = &self.0 {
+            handler(command);
+        }
+    }
 }
+
+type PaintHandler = dyn Fn(&dyn Image) + Sync + Send;
 
 pub struct TestScreen {
     width: AtomicU32,
     height: AtomicU32,
+    paint_handler: Option<Box<PaintHandler>>,
 }
 
 impl Default for TestScreen {
@@ -239,6 +273,7 @@ impl Default for TestScreen {
         Self {
             width: AtomicU32::new(320),
             height: AtomicU32::new(240),
+            paint_handler: None,
         }
     }
 }
@@ -255,7 +290,11 @@ impl Screen for TestScreen {
         Ok(())
     }
 
-    fn paint(&self, _image: &dyn Image) {}
+    fn paint(&self, image: &dyn Image) {
+        if let Some(handler) = &self.paint_handler {
+            handler(image);
+        }
+    }
 
     fn width(&self) -> u32 {
         self.width.load(Ordering::SeqCst)

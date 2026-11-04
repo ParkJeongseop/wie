@@ -69,7 +69,7 @@ impl MIDlet {
 
         let display = jvm.new_class("javax/microedition/lcdui/Display", "()V", ()).await?;
 
-        jvm.put_class_field(
+        jvm.put_field(
             &mut this,
             "javax/microedition/midlet/MIDlet",
             "display",
@@ -111,7 +111,7 @@ impl MIDlet {
     }
 
     pub async fn display(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Display>> {
-        jvm.get_class_field(this, "javax/microedition/midlet/MIDlet", "display", "Ljavax/microedition/lcdui/Display;")
+        jvm.get_field(this, "javax/microedition/midlet/MIDlet", "display", "Ljavax/microedition/lcdui/Display;")
             .await
     }
 }

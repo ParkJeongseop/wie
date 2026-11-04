@@ -1,4 +1,5 @@
 use alloc::string::String;
+use core::{net::Ipv4Addr, str};
 
 use wie_util::{Result, read_null_terminated_string_bytes};
 
@@ -6,10 +7,8 @@ use wipi_types::wipic::WIPICWord;
 
 use crate::context::WIPICContext;
 
-// The guest is little endian, so network byte order is the byte-swapped value.
-
 pub async fn htonl(_context: &mut dyn WIPICContext, val: WIPICWord) -> Result<WIPICWord> {
-    tracing::debug!("MC_utilHtonl({val})");
+    tracing::debug!("MC_utilHtonl({val:#x})");
 
     Ok(val.swap_bytes())
 }
@@ -46,4 +45,12 @@ pub async fn inet_addr_int(context: &mut dyn WIPICContext, ptr_str: WIPICWord) -
         Some([a, b, c, d]) => u32::from_le_bytes([*a, *b, *c, *d]),
         _ => WIPICWord::MAX,
     })
+}
+
+pub async fn inet_addr(context: &mut dyn WIPICContext, address: WIPICWord) -> Result<WIPICWord> {
+    tracing::debug!("MC_utilInetAddr({address:#x})");
+
+    let bytes = read_null_terminated_string_bytes(context, address)?;
+    let address = str::from_utf8(&bytes).ok().and_then(|value| value.parse::<Ipv4Addr>().ok());
+    Ok(address.map_or(u32::MAX, |address| u32::from_le_bytes(address.octets())))
 }

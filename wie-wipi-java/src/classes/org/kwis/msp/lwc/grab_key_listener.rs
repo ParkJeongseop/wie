@@ -1,7 +1,8 @@
 use alloc::vec;
 
 use jvm_class_proto::JavaMethodProto;
-use jvm_types::ClassAccessFlags;
+use jvm_types::{ClassAccessFlags, MethodAccessFlags};
+
 use wie_jvm_support::WieJavaClassProto;
 
 // interface org.kwis.msp.lwc.GrabKeyListener
@@ -13,14 +14,13 @@ impl GrabKeyListener {
             name: "org/kwis/msp/lwc/GrabKeyListener",
             parent_class: None,
             interfaces: vec![],
-            // boolean grabKeyNotify(int type, int chr, Object obj)
             methods: vec![JavaMethodProto::new_abstract(
                 "grabKeyNotify",
                 "(IILjava/lang/Object;)Z",
-                Default::default(),
+                MethodAccessFlags::PUBLIC | MethodAccessFlags::ABSTRACT,
             )],
             fields: vec![],
-            access_flags: ClassAccessFlags::INTERFACE,
+            access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::INTERFACE | ClassAccessFlags::ABSTRACT,
         }
     }
 }

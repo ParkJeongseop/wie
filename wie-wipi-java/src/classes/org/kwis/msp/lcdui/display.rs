@@ -182,12 +182,24 @@ impl Display {
             )
             .await?;
 
-        jvm.put_field(&mut this, "midpDisplay", "Ljavax/microedition/lcdui/Display;", midp_display.clone())
-            .await?;
+        jvm.put_field(
+            &mut this,
+            "org/kwis/msp/lcdui/Display",
+            "midpDisplay",
+            "Ljavax/microedition/lcdui/Display;",
+            midp_display.clone(),
+        )
+        .await?;
 
         let card_canvas = jvm.new_class("net/wie/CardCanvas", "()V", ()).await?;
-        jvm.put_field(&mut this, "cardCanvas", "Lnet/wie/CardCanvas;", card_canvas.clone())
-            .await?;
+        jvm.put_field(
+            &mut this,
+            "org/kwis/msp/lcdui/Display",
+            "cardCanvas",
+            "Lnet/wie/CardCanvas;",
+            card_canvas.clone(),
+        )
+        .await?;
 
         let _: () = jvm
             .invoke_virtual(
@@ -232,7 +244,8 @@ impl Display {
     async fn get_docked_card(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Card>> {
         tracing::debug!("org.kwis.msp.lcdui.Display::getDockedCard({this:?})");
 
-        jvm.get_field(&this, "dockedCard", "Lorg/kwis/msp/lcdui/Card;").await
+        jvm.get_field(&this, "org/kwis/msp/lcdui/Display", "dockedCard", "Lorg/kwis/msp/lcdui/Card;")
+            .await
     }
 
     async fn set_docked_card(
@@ -244,13 +257,16 @@ impl Display {
     ) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lcdui.Display::setDockedCard({this:?}, {card:?}, {where_})");
 
-        jvm.put_field(&mut this, "dockedCard", "Lorg/kwis/msp/lcdui/Card;", card).await
+        jvm.put_field(&mut this, "org/kwis/msp/lcdui/Display", "dockedCard", "Lorg/kwis/msp/lcdui/Card;", card)
+            .await
     }
 
     async fn is_double_buffered(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.lcdui.Display::isDoubleBuffered({this:?})");
 
-        let canvas = jvm.get_field(&this, "cardCanvas", "Lnet/wie/CardCanvas;").await?;
+        let canvas = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "cardCanvas", "Lnet/wie/CardCanvas;")
+            .await?;
 
         jvm.invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", "isDoubleBuffered", "()Z", ())
             .await
@@ -259,7 +275,9 @@ impl Display {
     async fn push_card(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, c: ClassInstanceRef<Card>) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lcdui.Display::pushCard({this:?}, {c:?})");
 
-        let card_canvas = jvm.get_field(&this, "cardCanvas", "Lnet/wie/CardCanvas;").await?;
+        let card_canvas = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "cardCanvas", "Lnet/wie/CardCanvas;")
+            .await?;
         let _: () = jvm
             .invoke_virtual(&card_canvas, "net/wie/CardCanvas", "pushCard", "(Lorg/kwis/msp/lcdui/Card;)V", (c,))
             .await?;
@@ -270,7 +288,9 @@ impl Display {
     async fn pop_card(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Card>> {
         tracing::debug!("org.kwis.msp.lcdui.Display::popCard({this:?})");
 
-        let card_canvas = jvm.get_field(&this, "cardCanvas", "Lnet/wie/CardCanvas;").await?;
+        let card_canvas = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "cardCanvas", "Lnet/wie/CardCanvas;")
+            .await?;
         jvm.invoke_virtual(&card_canvas, "net/wie/CardCanvas", "popCard", "()Lorg/kwis/msp/lcdui/Card;", ())
             .await
     }
@@ -278,7 +298,9 @@ impl Display {
     async fn remove_card(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, card: ClassInstanceRef<Card>) -> JvmResult<bool> {
         tracing::debug!("org.kwis.msp.lcdui.Display::removeCard({this:?}, {card:?})");
 
-        let card_canvas = jvm.get_field(&this, "cardCanvas", "Lnet/wie/CardCanvas;").await?;
+        let card_canvas = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "cardCanvas", "Lnet/wie/CardCanvas;")
+            .await?;
         jvm.invoke_virtual(&card_canvas, "net/wie/CardCanvas", "removeCard", "(Lorg/kwis/msp/lcdui/Card;)Z", (card,))
             .await
     }
@@ -286,14 +308,18 @@ impl Display {
     async fn count_card(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lcdui.Display::countCard({this:?})");
 
-        let card_canvas = jvm.get_field(&this, "cardCanvas", "Lnet/wie/CardCanvas;").await?;
+        let card_canvas = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "cardCanvas", "Lnet/wie/CardCanvas;")
+            .await?;
         jvm.invoke_virtual(&card_canvas, "net/wie/CardCanvas", "countCard", "()I", ()).await
     }
 
     async fn remove_all_cards(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lcdui.Display::removeAllCards({this:?})");
 
-        let card_canvas = jvm.get_field(&this, "cardCanvas", "Lnet/wie/CardCanvas;").await?;
+        let card_canvas = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "cardCanvas", "Lnet/wie/CardCanvas;")
+            .await?;
         let _: () = jvm
             .invoke_virtual(&card_canvas, "net/wie/CardCanvas", "removeAllCards", "()V", ())
             .await?;
@@ -315,7 +341,9 @@ impl Display {
     async fn get_width(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lcdui.Display::getWidth({this:?})");
 
-        let midp_display: ClassInstanceRef<MidpDisplay> = jvm.get_field(&this, "midpDisplay", "Ljavax/microedition/lcdui/Display;").await?;
+        let midp_display: ClassInstanceRef<MidpDisplay> = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "midpDisplay", "Ljavax/microedition/lcdui/Display;")
+            .await?;
         let width: i32 = jvm
             .invoke_virtual(&midp_display, "javax/microedition/lcdui/Display", "getWidth", "()I", ())
             .await?;
@@ -326,7 +354,9 @@ impl Display {
     async fn get_height(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
         tracing::debug!("org.kwis.msp.lcdui.Display::getHeight({this:?})");
 
-        let midp_display: ClassInstanceRef<MidpDisplay> = jvm.get_field(&this, "midpDisplay", "Ljavax/microedition/lcdui/Display;").await?;
+        let midp_display: ClassInstanceRef<MidpDisplay> = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "midpDisplay", "Ljavax/microedition/lcdui/Display;")
+            .await?;
         let height: i32 = jvm
             .invoke_virtual(&midp_display, "javax/microedition/lcdui/Display", "getHeight", "()I", ())
             .await?;
@@ -337,7 +367,9 @@ impl Display {
     async fn call_serially(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, r: ClassInstanceRef<Runnable>) -> JvmResult<()> {
         tracing::debug!("org.kwis.msp.lcdui.Display::callSerially({this:?}, {r:?})");
 
-        let midp_display: ClassInstanceRef<MidpDisplay> = jvm.get_field(&this, "midpDisplay", "Ljavax/microedition/lcdui/Display;").await?;
+        let midp_display: ClassInstanceRef<MidpDisplay> = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "midpDisplay", "Ljavax/microedition/lcdui/Display;")
+            .await?;
         let _: () = jvm
             .invoke_virtual(
                 &midp_display,
@@ -366,7 +398,9 @@ impl Display {
         // so enqueue it on the event loop like the no-timeout overload — it
         // runs on the next pump instead of after `timeout` ms, which is close
         // enough for loops that re-schedule themselves each frame.
-        let midp_display: ClassInstanceRef<MidpDisplay> = jvm.get_field(&this, "midpDisplay", "Ljavax/microedition/lcdui/Display;").await?;
+        let midp_display: ClassInstanceRef<MidpDisplay> = jvm
+            .get_field(&this, "org/kwis/msp/lcdui/Display", "midpDisplay", "Ljavax/microedition/lcdui/Display;")
+            .await?;
         let _: () = jvm
             .invoke_virtual(
                 &midp_display,
@@ -498,7 +532,8 @@ impl Display {
     }
 
     pub async fn midp_display(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<MidpDisplay>> {
-        jvm.get_field(this, "midpDisplay", "Ljavax/microedition/lcdui/Display;").await
+        jvm.get_field(this, "org/kwis/msp/lcdui/Display", "midpDisplay", "Ljavax/microedition/lcdui/Display;")
+            .await
     }
 }
 

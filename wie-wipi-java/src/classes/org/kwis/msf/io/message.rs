@@ -39,8 +39,9 @@ impl Message {
     ) -> JvmResult<()> {
         tracing::debug!("org.kwis.msf.io.Message::<init>({this:?}, {address:?}, {data:?})");
 
-        jvm.put_field(&mut this, "address", "Ljava/lang/String;", address).await?;
-        jvm.put_field(&mut this, "data", "[B", data).await?;
+        jvm.put_field(&mut this, "org/kwis/msf/io/Message", "address", "Ljava/lang/String;", address)
+            .await?;
+        jvm.put_field(&mut this, "org/kwis/msf/io/Message", "data", "[B", data).await?;
 
         Ok(())
     }
@@ -48,12 +49,12 @@ impl Message {
     async fn get_address(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<String>> {
         tracing::debug!("org.kwis.msf.io.Message::getAddress({this:?})");
 
-        jvm.get_field(&this, "address", "Ljava/lang/String;").await
+        jvm.get_field(&this, "org/kwis/msf/io/Message", "address", "Ljava/lang/String;").await
     }
 
     async fn get_data(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Array<i8>>> {
         tracing::debug!("org.kwis.msf.io.Message::getData({this:?})");
 
-        jvm.get_field(&this, "data", "[B").await
+        jvm.get_field(&this, "org/kwis/msf/io/Message", "data", "[B").await
     }
 }
