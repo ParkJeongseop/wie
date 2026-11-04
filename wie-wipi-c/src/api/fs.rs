@@ -158,10 +158,15 @@ pub async fn tell(context: &mut dyn WIPICContext, fd: i32) -> Result<i32> {
     Ok(handle.position)
 }
 
-pub async fn list(_context: &mut dyn WIPICContext, name: u32, buffer: u32, buffer_size: i32, access_mode: i32) -> Result<i32> {
-    tracing::warn!("stub MC_fsList({name:#x}, {buffer:#x}, {buffer_size}, {access_mode})");
+pub async fn list(context: &mut dyn WIPICContext, name: u32, buffer: u32, buffer_size: i32, access_mode: i32) -> Result<i32> {
+    tracing::warn!("partial MC_fsList({name:#x}, {buffer:#x}, {buffer_size}, {access_mode}): empty listing");
 
-    Ok(-1) // M_E_ERROR
+    if buffer_size < 1 {
+        return Ok(-18); // M_E_SHORTBUF
+    }
+    context.write_bytes(buffer, &[0])?;
+
+    Ok(0)
 }
 
 pub async fn file_attribute(context: &mut dyn WIPICContext, name: u32, output: u32, access_mode: i32) -> Result<i32> {
@@ -173,10 +178,13 @@ pub async fn file_attribute(context: &mut dyn WIPICContext, name: u32, output: u
     if !filesystem.is_valid_path(&name) {
         return Ok(-3);
     }
-    let Some(size) = filesystem.size(&name).await else {
-        return Ok(-12);
+    let size = match filesystem.size(&name).await {
+        Some(size) => size as u32,
+        // A directory MC_fsMkDir made holds nothing.
+        None if filesystem.exists(&directory_marker(&name)).await => 0,
+        None => return Ok(-12),
     };
-    write_generic(context, output, [0u32, 0, size as u32])?;
+    write_generic(context, output, [0u32, 0, size])?;
     Ok(0)
 }
 
@@ -189,7 +197,11 @@ pub async fn exists(context: &mut dyn WIPICContext, name: u32, access_mode: i32)
     if !filesystem.is_valid_path(&name) {
         return Ok(-3);
     }
-    if filesystem.exists(&name).await { Ok(0) } else { Ok(-12) }
+    if filesystem.exists(&name).await || filesystem.exists(&directory_marker(&name)).await {
+        Ok(0)
+    } else {
+        Ok(-12)
+    }
 }
 
 pub async fn remove(context: &mut dyn WIPICContext, name: u32, access_mode: i32) -> Result<i32> {
@@ -217,19 +229,63 @@ pub async fn available(context: &mut dyn WIPICContext) -> Result<i32> {
     Ok(STORAGE_LIMIT.saturating_sub(context.system().filesystem().usage().await) as i32)
 }
 
-pub async fn rename(_context: &mut dyn WIPICContext, old_name: u32, new_name: u32, access_mode: i32) -> Result<i32> {
-    tracing::warn!("stub MC_fsRename({old_name:#x}, {new_name:#x}, {access_mode})");
-    Ok(-1)
+pub async fn rename(context: &mut dyn WIPICContext, old_name: u32, new_name: u32, access_mode: i32) -> Result<i32> {
+    let (Ok(old_name), Ok(new_name)) = (
+        String::from_utf8(read_null_terminated_string_bytes(context, old_name)?),
+        String::from_utf8(read_null_terminated_string_bytes(context, new_name)?),
+    ) else {
+        return Ok(-3);
+    };
+    tracing::debug!("MC_fsRename({old_name:?}, {new_name:?}, {access_mode})");
+    let filesystem = context.system().filesystem().clone();
+    if new_name.len() >= 128 || !filesystem.is_valid_path(&old_name) || !filesystem.is_valid_path(&new_name) {
+        return Ok(-3);
+    }
+    let Some(size) = filesystem.size(&old_name).await else {
+        return Ok(-12); // M_E_NOENT
+    };
+
+    // The storage has no rename of its own: the file is copied and the original removed
+    // (리얼싸커2009 writes its save under a temporary name and renames it into place).
+    let mut data = vec![0; size];
+    let read = filesystem.read(&old_name, 0, size, &mut data).await.unwrap_or(0);
+    if read != size || !filesystem.truncate(&new_name, 0).await || filesystem.write(&new_name, 0, &data).await != size {
+        return Ok(-1); // M_E_ERROR
+    }
+    filesystem.remove(&old_name).await;
+
+    Ok(0)
 }
 
-pub async fn make_directory(_context: &mut dyn WIPICContext, name: u32, access_mode: i32) -> Result<i32> {
-    tracing::warn!("stub MC_fsMkDir({name:#x}, {access_mode})");
-    Ok(-1)
+pub async fn make_directory(context: &mut dyn WIPICContext, name: u32, access_mode: i32) -> Result<i32> {
+    let Ok(name) = String::from_utf8(read_null_terminated_string_bytes(context, name)?) else {
+        return Ok(-3);
+    };
+    tracing::debug!("MC_fsMkDir({name:?}, {access_mode})");
+    let filesystem = context.system().filesystem().clone();
+    let marker = directory_marker(&name);
+    if !filesystem.is_valid_path(&marker) {
+        return Ok(-3);
+    }
+
+    // Files create their directories as they are written, so a directory is only recorded so
+    // that it exists afterwards (겟앰프드 and 티어즈오브메탈 make one before their first save and
+    // 리얼싸커2009 then asks for its attributes).
+    if filesystem.truncate(&marker, 0).await { Ok(0) } else { Ok(-1) }
 }
 
-pub async fn remove_directory(_context: &mut dyn WIPICContext, name: u32, access_mode: i32) -> Result<i32> {
-    tracing::warn!("stub MC_fsRmDir({name:#x}, {access_mode})");
-    Ok(-1)
+pub async fn remove_directory(context: &mut dyn WIPICContext, name: u32, access_mode: i32) -> Result<i32> {
+    let Ok(name) = String::from_utf8(read_null_terminated_string_bytes(context, name)?) else {
+        return Ok(-3);
+    };
+    tracing::debug!("MC_fsRmDir({name:?}, {access_mode})");
+    let filesystem = context.system().filesystem().clone();
+    let marker = directory_marker(&name);
+    if !filesystem.is_valid_path(&marker) {
+        return Ok(-3);
+    }
+
+    if filesystem.remove(&marker).await { Ok(0) } else { Ok(-12) }
 }
 
 pub async fn set_mode(_context: &mut dyn WIPICContext, name: u32, mode: i32, access_mode: i32) -> Result<i32> {
@@ -240,6 +296,11 @@ pub async fn set_mode(_context: &mut dyn WIPICContext, name: u32, mode: i32, acc
 pub async fn get_counts(_context: &mut dyn WIPICContext, name: u32, access_mode: i32) -> Result<i32> {
     tracing::warn!("stub MC_fsGetCounts({name:#x}, {access_mode})");
     Ok(-1)
+}
+
+/// The file that records a directory made with `MC_fsMkDir`.
+fn directory_marker(name: &str) -> String {
+    alloc::format!("{}/.wie-dir", name.trim_end_matches('/'))
 }
 
 fn load_handle(context: &mut dyn WIPICContext, fd: i32) -> Option<(FileHandle, String)> {
