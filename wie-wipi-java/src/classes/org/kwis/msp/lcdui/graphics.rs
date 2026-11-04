@@ -950,12 +950,15 @@ impl Graphics {
             )
             .await?;
 
+        // The pixels are 0x00RRGGBB words and opaque, and `bpl` is the bytes one line takes — four a
+        // pixel — as the specification names it (어스토니시아 draws its whole text this way, one
+        // pixel at a time, and every pixel came out transparent).
         jvm.invoke_virtual(
             &midp_graphics,
             "javax/microedition/lcdui/Graphics",
             "drawRGB",
             "([IIIIIIIZ)V",
-            (rgb_pixels, offset, bpl, x, y, width, height, true),
+            (rgb_pixels, offset, bpl / 4, x, y, width, height, false),
         )
         .await
     }
@@ -1252,11 +1255,12 @@ impl Graphics {
         for (index, color) in colors.into_iter().enumerate() {
             let Some(color) = color else { continue };
             let (row, column) = (index as i64 / width as i64, index as i64 % width as i64);
-            let position = offset as i64 + row * bpl as i64 + column;
+            // `bpl` is bytes per line, four a pixel, and a pixel is 0x00RRGGBB.
+            let position = offset as i64 + row * (bpl / 4) as i64 + column;
             if position < 0 || position >= length {
                 continue;
             }
-            let value = ((color.a as u32) << 24) | ((color.r as u32) << 16) | ((color.g as u32) << 8) | color.b as u32;
+            let value = ((color.r as u32) << 16) | ((color.g as u32) << 8) | color.b as u32;
             jvm.store_array(&mut pixels, position as usize, [value as i32]).await?;
         }
 

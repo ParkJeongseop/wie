@@ -1777,5 +1777,11 @@ Aggregating crashes during the 30s input scenario:
   drew the region untransformed, and placed a RIGHT anchor by the height). `VolumeControl` interface.
   메이플스토리 전사편 J2ME 호환판 reaches its game (SK-VM 83 to 84 of 90; ez-java unchanged).
 
+- WIPI Java `Graphics.setRGBPixels`/`getRGBPixels` (2026-11-05): pixels are 0x00RRGGBB and opaque,
+  and the last argument is bytes per line (four a pixel). They were passed as ARGB with alpha
+  processing and an element pitch, so every pixel a title wrote came out transparent: 어스토니시아
+  ep1-3 draw their whole screen, text included, this way and showed boxes without text or black;
+  귀혼무사편 x2 likewise (KTF 300 to 302).
+
 Keep this document updated in the same change set as the implementation work
 it describes.
