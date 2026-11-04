@@ -30,7 +30,6 @@ impl TextComponent {
                 JavaFieldProto::new("maxLength", "I", FieldAccessFlags::PROTECTED),
                 JavaFieldProto::new("m_td", "[C", FieldAccessFlags::PROTECTED),
                 JavaFieldProto::new("imHandler", "Lorg/kwis/msp/lcdui/InputMethodHandler;", FieldAccessFlags::PROTECTED),
-                JavaFieldProto::new("iMode", "I", FieldAccessFlags::PROTECTED),
             ],
             access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::ABSTRACT,
         }

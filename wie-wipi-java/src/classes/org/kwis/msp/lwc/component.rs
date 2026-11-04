@@ -40,7 +40,6 @@ impl Component {
                 ),
                 JavaMethodProto::new("setBackground", "(I)V", Self::set_background, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("setForeground", "(I)V", Self::set_foreground, MethodAccessFlags::PUBLIC),
-                JavaMethodProto::new("serviceRepaints", "()V", Self::service_repaints, MethodAccessFlags::PUBLIC),
             ],
             fields: vec![JavaFieldProto::new("focused", "Z", FieldAccessFlags::PRIVATE)],
             access_flags: ClassAccessFlags::PUBLIC | ClassAccessFlags::ABSTRACT,
@@ -173,11 +172,5 @@ impl Component {
 
         jvm.invoke_virtual(&card, "org/kwis/msp/lcdui/Card", "repaint", "(IIII)V", (x, y, w, h))
             .await
-    }
-
-    async fn service_repaints(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.Component::serviceRepaints({this:?})");
-
-        Ok(())
     }
 }
