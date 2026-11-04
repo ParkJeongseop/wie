@@ -4,7 +4,7 @@ use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 
-use wie_backend::canvas::{Clip, PixelType, Rgb8Pixel};
+use wie_backend::canvas::{Clip, Color, PixelType, Rgb8Pixel};
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 use wie_midp::classes::javax::microedition::{
     lcdui::{Graphics, Image},
@@ -219,11 +219,6 @@ impl Graphics2D {
             return Ok(());
         }
 
-        if mode == Self::DRAW_AND || mode == Self::DRAW_OR {
-            tracing::warn!("stub com.skt.m.Graphics2D::drawImage unsupported mode {mode}");
-            return Ok(());
-        }
-
         let mut graphics: ClassInstanceRef<Graphics> = jvm
             .get_field(&this, "com/skt/m/Graphics2D", "graphics", "Ljavax/microedition/lcdui/Graphics;")
             .await?;
@@ -237,19 +232,39 @@ impl Graphics2D {
         let src_image = Image::image(jvm, &src).await?;
 
         let image = Graphics::image(jvm, &mut graphics).await?;
+        let (dx, dy) = (tx.wrapping_add(translate_x), ty.wrapping_add(translate_y));
+
+        // AND and OR combine the source with what is already there, channel by channel: titles
+        // punch a sprite's outline with an AND of its mask and fill it with an OR of its colours.
+        if mode == Self::DRAW_AND || mode == Self::DRAW_OR {
+            let destination = Image::image(jvm, &image).await?;
+            let mut canvas = Image::canvas(jvm, &image).await?;
+            for row in 0..sh {
+                for column in 0..sw {
+                    let (x, y) = (dx.wrapping_add(column), dy.wrapping_add(row));
+                    if x < 0 || y < 0 || x >= destination.width() as i32 || y >= destination.height() as i32 {
+                        continue;
+                    }
+                    let source = src_image.get_pixel(sx + column, sy + row);
+                    let target = destination.get_pixel(x, y);
+                    let combine = |a: u8, b: u8| if mode == Self::DRAW_AND { a & b } else { a | b };
+                    let color = Color {
+                        a: 255,
+                        r: combine(source.r, target.r),
+                        g: combine(source.g, target.g),
+                        b: combine(source.b, target.b),
+                    };
+                    canvas.put_pixel(x, y, color, clip);
+                }
+            }
+
+            return Ok(());
+        }
+
         let mut canvas = Image::canvas(jvm, &image).await?;
         canvas.set_xor_mode(mode == Self::DRAW_XOR);
 
-        canvas.draw(
-            tx.wrapping_add(translate_x),
-            ty.wrapping_add(translate_y),
-            sw as _,
-            sh as _,
-            &*src_image,
-            sx,
-            sy,
-            clip,
-        );
+        canvas.draw(dx, dy, sw as _, sh as _, &*src_image, sx, sy, clip);
 
         Ok(())
     }

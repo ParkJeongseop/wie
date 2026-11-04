@@ -7897,6 +7897,7 @@ dependencies = [
  "jvm-bytecode",
  "jvm-class-proto",
  "jvm-types",
+ "libm",
  "rustjava-runtime",
  "test-utils",
  "tracing",

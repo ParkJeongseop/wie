@@ -6,7 +6,7 @@ use wie_jvm_support::WieJavaClassProto;
 pub mod classes;
 pub mod ime;
 
-pub fn get_protos() -> [WieJavaClassProto; 34] {
+pub fn get_protos() -> [WieJavaClassProto; 37] {
     [
         classes::com::skt::m::AudioClip::as_proto(),
         classes::com::skt::m::AudioSystem::as_proto(),
@@ -42,5 +42,8 @@ pub fn get_protos() -> [WieJavaClassProto; 34] {
         classes::com::xce::lcdui::XTextField::as_proto(),
         classes::com::xce::net::Socket::as_proto(),
         classes::net::wie::WieAudioClip::as_proto(),
+        classes::m::A3::as_proto(),
+        classes::m::V3::as_proto(),
+        classes::m::XOWorld::as_proto(),
     ]
 }

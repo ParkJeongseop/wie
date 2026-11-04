@@ -1758,5 +1758,19 @@ Aggregating crashes during the 30s input scenario:
   (노리타이쿤, 더팜1, 드래곤나이트EX) fixed in this change set — 노리타이쿤/
   드래곤나이트EX now reach T3.
 
+- SK-VM 3D package `m` (2026-11-05): `m.V3` (public x/y/z), `m.A3` (3x4 affine,
+  cells m00..m23, fixed point 4096 = 1) with ident/set/mul/trans, and
+  `m.XO_World` with sin/cos (a 4096th of a circle), getViewTrans (look-at),
+  rotY/rotZ answered exactly; the renderer half (loadMBAC/MTRA/BMP, setVram,
+  setView, setClip, setPosture, getMaxFrame, draw, dispose) keeps nothing and
+  draws nothing. 크레이지버스 died in its Canvas class initializer on the
+  missing `m/V3`; it now reaches its menus and game (SK-VM 82 to 83 of 90).
+- SK-VM `Graphics2D.drawImage` DRAW_AND/DRAW_OR combine source and
+  destination channel by channel instead of being skipped.
+- WIPI-C file block (2026-11-05): MC_fsRename (copy then remove), MC_fsMkDir /
+  MC_fsRmDir (a `.wie-dir` marker so the directory exists and has attributes),
+  MC_fsList (empty listing) on upstream's file storage, where they were stubs
+  (리얼싸커2009 renames its save into place).
+
 Keep this document updated in the same change set as the implementation work
 it describes.
