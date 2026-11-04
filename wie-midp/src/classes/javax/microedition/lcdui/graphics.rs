@@ -8,7 +8,9 @@ use jvm_class_proto::{JavaFieldProto, JavaMethodProto, TypeConverter};
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::String;
 
-use wie_backend::canvas::{ArgbPixel, Canvas as BackendCanvas, Clip, Color, PixelType, Rgb8Pixel, Rgb565Pixel, TextAlignment, VecImageBuffer};
+use wie_backend::canvas::{
+    ArgbPixel, Canvas as BackendCanvas, Clip, Color, Image as BackendImage, PixelType, Rgb8Pixel, Rgb565Pixel, TextAlignment, VecImageBuffer,
+};
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
 use crate::classes::javax::microedition::lcdui::{Font, Image};
@@ -738,13 +740,19 @@ impl Graphics {
         }
 
         let src_image = Image::image(jvm, &img).await?;
+        // The region is turned first; the anchor places the turned region, whose width and height a
+        // quarter turn swaps.
+        let Some(region) = Image::transformed_region(&*src_image, src_x, src_y, width.max(0) as u32, height.max(0) as u32, transform) else {
+            return Err(jvm.exception("java/lang/IllegalArgumentException", "invalid transform").await);
+        };
+        let (width, height) = (region.width() as i32, region.height() as i32);
 
         let mut canvas = Self::canvas(jvm, &mut this).await?;
 
         let x_delta = if anchor.contains(Anchor::HCENTER) {
             -width / 2
         } else if anchor.contains(Anchor::RIGHT) {
-            -height
+            -width
         } else {
             0
         };
@@ -765,7 +773,7 @@ impl Graphics {
 
         let clip = Self::clip(jvm, &this).await?;
 
-        canvas.draw(x as _, y as _, width as _, height as _, &*src_image, src_x, src_y, clip);
+        canvas.draw(x as _, y as _, width as _, height as _, &region, 0, 0, clip);
 
         Ok(())
     }

@@ -12,7 +12,8 @@ use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::String;
 
 use wie_backend::canvas::{
-    ArgbPixel, Canvas, Color, Image as BackendImage, ImageBuffer, ImageBufferCanvas, PixelType, Rgb332Pixel, Rgb565Pixel, decode_image,
+    ArgbPixel, Canvas, Color, Image as BackendImage, ImageBuffer, ImageBufferCanvas, PixelType, Rgb332Pixel, Rgb565Pixel, VecImageBuffer,
+    decode_image,
 };
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
@@ -55,6 +56,19 @@ impl Image {
                     "createImage",
                     "(Ljava/lang/String;)Ljavax/microedition/lcdui/Image;",
                     Self::create_image_from_name,
+                    MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC,
+                ),
+                JavaMethodProto::new(
+                    "createImage",
+                    "(Ljavax/microedition/lcdui/Image;IIIII)Ljavax/microedition/lcdui/Image;",
+                    Self::create_image_from_region,
+                    MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC,
+                ),
+                JavaMethodProto::new("getRGB", "([IIIIIII)V", Self::get_rgb, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new(
+                    "createRGBImage",
+                    "([IIIZ)Ljavax/microedition/lcdui/Image;",
+                    Self::create_rgb_image,
                     MethodAccessFlags::PUBLIC | MethodAccessFlags::STATIC,
                 ),
                 JavaMethodProto::new(
@@ -127,6 +141,151 @@ impl Image {
             bytes_per_pixel as _,
         )
         .await
+    }
+
+    /// MIDP 2.0: an image of `width` x `height` from ARGB pixels in row order. Without
+    /// `process_alpha` every pixel is opaque, whatever its alpha byte says.
+    async fn create_rgb_image(
+        jvm: &Jvm,
+        _: &mut WieJvmContext,
+        rgb: ClassInstanceRef<Array<i32>>,
+        width: i32,
+        height: i32,
+        process_alpha: bool,
+    ) -> JvmResult<ClassInstanceRef<Image>> {
+        tracing::debug!("javax.microedition.lcdui.Image::createRGBImage({rgb:?}, {width}, {height}, {process_alpha})");
+
+        if rgb.is_null() {
+            return Err(jvm.exception("java/lang/NullPointerException", "rgb is null").await);
+        }
+        if width <= 0 || height <= 0 {
+            return Err(jvm
+                .exception("java/lang/IllegalArgumentException", "width and height must be positive")
+                .await);
+        }
+        let count = width as usize * height as usize;
+        if jvm.array_length(&rgb).await? < count {
+            return Err(jvm.exception("java/lang/ArrayIndexOutOfBoundsException", "rgb is too short").await);
+        }
+
+        let pixels: Vec<i32> = jvm.load_array(&rgb, 0, count).await?;
+        let mut data = Vec::with_capacity(count * 4);
+        for pixel in pixels {
+            let pixel = if process_alpha { pixel as u32 } else { pixel as u32 | 0xff00_0000 };
+            data.extend_from_slice(&pixel.to_le_bytes());
+        }
+
+        Self::create_image_instance(jvm, width as _, height as _, &data, 4).await
+    }
+
+    /// MIDP 2.0: a new image holding a region of `source`, turned by a `Sprite` transform.
+    #[allow(clippy::too_many_arguments)]
+    async fn create_image_from_region(
+        jvm: &Jvm,
+        _: &mut WieJvmContext,
+        source: ClassInstanceRef<Image>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        transform: i32,
+    ) -> JvmResult<ClassInstanceRef<Image>> {
+        tracing::debug!("javax.microedition.lcdui.Image::createImage({source:?}, {x}, {y}, {width}, {height}, {transform})");
+
+        if source.is_null() {
+            return Err(jvm.exception("java/lang/NullPointerException", "image is null").await);
+        }
+        let image = Self::image(jvm, &source).await?;
+        if width <= 0 || height <= 0 || x < 0 || y < 0 || x + width > image.width() as i32 || y + height > image.height() as i32 {
+            return Err(jvm.exception("java/lang/IllegalArgumentException", "region is outside the image").await);
+        }
+        let Some(region) = Self::transformed_region(&*image, x, y, width as u32, height as u32, transform) else {
+            return Err(jvm.exception("java/lang/IllegalArgumentException", "invalid transform").await);
+        };
+
+        let mut data = Vec::with_capacity(region.width() as usize * region.height() as usize * 4);
+        for row in 0..region.height() as i32 {
+            for column in 0..region.width() as i32 {
+                data.extend_from_slice(&ArgbPixel::from_color(region.get_pixel(column, row)).to_le_bytes());
+            }
+        }
+
+        Self::create_image_instance(jvm, region.width(), region.height(), &data, 4).await
+    }
+
+    /// MIDP 2.0: copies a region's pixels as ARGB ints into `rgb`, row after row `scan_length` apart.
+    #[allow(clippy::too_many_arguments)]
+    async fn get_rgb(
+        jvm: &Jvm,
+        _: &mut WieJvmContext,
+        this: ClassInstanceRef<Self>,
+        mut rgb: ClassInstanceRef<Array<i32>>,
+        offset: i32,
+        scan_length: i32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Image::getRGB({this:?}, {rgb:?}, {offset}, {scan_length}, {x}, {y}, {width}, {height})");
+
+        if rgb.is_null() {
+            return Err(jvm.exception("java/lang/NullPointerException", "rgb is null").await);
+        }
+        let image = Self::image(jvm, &this).await?;
+        if x < 0 || y < 0 || width < 0 || height < 0 || x + width > image.width() as i32 || y + height > image.height() as i32 {
+            return Err(jvm.exception("java/lang/IllegalArgumentException", "region is outside the image").await);
+        }
+        let length = jvm.array_length(&rgb).await? as i64;
+        for row in 0..height {
+            let start = offset as i64 + row as i64 * scan_length as i64;
+            if start < 0 || start + width as i64 > length {
+                return Err(jvm.exception("java/lang/ArrayIndexOutOfBoundsException", "rgb is too short").await);
+            }
+            let pixels = (0..width)
+                .map(|column| ArgbPixel::from_color(image.get_pixel(x + column, y + row)) as i32)
+                .collect::<Vec<_>>();
+            jvm.store_array(&mut rgb, start as usize, pixels).await?;
+        }
+
+        Ok(())
+    }
+
+    /// A region of `source` turned by one of the eight `Sprite` transforms, or `None` for any other
+    /// value. A quarter turn swaps the region's width and height.
+    pub fn transformed_region(
+        source: &dyn BackendImage,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        transform: i32,
+    ) -> Option<VecImageBuffer<ArgbPixel>> {
+        // Where a source pixel (column, row) of the region lands: (TRANS_NONE 0, MIRROR_ROT180 1,
+        // MIRROR 2, ROT180 3, MIRROR_ROT270 4, ROT90 5, ROT270 6, MIRROR_ROT90 7).
+        let (w, h) = (width as i32, height as i32);
+        let place: fn(i32, i32, i32, i32) -> (i32, i32) = match transform {
+            0 => |c, r, _, _| (c, r),
+            1 => |c, r, _, h| (c, h - 1 - r),
+            2 => |c, r, w, _| (w - 1 - c, r),
+            3 => |c, r, w, h| (w - 1 - c, h - 1 - r),
+            4 => |c, r, _, _| (r, c),
+            5 => |c, r, _, h| (h - 1 - r, c),
+            6 => |c, r, w, _| (r, w - 1 - c),
+            7 => |c, r, w, h| (h - 1 - r, w - 1 - c),
+            _ => return None,
+        };
+        let (out_width, out_height) = if transform >= 4 { (height, width) } else { (width, height) };
+
+        let mut region = VecImageBuffer::<ArgbPixel>::new(out_width, out_height);
+        for row in 0..h {
+            for column in 0..w {
+                let (to_x, to_y) = place(column, row, w, h);
+                region.put_pixel(to_x, to_y, source.get_pixel(x + column, y + row));
+            }
+        }
+
+        Some(region)
     }
 
     async fn create_image_from_name(jvm: &Jvm, _: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<ClassInstanceRef<Image>> {

@@ -1772,5 +1772,10 @@ Aggregating crashes during the 30s input scenario:
   MC_fsList (empty listing) on upstream's file storage, where they were stubs
   (리얼싸커2009 renames its save into place).
 
+- MIDP 2.0 images (2026-11-05): `Image.createRGBImage([IIIZ)`, `Image.createImage(Image, x, y, w, h,
+  transform)`, `Image.getRGB([IIIIIII)`, and `Graphics.drawRegion` applies its `Sprite` transform (it
+  drew the region untransformed, and placed a RIGHT anchor by the height). `VolumeControl` interface.
+  메이플스토리 전사편 J2ME 호환판 reaches its game (SK-VM 83 to 84 of 90; ez-java unchanged).
+
 Keep this document updated in the same change set as the implementation work
 it describes.

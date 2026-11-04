@@ -5,7 +5,7 @@ pub mod classes;
 
 use wie_jvm_support::WieJavaClassProto;
 
-pub fn get_protos() -> [WieJavaClassProto; 57] {
+pub fn get_protos() -> [WieJavaClassProto; 58] {
     [
         classes::javax::microedition::io::Connection::as_proto(),
         classes::javax::microedition::io::ConnectionNotFoundException::as_proto(),
@@ -45,6 +45,7 @@ pub fn get_protos() -> [WieJavaClassProto; 57] {
         classes::javax::microedition::media::MediaException::as_proto(),
         classes::javax::microedition::media::Player::as_proto(),
         classes::javax::microedition::media::PlayerListener::as_proto(),
+        classes::javax::microedition::media::VolumeControl::as_proto(),
         classes::javax::microedition::midlet::MIDlet::as_proto(),
         classes::javax::microedition::midlet::MIDletStateChangeException::as_proto(),
         classes::javax::microedition::rms::InvalidRecordIDException::as_proto(),
