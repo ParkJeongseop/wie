@@ -7,7 +7,7 @@ use futures::future::poll_fn;
 use jvm::{ClassInstance, ClassInstanceRef, Result as JvmResult, runtime::JavaLangString};
 use rustjava_runtime::classes::java::lang::Class;
 
-use wie_backend::{Emulator, Event, Options, Platform, System, TaskRunner};
+use wie_backend::{Emulator, Event, GuestMemory, Options, Platform, System, TaskRunner};
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::JvmSupport;
 use wie_util::{Result, WieError, write_generic};
@@ -267,6 +267,10 @@ impl Emulator for KtfEmulator {
 
     fn tick(&mut self) -> Result<()> {
         self.system.tick()
+    }
+
+    fn memory(&mut self) -> Option<&mut dyn GuestMemory> {
+        Some(&mut self.core)
     }
 }
 

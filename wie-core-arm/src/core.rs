@@ -1,14 +1,14 @@
 use alloc::{borrow::ToOwned, boxed::Box, collections::BTreeMap, format, string::String, sync::Arc, vec, vec::Vec};
-use core::{mem::size_of, slice::from_ref};
+use core::{mem::size_of, ops::Range, slice::from_ref};
 
 use bytemuck::cast_slice;
 use spin::Mutex;
 
-use wie_backend::{Options, ProfileCallback, ProfileSample, YieldFuture};
+use wie_backend::{GuestMemory, Options, ProfileCallback, ProfileSample, YieldFuture};
 use wie_util::{ByteRead, ByteWrite, Result, WieError, read_generic, write_generic};
 
 use crate::{
-    EmulatedFunction, ResultWriter, ThreadId,
+    Allocator, EmulatedFunction, ResultWriter, ThreadId,
     context::ArmCoreContext,
     engine::{Arm32CpuEngine, ArmEngine, ArmRegister, DebugInner, DebuggedArm32CpuEngine, EngineStopReason, MemoryPermission},
     function::{RegisteredFunction, RegisteredFunctionHolder},
@@ -25,6 +25,8 @@ const INSTRUCTIONS_PER_YIELD: u32 = 10_000;
 pub const RUN_FUNCTION_LR: u32 = 0x7f000000;
 pub const HEAP_BASE: u32 = 0x40000000;
 pub const HEAP_SIZE: u32 = 0x10000000;
+/// Granularity `GuestMemory::data_ranges` probes the title's image at: the smallest unit `load` maps.
+const DATA_RANGE_STEP: u32 = 0x1000;
 
 /// Limit on stack frames recorded per sample. Bounds memory and protects
 /// against runaway loops if the R7 chain forms a cycle.
@@ -774,6 +776,28 @@ impl ByteWrite for ArmCore {
         inner.engine.mem_write(address, data)?;
 
         Ok(())
+    }
+}
+
+impl GuestMemory for ArmCore {
+    fn data_ranges(&self) -> Result<Vec<Range<u32>>> {
+        // A title's image is loaded below the heap; what is mapped above it belongs to the runtime.
+        let mut ranges: Vec<Range<u32>> = Vec::new();
+        {
+            let inner = self.inner.lock();
+            for page in (0..HEAP_BASE).step_by(DATA_RANGE_STEP as usize) {
+                if !inner.engine.is_mapped(page, 1) {
+                    continue;
+                }
+                match ranges.last_mut() {
+                    Some(last) if last.end == page => last.end += DATA_RANGE_STEP,
+                    _ => ranges.push(page..page + DATA_RANGE_STEP),
+                }
+            }
+        }
+        ranges.extend(Allocator::used_ranges(self)?);
+
+        Ok(ranges)
     }
 }
 

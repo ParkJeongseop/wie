@@ -16,7 +16,7 @@ use jvm::{
     runtime::{JavaIoInputStream, JavaLangClassLoader},
 };
 
-use wie_backend::{Emulator, Event, Options, Platform, System, TaskRunner, extract_zip};
+use wie_backend::{Emulator, Event, GuestMemory, Options, Platform, System, TaskRunner, extract_zip};
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::JvmSupport;
 use wie_util::{Result, WieError, write_generic};
@@ -196,6 +196,10 @@ impl Emulator for LgtEmulator {
 
     fn tick(&mut self) -> Result<()> {
         self.system.tick()
+    }
+
+    fn memory(&mut self) -> Option<&mut dyn GuestMemory> {
+        Some(&mut self.core)
     }
 }
 

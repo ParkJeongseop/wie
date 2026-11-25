@@ -1,4 +1,5 @@
-use alloc::vec;
+use alloc::{vec, vec::Vec};
+use core::ops::Range;
 
 use wie_util::{ByteRead, ByteWrite, Result, WieError};
 
@@ -133,6 +134,29 @@ impl BucketAllocator {
         }
 
         Ok(used)
+    }
+
+    /// Ranges covered by allocated slots, in address order. Neighbouring slots share a range.
+    pub fn used_ranges(core: &ArmCore, base_address: u32) -> Result<Vec<Range<u32>>> {
+        let mut ranges: Vec<Range<u32>> = Vec::new();
+        for (i, &(slot_size, _)) in BUCKETS.iter().enumerate() {
+            let header_address = base_address + region_offset(i) as u32;
+            let mut header = vec![0u8; header_length(i)];
+            core.read_bytes(header_address, &mut header)?;
+            let slots = header_address + header.len() as u32;
+
+            for (index, byte) in header.iter().enumerate().filter(|&(_, &byte)| byte != 0xff) {
+                for bit in (0..8).filter(|bit| byte & (1 << bit) == 0) {
+                    let start = slots + (index as u32 * 8 + bit) * slot_size as u32;
+                    match ranges.last_mut() {
+                        Some(last) if last.end == start => last.end += slot_size as u32,
+                        _ => ranges.push(start..start + slot_size as u32),
+                    }
+                }
+            }
+        }
+
+        Ok(ranges)
     }
 
     pub fn is_allocated(core: &ArmCore, base_address: u32, address: u32, size: u32) -> Result<bool> {

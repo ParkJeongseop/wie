@@ -1,5 +1,5 @@
-use alloc::{format, vec};
-use core::mem::size_of;
+use alloc::{format, vec, vec::Vec};
+use core::{mem::size_of, ops::Range};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -120,6 +120,25 @@ impl ListAllocator {
         }
 
         Ok(used)
+    }
+
+    /// Payload ranges of the blocks in use, in address order.
+    pub fn used_ranges(core: &ArmCore, base_address: u32, base_size: u32) -> Result<Vec<Range<u32>>> {
+        let end = base_address + base_size;
+        let mut cursor = base_address;
+        let mut ranges = Vec::new();
+        while cursor < end {
+            let header: ListAllocationHeader = read_generic(core, cursor)?;
+            if !is_plausible_size(cursor, header.size(), end) {
+                break;
+            }
+            if header.in_use() && header.size() > HEADER_SIZE + CANARY_SIZE {
+                ranges.push(cursor + HEADER_SIZE..cursor + header.size() - CANARY_SIZE);
+            }
+            cursor += header.size();
+        }
+
+        Ok(ranges)
     }
 
     pub fn is_allocated(core: &ArmCore, base_address: u32, base_size: u32, address: u32, size: u32) -> Result<bool> {

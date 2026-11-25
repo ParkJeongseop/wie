@@ -1,6 +1,9 @@
 mod bucket;
 mod list;
 
+use alloc::vec::Vec;
+use core::ops::Range;
+
 use wie_util::Result;
 
 use crate::{
@@ -47,6 +50,14 @@ impl Allocator {
         Ok(ListAllocator::used_size(core, HEAP_BASE, HEAP_SIZE / 2)? + BucketAllocator::used_size(core, HEAP_BASE + HEAP_SIZE / 2)?)
     }
 
+    /// Ranges of the heap the guest currently holds, in address order.
+    pub fn used_ranges(core: &ArmCore) -> Result<Vec<Range<u32>>> {
+        let mut ranges = ListAllocator::used_ranges(core, HEAP_BASE, HEAP_SIZE / 2)?;
+        ranges.extend(BucketAllocator::used_ranges(core, HEAP_BASE + HEAP_SIZE / 2)?);
+
+        Ok(ranges)
+    }
+
     pub fn is_allocated(core: &ArmCore, address: u32, size: u32) -> Result<bool> {
         if size > BUCKET_MAX as _ {
             ListAllocator::is_allocated(core, HEAP_BASE, HEAP_SIZE / 2, address, size)
@@ -58,6 +69,7 @@ impl Allocator {
 
 #[cfg(test)]
 mod tests {
+    use wie_backend::GuestMemory;
     use wie_util::Result;
 
     use crate::{Allocator, ArmCore};
@@ -76,11 +88,13 @@ mod tests {
         assert!(Allocator::is_allocated(&core, bucket, 12)?);
         assert!(Allocator::is_allocated(&core, list, 1024)?);
         assert!(!Allocator::is_allocated(&core, bucket + 4, 12)?);
+        assert_eq!(core.data_ranges()?, [list..list + 1024, bucket..bucket + 16]);
 
         Allocator::free(&mut core, bucket, 12)?;
         Allocator::free(&mut core, list, 1024)?;
         assert!(!Allocator::is_allocated(&core, bucket, 12)?);
         assert!(!Allocator::is_allocated(&core, list, 1024)?);
+        assert!(core.data_ranges()?.is_empty());
 
         Ok(())
     }

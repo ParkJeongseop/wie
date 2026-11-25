@@ -29,14 +29,27 @@ pub use self::{
 };
 
 use alloc::{boxed::Box, collections::BTreeMap, format, string::String, vec::Vec};
+use core::ops::Range;
 
 use wie_core_arm_aot::CompiledExecutor;
-use wie_util::{Result, WieError};
+use wie_util::{ByteRead, ByteWrite, Result, WieError};
 
 pub trait Emulator {
     fn handle_event(&mut self, event: Event);
     fn tick(&mut self) -> Result<()>;
     fn is_preparing(&self) -> bool;
+    /// The title's memory, on a platform that runs the title on an emulated CPU. A front end
+    /// inspects and patches a running title through it.
+    fn memory(&mut self) -> Option<&mut dyn GuestMemory> {
+        None
+    }
+}
+
+/// Memory of a title that runs on an emulated CPU.
+pub trait GuestMemory: ByteRead + ByteWrite {
+    /// Address ranges holding the title's own data: its loaded image and the heap blocks it has
+    /// allocated.
+    fn data_ranges(&self) -> Result<Vec<Range<u32>>>;
 }
 
 pub struct ProfileSample {
