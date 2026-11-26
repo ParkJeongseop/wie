@@ -1,5 +1,5 @@
 use alloc::{boxed::Box, vec, vec::Vec};
-use core::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut, Range};
 
 use bytemuck::{Pod, cast_slice_mut};
 
@@ -72,10 +72,10 @@ impl FrameBuffer {
         }))
     }
 
-    fn data<T: Pod>(&self, context: &dyn WIPICContext) -> Result<Vec<T>> {
-        let (size, _) = buffer_size(self.0.width, self.0.height, self.0.bpp / 8)?;
-        let mut buf = vec![T::zeroed(); size as usize / size_of::<T>()];
-        context.read_bytes(context.data_ptr(self.0.buf)?, cast_slice_mut(&mut buf))?;
+    fn data<T: Pod>(&self, context: &dyn WIPICContext, rows: Range<u32>) -> Result<Vec<T>> {
+        let (_, bpl) = buffer_size(self.0.width, self.0.height, self.0.bpp / 8)?;
+        let mut buf = vec![T::zeroed(); (bpl * rows.len() as u32) as usize / size_of::<T>()];
+        context.read_bytes(context.data_ptr(self.0.buf)? + bpl * rows.start, cast_slice_mut(&mut buf))?;
 
         Ok(buf)
     }
@@ -85,28 +85,29 @@ impl FrameBuffer {
             16 => Box::new(VecImageBuffer::<Rgb565Pixel>::from_raw(
                 self.0.width as _,
                 self.0.height as _,
-                self.data(context)?,
+                self.data(context, 0..self.0.height)?,
             )),
             32 => Box::new(VecImageBuffer::<ArgbPixel>::from_raw(
                 self.0.width as _,
                 self.0.height as _,
-                self.data(context)?,
+                self.data(context, 0..self.0.height)?,
             )),
             _ => unimplemented!("Unsupported pixel format: {}", self.0.bpp),
         })
     }
 
-    pub fn canvas<'a>(&'a self, context: &'a mut dyn WIPICContext) -> Result<FramebufferCanvas<'a>> {
+    /// A canvas of the framebuffer's `rows` alone: its row 0 is the framebuffer's row `rows.start`.
+    pub fn canvas<'a>(&'a self, context: &'a mut dyn WIPICContext, rows: Range<u32>) -> Result<FramebufferCanvas<'a>> {
         let canvas: Box<dyn Canvas> = match self.0.bpp {
             16 => Box::new(ImageBufferCanvas::new(VecImageBuffer::<Rgb565Pixel>::from_raw(
                 self.0.width as _,
-                self.0.height as _,
-                self.data(context)?,
+                rows.len() as _,
+                self.data(context, rows.clone())?,
             ))),
             32 => Box::new(ImageBufferCanvas::new(VecImageBuffer::<ArgbPixel>::from_raw(
                 self.0.width as _,
-                self.0.height as _,
-                self.data(context)?,
+                rows.len() as _,
+                self.data(context, rows.clone())?,
             ))),
             _ => unimplemented!("Unsupported pixel format: {}", self.0.bpp),
         };
@@ -115,12 +116,17 @@ impl FrameBuffer {
             framebuffer: self,
             context,
             canvas,
+            top: rows.start,
             flushed: false,
         })
     }
 
     pub fn write(&self, context: &mut dyn WIPICContext, data: &[u8]) -> Result<()> {
-        context.write_bytes(context.data_ptr(self.0.buf)?, data)?;
+        self.write_rows(context, 0, data)
+    }
+
+    fn write_rows(&self, context: &mut dyn WIPICContext, top: u32, data: &[u8]) -> Result<()> {
+        context.write_bytes(context.data_ptr(self.0.buf)? + self.0.width * (self.0.bpp / 8) * top, data)?;
 
         // A write into the screen framebuffer is what the next MC_grpRepaint has to present.
         // Without the global page (unit tests) there is no screen framebuffer to mark.
@@ -147,6 +153,7 @@ pub struct FramebufferCanvas<'a> {
     framebuffer: &'a FrameBuffer,
     context: &'a mut dyn WIPICContext,
     canvas: Box<dyn Canvas>,
+    top: u32,
     flushed: bool,
 }
 
@@ -154,7 +161,7 @@ impl FramebufferCanvas<'_> {
     pub fn flush(mut self) -> Result<()> {
         self.flushed = true;
 
-        self.framebuffer.write(self.context, &self.canvas.image().raw())
+        self.framebuffer.write_rows(self.context, self.top, &self.canvas.image().raw())
     }
 }
 
@@ -167,7 +174,7 @@ impl Drop for FramebufferCanvas<'_> {
 
         tracing::warn!("framebuffer canvas dropped without explicit flush; write-back errors will be lost");
 
-        if let Err(err) = self.framebuffer.write(self.context, &self.canvas.image().raw()) {
+        if let Err(err) = self.framebuffer.write_rows(self.context, self.top, &self.canvas.image().raw()) {
             tracing::error!("Failed to flush framebuffer canvas: {err}");
         }
     }
@@ -238,8 +245,11 @@ mod test {
             let pixels = (0..100 * 100 * bpp / 8).map(|i| i as u8).collect::<alloc::vec::Vec<_>>();
             framebuffer.write(&mut context, &pixels).unwrap();
             assert_eq!(&*framebuffer.image(&mut context).unwrap().raw(), pixels.as_slice());
-            let canvas = framebuffer.canvas(&mut context).unwrap();
-            assert_eq!(&*canvas.image().raw(), pixels.as_slice());
+            let canvas = framebuffer.canvas(&mut context, 10..20).unwrap();
+            assert_eq!(
+                &*canvas.image().raw(),
+                &pixels[(10 * 100 * bpp / 8) as usize..(20 * 100 * bpp / 8) as usize]
+            );
             canvas.flush().unwrap();
             assert_eq!(&*framebuffer.image(&mut context).unwrap().raw(), pixels.as_slice());
         }

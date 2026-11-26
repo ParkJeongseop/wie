@@ -952,21 +952,25 @@ mod tests {
             let output = context.alloc_raw(4)?;
             create_image(&mut context, output, buffer, 0, bmp.len() as u32).await?;
             let image: WIPICIndirectPtr = read_generic(&context, output)?;
-            let destination = create_offscreen_framebuffer(&mut context, 4, 1).await?;
+            let destination = create_offscreen_framebuffer(&mut context, 4, 3).await?;
             let framebuffer = FrameBuffer(read_generic(&context, context.data_ptr(destination)?)?);
             let graphics_context = context.alloc_raw(size_of::<WIPICGraphicsContext>() as u32)?;
             init_context(&mut context, graphics_context).await?;
             let clip = context.alloc_raw(16)?;
-            write_generic(&mut context, clip, [2i32, 0, 3, 1])?;
+            write_generic(&mut context, clip, [2i32, 1, 3, 2])?;
             for clip_ptr in [clip, 0] {
                 set_context(&mut context, graphics_context, WIPICGraphicsContextIdx::ClipIdx, clip_ptr).await?;
-                framebuffer.write(&mut context, &[0xe0, 0x07, 0xe0, 0x07, 0xe0, 0x07, 0xe0, 0x07])?;
-                draw_image(&mut context, destination, 1, 0, 3, 1, image, 0, 0, graphics_context).await?;
+                framebuffer.write(&mut context, &[0xe0, 0x07].repeat(12))?;
+                draw_image(&mut context, destination, 1, 1, 3, 1, image, 0, 0, graphics_context).await?;
 
                 let drawn = framebuffer.image(&mut context)?;
-                assert_eq!(drawn.get_pixel(0, 0).g, 255);
+                // The draw reaches the one row it covers and leaves the rows around it alone.
+                for (x, y) in [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (0, 2), (1, 2), (2, 2), (3, 2)] {
+                    let color = drawn.get_pixel(x, y);
+                    assert_eq!([color.r, color.g, color.b], [0, 255, 0]);
+                }
                 for index in 0..3 {
-                    let color = drawn.get_pixel(index + 1, 0);
+                    let color = drawn.get_pixel(index + 1, 1);
                     let expected = if transparent == Some(index) || (clip_ptr != 0 && index != 1) {
                         [0, 255, 0]
                     } else if index == 2 {
