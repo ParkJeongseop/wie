@@ -16,7 +16,7 @@ use wipi_types::ktf::java::{
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::native::NativeJavaValueCodec;
 use wie_util::{
-    read_generic, read_null_terminated_string_bytes, read_null_terminated_table, write_generic, write_null_terminated_string_bytes,
+    WieError, read_generic, read_null_terminated_string_bytes, read_null_terminated_table, write_generic, write_null_terminated_string_bytes,
     write_null_terminated_table,
 };
 
@@ -247,47 +247,63 @@ impl JavaClassDefinition {
     pub fn method(&self, name: &str, descriptor: &str, is_static: bool) -> Result<Option<JavaMethod>> {
         let raw: RawJavaClass = read_generic(&self.core, self.ptr_raw)?;
         let class: RawJavaClassDescriptor = read_generic(&self.core, raw.ptr_descriptor)?;
-        let mut cursor = class.ptr_methods;
-        while cursor != 0 {
-            let ptr_method: u32 = read_generic(&self.core, cursor)?;
-            if ptr_method == 0 {
-                break;
-            }
-            let raw: RawJavaMethod = read_generic(&self.core, ptr_method)?;
-            if raw.ptr_class == self.ptr_raw
-                && MethodAccessFlags::from_bits_truncate(raw.access_flags).contains(MethodAccessFlags::STATIC) == is_static
-                && JavaFullName::matches(&self.core, raw.ptr_name, name, descriptor)?
-            {
-                return Ok(Some(JavaMethod::from_raw(ptr_method, &self.core)));
-            }
-            cursor += 4;
+        if class.ptr_methods == 0 {
+            return Ok(None);
         }
+        let ptr_method = self.find_member(class.ptr_methods, |ptr_method| {
+            let raw: RawJavaMethod = read_generic(&self.core, ptr_method)?;
+            Ok(raw.ptr_class == self.ptr_raw
+                && MethodAccessFlags::from_bits_truncate(raw.access_flags).contains(MethodAccessFlags::STATIC) == is_static
+                && JavaFullName::matches(&self.core, raw.ptr_name, name, descriptor)?)
+        })?;
 
-        Ok(None)
+        Ok(ptr_method.map(|ptr_method| JavaMethod::from_raw(ptr_method, &self.core)))
     }
 
     pub fn field(&self, name: &str, descriptor: &str, is_static: bool) -> Result<Option<JavaField>> {
         let raw: RawJavaClass = read_generic(&self.core, self.ptr_raw)?;
         let class: RawJavaClassDescriptor = read_generic(&self.core, raw.ptr_descriptor)?;
-        let mut cursor = class.ptr_fields_or_element_type;
-        if cursor == 0 || read_generic::<u8, _>(&self.core, class.ptr_name)? == b'[' {
+        if class.ptr_fields_or_element_type == 0 || read_generic::<u8, _>(&self.core, class.ptr_name)? == b'[' {
             return Ok(None);
         }
-        loop {
-            let ptr_field: u32 = read_generic(&self.core, cursor)?;
-            if ptr_field == 0 {
-                break;
-            }
+        let ptr_field = self.find_member(class.ptr_fields_or_element_type, |ptr_field| {
             let raw: RawJavaField = read_generic(&self.core, ptr_field)?;
-            if FieldAccessFlags::from_bits_truncate(raw.access_flags as _).contains(FieldAccessFlags::STATIC) == is_static
-                && JavaFullName::matches(&self.core, raw.ptr_name, name, descriptor)?
-            {
-                return Ok(Some(JavaField::from_raw(ptr_field, &self.core)));
-            }
-            cursor += 4;
-        }
+            Ok(
+                FieldAccessFlags::from_bits_truncate(raw.access_flags as _).contains(FieldAccessFlags::STATIC) == is_static
+                    && JavaFullName::matches(&self.core, raw.ptr_name, name, descriptor)?,
+            )
+        })?;
 
-        Ok(None)
+        Ok(ptr_field.map(|ptr_field| JavaField::from_raw(ptr_field, &self.core)))
+    }
+
+    /// The first entry of a null-terminated table of member pointers that `accepts` takes. The table is read
+    /// several entries at a time; its terminator may be the last mapped word.
+    fn find_member(&self, ptr_table: u32, mut accepts: impl FnMut(u32) -> Result<bool>) -> Result<Option<u32>> {
+        let mut cursor = ptr_table;
+        loop {
+            let mut members = [0; 8];
+            let count = match read_generic(&self.core, cursor) {
+                Ok(chunk) => {
+                    members = chunk;
+                    members.len()
+                }
+                Err(WieError::InvalidMemoryAccess(_)) => {
+                    members[0] = read_generic(&self.core, cursor)?;
+                    1
+                }
+                Err(error) => return Err(error),
+            };
+            for &member in &members[..count] {
+                if member == 0 {
+                    return Ok(None);
+                }
+                if accepts(member)? {
+                    return Ok(Some(member));
+                }
+            }
+            cursor += (count * size_of::<u32>()) as u32;
+        }
     }
 
     pub fn read_static_field(&self, field: &JavaField) -> Result<KtfJvmWord> {

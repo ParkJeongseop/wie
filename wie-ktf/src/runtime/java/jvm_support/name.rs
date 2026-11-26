@@ -1,5 +1,5 @@
 use alloc::{format, string::String, vec::Vec};
-use core::{fmt::Display, iter};
+use core::fmt::Display;
 
 use wie_core_arm::ArmCore;
 use wie_util::{ByteRead, WieError, read_generic, read_null_terminated_string_bytes};
@@ -40,12 +40,14 @@ impl JavaFullName {
     }
 
     pub fn matches(core: &ArmCore, ptr: u32, name: &str, descriptor: &str) -> Result<bool> {
-        let mut expected = descriptor.bytes().chain(iter::once(b'+')).chain(name.bytes()).chain(iter::once(0));
-        let mut remaining = descriptor.len() + name.len() + 2;
-        let mut cursor = ptr + 1;
+        // The text a member carries after its tag, in the pieces it is compared by.
+        let expected = [descriptor.as_bytes(), b"+", name.as_bytes(), b"\0"];
+        let length = descriptor.len() + name.len() + 2;
+        let mut compared = 0;
         let mut buffer = [0; 32];
-        while remaining != 0 {
-            let size = remaining.min(buffer.len());
+        while compared != length {
+            let cursor = ptr.wrapping_add(1 + compared as u32);
+            let size = (length - compared).min(buffer.len());
             let (size, read) = match core.read_bytes(cursor, &mut buffer[..size]) {
                 // A shorter non-matching name may end at the memory boundary.
                 Err(WieError::InvalidMemoryAccess(_)) => (1, core.read_bytes(cursor, &mut buffer[..1])?),
@@ -54,11 +56,19 @@ impl JavaFullName {
             if read != size {
                 return Err(WieError::FatalError(format!("Short read at {cursor:#x}: expected {size}, got {read}")));
             }
-            if !expected.by_ref().take(size).eq(buffer[..size].iter().copied()) {
-                return Ok(false);
+
+            let (mut skipped, mut bytes) = (compared, &buffer[..size]);
+            for part in expected {
+                let rest = part.get(skipped..).unwrap_or_default();
+                skipped = skipped.saturating_sub(part.len());
+                let (head, tail) = bytes.split_at(rest.len().min(bytes.len()));
+                // These are a few bytes each; comparing them in place is cheaper than a call.
+                if head.iter().zip(rest).any(|(read, expected)| read != expected) {
+                    return Ok(false);
+                }
+                bytes = tail;
             }
-            cursor = cursor.wrapping_add(size as u32);
-            remaining -= size;
+            compared += size;
         }
         Ok(true)
     }
