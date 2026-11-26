@@ -1,6 +1,7 @@
 use alloc::{borrow::Cow, boxed::Box, format, string::String, sync::Arc, vec, vec::Vec};
 use core::{fmt, fmt::Debug, fmt::Formatter, mem::offset_of, mem::size_of, ops::Deref, ops::DerefMut};
 
+use bytemuck::{AnyBitPattern, NoUninit};
 use jvm::{ClassDefinition, ClassInstance, Field, JavaError, JavaType, JavaValue, Jvm, Method, Result as JvmResult};
 use jvm_class_proto::JavaClassProto;
 use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
@@ -14,7 +15,8 @@ use wipi_types::lgt::java::{
 use wie_core_arm::{Allocator, ArmCore, EmulatedFunction, HEAP_BASE, HEAP_SIZE, RegisteredFunction, RegisteredFunctionHolder};
 use wie_jvm_support::native::NativeJavaValueCodec;
 use wie_util::{
-    ByteRead, ByteWrite, Result, WieError, read_generic, read_null_terminated_string_bytes, write_generic, write_null_terminated_string_bytes,
+    ByteRead, ByteWrite, Result, WieError, null_terminated_string_equals, read_generic, read_null_terminated_string_bytes, write_generic,
+    write_null_terminated_string_bytes,
 };
 
 use crate::runtime::{
@@ -373,6 +375,25 @@ impl JavaClassDefinition {
                 )
             })
             .collect())
+    }
+
+    /// The address of the first entry of a counted member table that `accepts` takes. Members are
+    /// looked at where they are, so a search costs no more than the entries it passes.
+    fn find_member<T>(&self, ptr_table: u32, mut accepts: impl FnMut(T) -> Result<bool>) -> Result<Option<u32>>
+    where
+        T: Copy + AnyBitPattern + NoUninit,
+    {
+        if ptr_table == 0 {
+            return Ok(None);
+        }
+        let count: u32 = read_generic(&self.core, ptr_table)?;
+        for index in 0..count {
+            let ptr_member = ptr_table + size_of::<u32>() as u32 + index * size_of::<T>() as u32;
+            if accepts(read_generic(&self.core, ptr_member)?)? {
+                return Ok(Some(ptr_member));
+            }
+        }
+        Ok(None)
     }
 
     pub fn ptr_vtable(&self) -> Result<u32> {
@@ -869,23 +890,29 @@ impl ClassDefinition for JavaClassDefinition {
     }
 
     fn method(&self, name: &str, descriptor: &str, is_static: bool) -> Option<Box<dyn Method>> {
-        self.methods()
-            .unwrap()
-            .into_iter()
-            .find(|method| {
-                method.name() == name && method.descriptor() == descriptor && method.access_flags().contains(MethodAccessFlags::STATIC) == is_static
-            })
-            .map(|method| Box::new(method) as Box<_>)
+        let ptr_methods = self.descriptor().unwrap().ptr_methods;
+        self.find_member(ptr_methods, |raw: RawJavaMethod| {
+            Ok(
+                MethodAccessFlags::from_bits_truncate(raw.access_flags).contains(MethodAccessFlags::STATIC) == is_static
+                    && null_terminated_string_equals(&self.core, raw.ptr_name, name.as_bytes())?
+                    && null_terminated_string_equals(&self.core, raw.ptr_descriptor, descriptor.as_bytes())?,
+            )
+        })
+        .unwrap()
+        .map(|ptr_method| Box::new(JavaMethod::from_raw(ptr_method, &self.core)) as Box<_>)
     }
 
     fn field(&self, name: &str, descriptor: &str, is_static: bool) -> Option<Box<dyn Field>> {
-        self.fields()
-            .unwrap()
-            .into_iter()
-            .find(|field| {
-                field.name() == name && field.descriptor() == descriptor && field.access_flags().contains(FieldAccessFlags::STATIC) == is_static
-            })
-            .map(|field| Box::new(field) as Box<_>)
+        let ptr_fields = self.descriptor().unwrap().ptr_fields;
+        self.find_member(ptr_fields, |raw: RawJavaField| {
+            Ok(
+                FieldAccessFlags::from_bits_truncate(raw.flags as _).contains(FieldAccessFlags::STATIC) == is_static
+                    && null_terminated_string_equals(&self.core, raw.ptr_name, name.as_bytes())?
+                    && null_terminated_string_equals(&self.core, raw.ptr_descriptor, descriptor.as_bytes())?,
+            )
+        })
+        .unwrap()
+        .map(|ptr_field| Box::new(JavaField::from_raw(ptr_field, &self.core)) as Box<_>)
     }
 
     fn fields(&self) -> Vec<Box<dyn Field>> {

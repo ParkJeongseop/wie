@@ -113,6 +113,37 @@ where
     Ok(result)
 }
 
+/// Whether the byte string at `address` is `expected` followed by a NUL. It is compared where it is,
+/// a chunk at a time; a string that is shorter may end at the last mapped byte.
+pub fn null_terminated_string_equals<R>(reader: &R, address: u32, expected: &[u8]) -> Result<bool>
+where
+    R: ?Sized + ByteRead,
+{
+    let mut buffer = [0; 32];
+    let mut compared = 0;
+    // The terminator is compared as the byte after the text.
+    while compared <= expected.len() {
+        let cursor = address.wrapping_add(compared as u32);
+        let rest = &expected[compared..];
+        let size = (rest.len() + 1).min(buffer.len());
+        let (size, read) = match reader.read_bytes(cursor, &mut buffer[..size]) {
+            Err(WieError::InvalidMemoryAccess(_)) => (1, reader.read_bytes(cursor, &mut buffer[..1])?),
+            result => (size, result?),
+        };
+        if read != size {
+            return Err(WieError::FatalError(format!("Short read at {cursor:#x}: expected {size}, got {read}")));
+        }
+
+        let (text, terminator) = buffer[..size].split_at(size.min(rest.len()));
+        if text.iter().zip(rest).any(|(read, expected)| read != expected) || terminator.first().is_some_and(|&byte| byte != 0) {
+            return Ok(false);
+        }
+        compared += size;
+    }
+
+    Ok(true)
+}
+
 pub fn write_null_terminated_string_bytes<W>(writer: &mut W, address: u32, bytes: &[u8]) -> Result<()>
 where
     W: ?Sized + ByteWrite,
@@ -232,7 +263,15 @@ mod tests {
             memory.memory.extend_from_slice(bytes);
             memory.memory.push(0);
             assert_eq!(read_null_terminated_string_bytes(&memory, 1).unwrap(), bytes);
+            assert!(null_terminated_string_equals(&memory, 1, bytes).unwrap());
+            assert!(!null_terminated_string_equals(&memory, 1, &[bytes, b"x"].concat()).unwrap());
+            assert!(bytes.is_empty() || !null_terminated_string_equals(&memory, 1, &bytes[1..]).unwrap());
+            assert!(bytes.is_empty() || !null_terminated_string_equals(&memory, 1, &bytes[..bytes.len() - 1]).unwrap());
             memory.memory.pop();
+            assert!(matches!(
+                null_terminated_string_equals(&memory, 1, bytes),
+                Err(WieError::InvalidMemoryAccess(address)) if address == bytes.len() as u32 + 1
+            ));
             assert!(matches!(
                 read_null_terminated_string_bytes(&memory, 1),
                 Err(WieError::InvalidMemoryAccess(address)) if address == bytes.len() as u32 + 1
