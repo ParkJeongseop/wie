@@ -9,6 +9,6 @@ mod platform;
 pub use self::{
     filesystem::MemoryFilesystem,
     jvm::{run_jvm_test, run_jvm_test_with_system},
-    native_executor::TestNativeExecutor,
+    native_executor::{TestNativeExecutor, TestPortableExecutor},
     platform::{TestClock, TestPlatform, TestPlatformEvent},
 };

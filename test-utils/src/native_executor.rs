@@ -3,12 +3,16 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use wie_core_arm_aot::{CompileRequest, CompiledExecutor, CompiledExit, CompiledHandle, ExecutionAccess, PreparationFuture, RunFrame};
 use wie_core_arm_native::NativeExecutor;
+use wie_core_arm_portable::PortableExecutor;
 use wie_util::Result;
 
-pub struct TestNativeExecutor {
-    inner: NativeExecutor,
+pub struct TestExecutor<E> {
+    inner: E,
     pub executed: Arc<AtomicBool>,
 }
+
+pub type TestNativeExecutor = TestExecutor<NativeExecutor>;
+pub type TestPortableExecutor = TestExecutor<PortableExecutor>;
 
 impl Default for TestNativeExecutor {
     fn default() -> Self {
@@ -25,7 +29,22 @@ impl TestNativeExecutor {
     }
 }
 
-impl CompiledExecutor for TestNativeExecutor {
+impl Default for TestPortableExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TestPortableExecutor {
+    pub fn new() -> Self {
+        Self {
+            inner: PortableExecutor::new(),
+            executed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl<E: CompiledExecutor> CompiledExecutor for TestExecutor<E> {
     fn prepare(&mut self, request: CompileRequest) -> PreparationFuture {
         let preparation = self.inner.prepare(request);
         Box::pin(async move {

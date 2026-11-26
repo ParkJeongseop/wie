@@ -122,6 +122,9 @@ pub struct RunFrame {
     pub end: u32,
     pub fault_address: u32,
     pub scratch: u32,
+    /// Instructions left in the dispatcher's time slice. An executor that counts the instructions it runs
+    /// subtracts them and returns once none are left.
+    pub budget: u32,
 }
 
 /// The owning guest page directory entry. Generated code reads the nullable page pointer at offset zero.
@@ -168,12 +171,13 @@ mod tests {
 
     #[test]
     fn generated_code_frame_has_a_fixed_plain_data_layout() {
-        assert_eq!(size_of::<RunFrame>(), 80);
+        assert_eq!(size_of::<RunFrame>(), 84);
         assert_eq!(align_of::<RunFrame>(), 4);
         assert_eq!(offset_of!(RunFrame, regs), 0);
         assert_eq!(offset_of!(RunFrame, cpsr), 64);
         assert_eq!(offset_of!(RunFrame, end), 68);
         assert_eq!(offset_of!(RunFrame, fault_address), 72);
         assert_eq!(offset_of!(RunFrame, scratch), 76);
+        assert_eq!(offset_of!(RunFrame, budget), 80);
     }
 }

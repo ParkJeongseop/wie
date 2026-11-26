@@ -9,6 +9,7 @@ members = [
     "wie-core-arm-aot",
     "wie-core-arm-wasm",
     "wie-core-arm-native",
+    "wie-core-arm-portable",
     "wie-jvm-support",
     "wie-wipi-java",
     "wie-wipi-c",
@@ -89,6 +90,7 @@ wie-core-arm = { version = "0.2.19", path = "wie-core-arm" }
 wie-core-arm-aot = { version = "0.2.19", path = "wie-core-arm-aot" }
 wie-core-arm-wasm = { version = "0.2.19", path = "wie-core-arm-wasm" }
 wie-core-arm-native = { version = "0.2.19", path = "wie-core-arm-native" }
+wie-core-arm-portable = { version = "0.2.19", path = "wie-core-arm-portable" }
 wie-jvm-support = { version = "0.2.19", path = "wie-jvm-support" }
 wie-mmpp = { version = "0.2.19", path = "wie-mmpp" }
 wie-skvm = { version = "0.2.19", path = "wie-skvm" }

@@ -133,6 +133,7 @@ impl ArmEngine for Arm32CpuEngine {
                         regs: core::array::from_fn(|index| self.cpu.reg_get(Mode::User, index as u8)),
                         cpsr,
                         end,
+                        budget: count - budget_consumed,
                         ..RunFrame::default()
                     };
                     let result = {
@@ -154,6 +155,7 @@ impl ArmEngine for Arm32CpuEngine {
                         self.cpu.reg_set(Mode::User, index as u8, value);
                     }
                     self.cpu.reg_set(Mode::User, reg::CPSR, frame.cpsr);
+                    budget_consumed = count - frame.budget;
                     if exit == CompiledExit::GuestFault {
                         return Err(WieError::InvalidMemoryAccess(frame.fault_address));
                     }
@@ -561,13 +563,14 @@ mod tests {
         task::Poll,
     };
     use std::{
-        thread,
+        cell::Cell,
+        thread, thread_local,
         time::{Duration, Instant},
     };
 
     use arm32_cpu::Memory;
     use spin::Mutex;
-    use test_utils::TestNativeExecutor;
+    use test_utils::{TestNativeExecutor, TestPortableExecutor};
     use wie_core_arm_aot::{CompileRequest, CompiledArtifact, CompiledExecutor, CompiledHandle, CompiledRegion, ManifestRegion};
 
     use crate::{
@@ -1125,6 +1128,11 @@ mod tests {
         assert_eq!(access.memory_error, Some(0x20000));
     }
 
+    thread_local! {
+        // Selects the executor behind `Engines::native` for the current test thread.
+        static PORTABLE: Cell<bool> = const { Cell::new(false) };
+    }
+
     struct Engines {
         interpreted: Arm32CpuEngine,
         native: Arm32CpuEngine,
@@ -1133,11 +1141,18 @@ mod tests {
 
     impl Engines {
         fn new(bytes: &[u8]) -> Self {
-            let executor = TestNativeExecutor::new();
-            let executed = executor.executed.clone();
+            let (executor, executed): (Box<dyn CompiledExecutor>, _) = if PORTABLE.get() {
+                let executor = TestPortableExecutor::new();
+                let executed = executor.executed.clone();
+                (Box::new(executor), executed)
+            } else {
+                let executor = TestNativeExecutor::new();
+                let executed = executor.executed.clone();
+                (Box::new(executor), executed)
+            };
             let mut engines = Self {
                 interpreted: Arm32CpuEngine::new(),
-                native: Arm32CpuEngine::with_backend(Some(Box::new(executor))),
+                native: Arm32CpuEngine::with_backend(Some(executor)),
                 executed,
             };
             for engine in [&mut engines.interpreted, &mut engines.native] {
@@ -1182,6 +1197,9 @@ mod tests {
                     }
                     if expected.budget_consumed > 0 {
                         assert!(self.executed.load(Ordering::Relaxed), "native code must execute at {pc:#x}");
+                    }
+                    if PORTABLE.get() {
+                        assert_eq!(actual.budget_consumed, expected.budget_consumed, "instructions counted from {pc:#x}");
                     }
                     match (&actual.stop_reason, expected.stop_reason) {
                         (EngineStopReason::End, EngineStopReason::End) | (EngineStopReason::Yield, EngineStopReason::Yield) => {}
@@ -1359,7 +1377,8 @@ mod tests {
         for opcode in [0xee07_0f35u32, 0xee07_0f15] {
             engines.native.mem_write(0x1000, &[1, 0x20]).unwrap();
             engines.reset(0x1001, 0x3f, &[]);
-            assert_eq!(engines.native.run(0x8000, 2).unwrap().budget_consumed, 0);
+            // Only the portable executor counts the instructions it runs.
+            assert_eq!(engines.native.run(0x8000, 2).unwrap().budget_consumed, if PORTABLE.get() { 2 } else { 0 });
             assert_eq!(engines.native.reg_read(ArmRegister::R0), 1);
 
             engines.native.mem_write(0x1000, &[2, 0x20]).unwrap();
@@ -1386,7 +1405,8 @@ mod tests {
                 thread::yield_now();
             }
             engines.reset(0x1001, 0x3f, &[]);
-            assert_eq!(engines.native.run(0x8000, 2).unwrap().budget_consumed, 0);
+            // Only the portable executor counts the instructions it runs.
+            assert_eq!(engines.native.run(0x8000, 2).unwrap().budget_consumed, if PORTABLE.get() { 2 } else { 0 });
             assert_eq!(engines.native.reg_read(ArmRegister::R0), 2);
 
             // Install the original bytes again before testing the next CP15 operation.
@@ -1537,10 +1557,18 @@ mod tests {
         assert!(matches!(engines.native.run(0x8000, 0).unwrap().stop_reason, EngineStopReason::Yield));
         assert_eq!(engines.native.reg_read(ArmRegister::PC), 0x1000);
         assert_eq!(engines.native.reg_read(ArmRegister::R0), 3);
-        let result = engines.native.run(0x8000, 1).unwrap();
-        assert!(matches!(result.stop_reason, EngineStopReason::End));
-        assert_eq!(result.budget_consumed, 0);
-        assert_eq!(engines.native.reg_read(ArmRegister::R0), 0);
+        if PORTABLE.get() {
+            let result = engines.native.run(0x8000, 4).unwrap();
+            assert!(matches!(result.stop_reason, EngineStopReason::Yield));
+            assert_eq!(result.budget_consumed, 4);
+            assert_eq!(engines.native.reg_read(ArmRegister::PC), 0x1000);
+            assert_eq!(engines.native.reg_read(ArmRegister::R0), 1);
+        } else {
+            let result = engines.native.run(0x8000, 1).unwrap();
+            assert!(matches!(result.stop_reason, EngineStopReason::End));
+            assert_eq!(result.budget_consumed, 0);
+            assert_eq!(engines.native.reg_read(ArmRegister::R0), 0);
+        }
 
         for suffix in [0xf802u16, 0xe802] {
             let mut bytes: Vec<_> = [0xf000, suffix, 0x3001, 0x4770].into_iter().flat_map(u16::to_le_bytes).collect();
@@ -1555,5 +1583,15 @@ mod tests {
             engines.compare_run(0x8000);
             assert_eq!(engines.native.reg_read(ArmRegister::R1), 1);
         }
+    }
+
+    #[test]
+    fn portable_executor_matches_interpreter_like_native() {
+        PORTABLE.set(true);
+        native_memory_transfers_preserve_completed_prefix();
+        native_branch_exchange_pc_loads_and_interpreter_handoffs_match();
+        native_code_changes_only_after_explicit_instruction_cache_invalidation();
+        native_arithmetic_conditions_and_shifts_match_interpreter();
+        native_loops_and_interior_entries_run_without_interpreter_budget();
     }
 }

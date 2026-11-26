@@ -6552,6 +6552,7 @@ dependencies = [
  "wie-backend",
  "wie-core-arm-aot",
  "wie-core-arm-native",
+ "wie-core-arm-portable",
  "wie-jvm-support",
  "wie-util",
  "wie-wipi-c",
@@ -7709,6 +7710,16 @@ dependencies = [
  "nom",
  "rayon",
  "sha2",
+ "spin",
+ "tracing",
+ "wie-core-arm-aot",
+ "wie-util",
+]
+
+[[package]]
+name = "wie-core-arm-portable"
+version = "0.2.19"
+dependencies = [
  "spin",
  "tracing",
  "wie-core-arm-aot",
