@@ -1,5 +1,5 @@
-use alloc::{borrow::Cow, boxed::Box, format, vec, vec::Vec};
-use core::marker::PhantomData;
+use alloc::{borrow::Cow, boxed::Box, collections::VecDeque, format, vec, vec::Vec};
+use core::cell::RefCell;
 
 use bytemuck::{Zeroable, cast_vec};
 
@@ -425,7 +425,18 @@ where
     width: i32,
     height: i32,
     raw_buffer: Box<dyn ArrayRawBufferMut>,
-    _phantom: PhantomData<T>,
+    rows: RefCell<Rows<T>>,
+}
+
+// The rows of the pixel array in use, as a run of rows that starts at `top`. Each holds its pixels
+// and whether it was drawn on; a row without pixels has not been read. Drawing works on these rows,
+// and dropping the buffer writes the changed ones back.
+struct Rows<T>
+where
+    T: PixelType,
+{
+    top: i32,
+    rows: VecDeque<(Vec<T::DataType>, bool)>,
 }
 
 impl<T> JavaImageBuffer<T>
@@ -443,8 +454,71 @@ where
             width,
             height,
             raw_buffer,
-            _phantom: PhantomData,
+            rows: RefCell::new(Rows {
+                top: 0,
+                rows: VecDeque::new(),
+            }),
         })
+    }
+
+    fn contains(&self, x: i32, y: i32) -> bool {
+        x >= 0 && y >= 0 && x < self.width && y < self.height
+    }
+
+    fn bytes_per_line(&self) -> usize {
+        self.width as usize * size_of::<T::DataType>()
+    }
+
+    // The row `y` of the image, read from the pixel array when this is the first use of it.
+    fn row<'a>(raw_buffer: &dyn ArrayRawBufferMut, rows: &'a mut Rows<T>, width: i32, y: i32) -> &'a mut (Vec<T::DataType>, bool) {
+        if rows.rows.is_empty() {
+            rows.top = y;
+        }
+        while y < rows.top {
+            rows.rows.push_front((Vec::new(), false));
+            rows.top -= 1;
+        }
+        while y >= rows.top + rows.rows.len() as i32 {
+            rows.rows.push_back((Vec::new(), false));
+        }
+
+        let row = &mut rows.rows[(y - rows.top) as usize];
+        if row.0.is_empty() {
+            row.0 = vec![T::DataType::zeroed(); width as usize];
+            raw_buffer
+                .read(
+                    y as usize * width as usize * size_of::<T::DataType>(),
+                    bytemuck::cast_slice_mut(&mut row.0),
+                )
+                .unwrap();
+        }
+
+        row
+    }
+
+    fn pixel_mut(&mut self, x: i32, y: i32) -> &mut T::DataType {
+        let row = Self::row(&*self.raw_buffer, self.rows.get_mut(), self.width, y);
+        row.1 = true;
+
+        &mut row.0[x as usize]
+    }
+}
+
+impl<T> Drop for JavaImageBuffer<T>
+where
+    T: PixelType,
+{
+    fn drop(&mut self) {
+        let bytes_per_line = self.bytes_per_line();
+        let rows = self.rows.get_mut();
+        for (y, (pixels, changed)) in (rows.top as usize..).zip(&rows.rows) {
+            if !changed {
+                continue;
+            }
+            if let Err(error) = self.raw_buffer.write(y * bytes_per_line, bytemuck::cast_slice(pixels)) {
+                tracing::error!("Failed to write image row {y}: {error:?}");
+            }
+        }
     }
 }
 
@@ -465,18 +539,38 @@ where
     }
 
     fn get_pixel(&self, x: i32, y: i32) -> Color {
-        let offset = (((y as u32) * self.width() + (x as u32)) * self.bytes_per_pixel()) as usize;
+        if !self.contains(x, y) {
+            return T::to_color(T::DataType::zeroed());
+        }
 
-        let mut raw = T::DataType::zeroed();
-        self.raw_buffer.read(offset, bytemuck::bytes_of_mut(&mut raw)).unwrap();
+        T::to_color(Self::row(&*self.raw_buffer, &mut self.rows.borrow_mut(), self.width, y).0[x as usize])
+    }
 
-        T::to_color(raw)
+    fn get_pixels(&self, x: i32, y: i32, colors: &mut [Color]) {
+        if self.contains(x, y) && self.contains(x + colors.len() as i32 - 1, y) {
+            let mut rows = self.rows.borrow_mut();
+            let row = Self::row(&*self.raw_buffer, &mut rows, self.width, y);
+            for (color, pixel) in colors.iter_mut().zip(&row.0[x as usize..]) {
+                *color = T::to_color(*pixel);
+            }
+        } else {
+            for (x, color) in (x..).zip(colors) {
+                *color = self.get_pixel(x, y);
+            }
+        }
     }
 
     fn raw(&self) -> Cow<'_, [u8]> {
-        let size = self.width() * self.height() * self.bytes_per_pixel();
-        let mut buffer = vec![0; size as usize];
+        let bytes_per_line = self.bytes_per_line();
+        let mut buffer = vec![0; bytes_per_line * self.height as usize];
         self.raw_buffer.read(0, &mut buffer).unwrap();
+
+        let rows = self.rows.borrow();
+        for (y, (pixels, changed)) in (rows.top as usize..).zip(&rows.rows) {
+            if *changed {
+                buffer[y * bytes_per_line..][..bytes_per_line].copy_from_slice(bytemuck::cast_slice(pixels));
+            }
+        }
 
         Cow::Owned(buffer)
     }
@@ -495,41 +589,36 @@ where
     T: PixelType,
 {
     fn put_pixel(&mut self, x: i32, y: i32, color: Color) {
-        if x > self.width || y > self.height || x < 0 || y < 0 {
+        if !self.contains(x, y) {
             return;
         }
 
-        let offset = (((y as u32) * self.width() + (x as u32)) * self.bytes_per_pixel()) as usize;
-
-        let raw = T::from_color(color);
-        let raw_bytes = bytemuck::bytes_of(&raw);
-
-        self.raw_buffer.write(offset as _, raw_bytes).unwrap();
+        *self.pixel_mut(x, y) = T::from_color(color);
     }
 
-    fn put_pixels(&mut self, x: i32, y: i32, _width: u32, colors: &[Color]) {
-        if x > self.width || y > self.height || x < 0 || y < 0 {
-            return;
+    fn put_pixels(&mut self, x: i32, y: i32, width: u32, colors: &[Color]) {
+        for (y, colors) in (y..).zip(colors.chunks(width as usize)) {
+            if self.contains(x, y) && self.contains(x + colors.len() as i32 - 1, y) {
+                let row = Self::row(&*self.raw_buffer, self.rows.get_mut(), self.width, y);
+                row.1 = true;
+                for (pixel, color) in row.0[x as usize..].iter_mut().zip(colors) {
+                    *pixel = T::from_color(*color);
+                }
+            } else {
+                for (x, color) in (x..).zip(colors) {
+                    self.put_pixel(x, y, *color);
+                }
+            }
         }
-
-        let offset = (((y as u32) * self.width() + (x as u32)) * self.bytes_per_pixel()) as usize;
-
-        let raw = colors.iter().copied().map(T::from_color).collect::<Vec<_>>();
-        self.raw_buffer.write(offset, bytemuck::cast_slice(&raw)).unwrap();
     }
 
     fn xor_pixel(&mut self, x: i32, y: i32, color: Color) {
-        if x < 0 || y < 0 || x >= self.width || y >= self.height {
+        if !self.contains(x, y) {
             return;
         }
 
-        let offset = (((y as u32) * self.width() + (x as u32)) * self.bytes_per_pixel()) as usize;
-
-        let mut raw = T::DataType::zeroed();
-        self.raw_buffer.read(offset, bytemuck::bytes_of_mut(&mut raw)).unwrap();
-
-        let raw = T::xor_color(raw, color);
-        self.raw_buffer.write(offset as _, bytemuck::bytes_of(&raw)).unwrap();
+        let pixel = self.pixel_mut(x, y);
+        *pixel = T::xor_color(*pixel, color);
     }
 }
 
@@ -650,6 +739,10 @@ mod tests {
         buffer.xor_pixel(1, 0, color);
         let expected = [pixels[1], T::xor_color(pixels[0], color)];
         assert_eq!(&*buffer.raw(), bytemuck::cast_slice(&expected));
+
+        // What was drawn reaches the pixel array once the buffer is dropped.
+        drop(buffer);
+        assert_eq!(&*JavaImageBuffer::<T>::new(jvm, &image).await?.raw(), bytemuck::cast_slice(&expected));
         Ok(())
     }
 

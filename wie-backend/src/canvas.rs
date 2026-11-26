@@ -58,6 +58,12 @@ pub trait Image: Send {
     fn height(&self) -> u32;
     fn bytes_per_pixel(&self) -> u32;
     fn get_pixel(&self, x: i32, y: i32) -> Color;
+    /// Reads the run of pixels that starts at (x, y) and fills `colors`.
+    fn get_pixels(&self, x: i32, y: i32, colors: &mut [Color]) {
+        for (index, color) in colors.iter_mut().enumerate() {
+            *color = self.get_pixel(x + index as i32, y);
+        }
+    }
     fn raw(&self) -> Cow<'_, [u8]>;
     fn colors(&self) -> Vec<Color>;
 }
@@ -278,6 +284,13 @@ where
         T::to_color(raw)
     }
 
+    fn get_pixels(&self, x: i32, y: i32, colors: &mut [Color]) {
+        let offset = ((y as u32) * self.width + (x as u32)) as usize;
+        for (color, raw) in colors.iter_mut().zip(&self.data[offset..]) {
+            *color = T::to_color(*raw);
+        }
+    }
+
     fn raw(&self) -> Cow<'_, [u8]> {
         cast_slice(&self.data).into()
     }
@@ -302,17 +315,10 @@ where
     }
 
     fn put_pixels(&mut self, x: i32, y: i32, width: u32, colors: &[Color]) {
-        for (i, color) in colors.iter().enumerate() {
-            let x = x + (i as i32 % (width as i32));
-            let y = y + (i as i32 / (width as i32));
-
-            if x < 0 || y < 0 || (x as u32) >= self.width || (y as u32) >= self.height {
-                continue;
+        for (row, colors) in colors.chunks(width as usize).enumerate() {
+            for (column, color) in colors.iter().enumerate() {
+                self.put_pixel(x + column as i32, y + row as i32, *color);
             }
-
-            let raw = T::from_color(*color);
-
-            self.data[((y as u32) * self.width + (x as u32)) as usize] = raw;
         }
     }
 
@@ -360,12 +366,8 @@ where
             return;
         }
 
-        let (color, blend) = if self.alpha < 255 {
-            let a = ((color.a as u16 * self.alpha as u16 + 127) / 255) as u8;
-            (Color { a, ..color }, true)
-        } else {
-            (color, blend)
-        };
+        let color = self.fade(color);
+        let blend = blend || self.alpha < 255;
 
         if self.xor_mode {
             if color.a == 0 {
@@ -391,17 +393,18 @@ where
             return;
         }
 
-        let bg = self.image_buffer.get_pixel(x, y);
-        let factor = color.a as f32 / 255.0;
+        let background = self.image_buffer.get_pixel(x, y);
+        self.image_buffer.put_pixel(x, y, blend_color(color, background));
+    }
 
-        let computed_color = Color {
-            a: 0xff,
-            r: (color.r as f32 * factor + bg.r as f32 * (1.0 - factor)) as u8,
-            g: (color.g as f32 * factor + bg.g as f32 * (1.0 - factor)) as u8,
-            b: (color.b as f32 * factor + bg.b as f32 * (1.0 - factor)) as u8,
-        };
-
-        self.image_buffer.put_pixel(x, y, computed_color);
+    // The colour with the canvas alpha applied to its own.
+    fn fade(&self, color: Color) -> Color {
+        if self.alpha < 255 {
+            let a = ((color.a as u16 * self.alpha as u16 + 127) / 255) as u8;
+            Color { a, ..color }
+        } else {
+            color
+        }
     }
 
     fn plot(&mut self, x: i32, y: i32, color: Color, clip: &Clip) {
@@ -476,6 +479,18 @@ fn clip_segment(x1: i32, y1: i32, x2: i32, y2: i32, width: u32, height: u32) -> 
         (fx1 + dx * t1).round() as i32,
         (fy1 + dy * t1).round() as i32,
     ))
+}
+
+/// The colour that results from laying `color` over an opaque `background`.
+fn blend_color(color: Color, background: Color) -> Color {
+    let factor = color.a as f32 / 255.0;
+
+    Color {
+        a: 0xff,
+        r: (color.r as f32 * factor + background.r as f32 * (1.0 - factor)) as u8,
+        g: (color.g as f32 * factor + background.g as f32 * (1.0 - factor)) as u8,
+        b: (color.b as f32 * factor + background.b as f32 * (1.0 - factor)) as u8,
+    }
 }
 
 /// Intersect the span [start, start + len) with [0, max) in i64 so extreme
@@ -573,39 +588,50 @@ where
     }
 
     fn draw(&mut self, dx: i32, dy: i32, w: u32, h: u32, src: &dyn Image, sx: i32, sy: i32, clip: Clip) {
-        // iterate only the overlap of destination, source, and image bounds; i64 keeps
+        // iterate only the overlap of destination, source, clip, and image bounds; i64 keeps
         // extreme guest offsets from overflowing or spinning through offscreen pixels
-        let x_start = 0i64.max(-(dx as i64)).max(-(sx as i64));
+        let x_start = 0i64.max(-(dx as i64)).max(-(sx as i64)).max(clip.x as i64 - dx as i64);
         let x_end = (w as i64)
             .min(self.image_buffer.width() as i64 - dx as i64)
-            .min(src.width() as i64 - sx as i64);
-        let y_start = 0i64.max(-(dy as i64)).max(-(sy as i64));
+            .min(src.width() as i64 - sx as i64)
+            .min(clip.x as i64 + clip.width as i64 - dx as i64);
+        let y_start = 0i64.max(-(dy as i64)).max(-(sy as i64)).max(clip.y as i64 - dy as i64);
         let y_end = (h as i64)
             .min(self.image_buffer.height() as i64 - dy as i64)
-            .min(src.height() as i64 - sy as i64);
+            .min(src.height() as i64 - sy as i64)
+            .min(clip.y as i64 + clip.height as i64 - dy as i64);
 
         if x_start >= x_end || y_start >= y_end {
             return;
         }
 
-        let x_step = if dx > sx { -1 } else { 1 };
+        // a row is read whole before any of it is written, so only the row order has to keep an
+        // overlapping source ahead of the pixels drawn over it
+        let px = (dx as i64 + x_start) as i32;
+        let transparent = Color { a: 0, r: 0, g: 0, b: 0 };
+        let mut colors = vec![transparent; (x_end - x_start) as usize];
+        let mut backgrounds = colors.clone();
         let y_step = if dy > sy { -1 } else { 1 };
         let mut y = if y_step < 0 { y_end - 1 } else { y_start };
         while y >= y_start && y < y_end {
-            let mut x = if x_step < 0 { x_end - 1 } else { x_start };
-            while x >= x_start && x < x_end {
-                let px = (dx as i64 + x) as i32;
-                let py = (dy as i64 + y) as i32;
-                if (px as i64) >= clip.x as i64
-                    && (px as i64) < clip.x as i64 + clip.width as i64
-                    && (py as i64) >= clip.y as i64
-                    && (py as i64) < clip.y as i64 + clip.height as i64
-                {
-                    self.blend_pixel(px, py, src.get_pixel((sx as i64 + x) as i32, (sy as i64 + y) as i32));
-                }
+            let py = (dy as i64 + y) as i32;
+            src.get_pixels((sx as i64 + x_start) as i32, (sy as i64 + y) as i32, &mut colors);
 
-                x += x_step;
+            if self.xor_mode {
+                for (index, color) in colors.iter().enumerate() {
+                    self.blend_pixel(px + index as i32, py, *color);
+                }
+            } else {
+                if self.alpha < 255 || colors.iter().any(|color| color.a < 255) {
+                    self.image_buffer.get_pixels(px, py, &mut backgrounds);
+                    for (color, background) in colors.iter_mut().zip(&backgrounds) {
+                        let faded = self.fade(*color);
+                        *color = if faded.a == 255 { faded } else { blend_color(faded, *background) };
+                    }
+                }
+                self.image_buffer.put_pixels(px, py, colors.len() as u32, &colors);
             }
+
             y += y_step;
         }
     }
@@ -794,11 +820,24 @@ where
     }
 
     fn fill_rect(&mut self, x: i32, y: i32, w: u32, h: u32, color: Color, clip: Clip) {
-        // TODO use put_pixels
-        for py in clamp_span(y, h, self.image_buffer.height()) {
-            for px in clamp_span(x, w, self.image_buffer.width()) {
-                self.plot(px, py, color, &clip);
+        if self.xor_mode || self.alpha < 255 {
+            for py in clamp_span(y, h, self.image_buffer.height()) {
+                for px in clamp_span(x, w, self.image_buffer.width()) {
+                    self.plot(px, py, color, &clip);
+                }
             }
+            return;
+        }
+
+        // such a fill replaces what it covers, so each row is written whole
+        let area = clip.intersect(&Clip { x, y, width: w, height: h });
+        let columns = clamp_span(area.x, area.width, self.image_buffer.width());
+        if columns.is_empty() {
+            return;
+        }
+        let colors = vec![color; columns.len()];
+        for py in clamp_span(area.y, area.height, self.image_buffer.height()) {
+            self.image_buffer.put_pixels(columns.start, py, colors.len() as u32, &colors);
         }
     }
 
@@ -1241,6 +1280,14 @@ mod tests {
             canvas.set_alpha(alpha);
             canvas.fill_rect(x, 0, 1, 1, white, clip);
         }
+
+        let levels = (0..3).map(|x| canvas.get_pixel(x, 0).unwrap().r).collect::<Vec<_>>();
+        assert_eq!(levels, [0, 128, 255]);
+
+        // a drawn row blends each of its pixels by the alpha of that pixel
+        let source = VecImageBuffer::<ArgbPixel>::from_raw(3, 1, vec![0x00ffffff, 0x80ffffff, 0xffffffff]);
+        canvas.fill_rect(0, 0, 3, 1, black, clip);
+        canvas.draw(0, 0, 3, 1, &source, 0, 0, clip);
 
         let levels = (0..3).map(|x| canvas.get_pixel(x, 0).unwrap().r).collect::<Vec<_>>();
         assert_eq!(levels, [0, 128, 255]);
