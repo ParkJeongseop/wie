@@ -1,7 +1,7 @@
 mod analysis;
 mod decoder;
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{
     ops::Range,
     task::{Context, Poll, Waker},
@@ -27,13 +27,49 @@ struct Recompilation {
     invalidated: bool,
 }
 
+/// Invalidated regions awaiting re-entry, indexed by code range: a lookup miss is far more common than a hit.
+#[derive(Default)]
+struct Invalidated {
+    regions: HashMap<u32, ManifestRegion>,
+    ranges: BTreeMap<(bool, u8, u64), (u64, u32)>,
+    next: u32,
+}
+
+impl Invalidated {
+    fn insert(&mut self, manifest: ManifestRegion) {
+        let id = self.next;
+        self.next = self.next.wrapping_add(1);
+        for range in &manifest.code_ranges {
+            self.ranges
+                .insert((manifest.entry.thumb, manifest.entry.cpu_mode, range.start), (range.end, id));
+        }
+        self.regions.insert(id, manifest);
+    }
+
+    fn take(&mut self, key: &RegionKey) -> Option<ManifestRegion> {
+        let pc = u64::from(key.pc);
+        let (_, &(end, id)) = self
+            .ranges
+            .range((key.thumb, key.cpu_mode, 0)..=(key.thumb, key.cpu_mode, pc))
+            .next_back()?;
+        if pc >= end {
+            return None;
+        }
+        let manifest = self.regions.remove(&id)?;
+        for range in &manifest.code_ranges {
+            self.ranges.remove(&(manifest.entry.thumb, manifest.entry.cpu_mode, range.start));
+        }
+        Some(manifest)
+    }
+}
+
 pub(crate) struct Aot {
     pub executor: Box<dyn CompiledExecutor>,
     pub state: PreparationState,
     pub entries: HashMap<RegionKey, CompiledHandle>,
     ranges: Vec<Range<u64>>,
     regions: Vec<CompiledRegion>,
-    invalidated: Vec<ManifestRegion>,
+    invalidated: Invalidated,
     recompilations: Vec<Recompilation>,
 }
 
@@ -45,7 +81,7 @@ impl Aot {
             entries: HashMap::new(),
             ranges: Vec::new(),
             regions: Vec::new(),
-            invalidated: Vec::new(),
+            invalidated: Invalidated::default(),
             recompilations: Vec::new(),
         }
     }
@@ -111,7 +147,7 @@ impl Aot {
                 self.entries.remove(&RegionKey { pc, ..region.manifest.entry });
             }
             self.executor.release(region.handle);
-            self.invalidated.push(region.manifest);
+            self.invalidated.insert(region.manifest);
         }
         for pending in &mut self.recompilations {
             pending.invalidated |= overlaps(&pending.manifest);
@@ -119,14 +155,9 @@ impl Aot {
     }
 
     pub fn recompile(&mut self, key: &RegionKey, memory: &EmulatedMemory) {
-        let Some(index) = self.invalidated.iter().position(|region| {
-            region.entry.thumb == key.thumb
-                && region.entry.cpu_mode == key.cpu_mode
-                && region.code_ranges.iter().any(|range| range.contains(&u64::from(key.pc)))
-        }) else {
+        let Some(manifest) = self.invalidated.take(key) else {
             return;
         };
-        let manifest = self.invalidated.swap_remove(index);
         let request = match compile_request(memory, manifest.code_ranges.clone(), Some(manifest.entry.thumb)) {
             Ok(request) => request,
             Err(error) => {
@@ -156,7 +187,7 @@ impl Aot {
                         self.executor.release(region.handle);
                     }
                 }
-                self.invalidated.push(pending.manifest);
+                self.invalidated.insert(pending.manifest);
             } else {
                 match result {
                     Ok(artifact) => self.install(artifact),
