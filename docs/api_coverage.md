@@ -1848,6 +1848,17 @@ Aggregating crashes during the 30s input scenario:
   status: 헬싱 (white logo screen, story subtitles and the red bands of its menu, all absent before),
   액션히어로3D (title logo, combo counter and item bar) and 폴라폴리2007 (cell outlines). The 79 LGT
   titles are byte-identical.
+- A KTF draw is measured from the context's origin (2026-11-27). `MC_GRP_CONTEXT_OFFSET_IDX` sets "the
+  origin of the relative coordinates" and the record kept it, but no KTF draw read it back: the
+  point a title passed was taken as the destination's own. 액션히어로3D lays its screen out that way —
+  the status panel is painted at (0, 0) with the origin at (0, 237), the combo counter at (0, 0) with
+  the origin at (0, 37) and each menu from the corner of its own box — so the panel covered the top
+  of the screen, the bottom strip kept the loading screen's last frame under the item icons and the
+  menus sat in the top-left corner. Every draw that takes a context now adds the origin to its point
+  (`MC_grpCopyArea` to both of its points, which are in the same framebuffer); the clip stays in the
+  destination's coordinates, which is what that title's menus need (their clip is set once, before
+  the origin moves) and what the LGT draws already did. Of the 78 KTF C titles only that one sets an
+  origin other than zero: the other 77 are byte-identical.
 
 Keep this document updated in the same change set as the implementation work
 it describes.

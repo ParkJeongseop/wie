@@ -53,6 +53,21 @@ fn with_context_clip(context: &dyn WIPICContext, pgc: WIPICWord, clip: Clip) -> 
     }))
 }
 
+/// Moves a draw's point to where the graphics context's origin puts it. `MC_GRP_CONTEXT_OFFSET_IDX` sets
+/// "the origin of the relative coordinates", so what a title passes to a draw is measured from there,
+/// while the clip stays in the destination's own coordinates. The KTF draws ignored it: 액션히어로3D
+/// paints its status panel at (0, 0) with the origin at (0, 237), and the panel landed on the top of the
+/// screen while the bottom kept the loading screen's last frame.
+fn from_context_origin(context: &dyn WIPICContext, pgc: WIPICWord, x: i32, y: i32) -> Result<(i32, i32)> {
+    if pgc == 0 {
+        return Ok((x, y));
+    }
+    let gctx = read_graphics_context(context, pgc)?;
+    let [origin_x, origin_y] = gctx.offset.map(|value| i32::from(value as i16));
+
+    Ok((x.wrapping_add(origin_x), y.wrapping_add(origin_y)))
+}
+
 pub async fn fill_polygon(
     _context: &mut dyn WIPICContext,
     dst: WIPICIndirectPtr,
@@ -182,6 +197,8 @@ pub async fn get_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, o
 pub async fn put_pixel(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr, x: i32, y: i32, p_gctx: WIPICWord) -> Result<()> {
     tracing::debug!("MC_grpPutPixel({:#x}, {x}, {y}, {p_gctx:?})", dst_fb.0);
 
+    let (x, y) = from_context_origin(context, p_gctx, x, y)?;
+
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst_fb)?)?);
     let gctx = read_graphics_context(context, p_gctx)?;
 
@@ -202,6 +219,7 @@ pub async fn fill_rect(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr,
     if w <= 0 || h <= 0 {
         return Ok(());
     }
+    let (x, y) = from_context_origin(context, p_gctx, x, y)?;
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst_fb)?)?);
     let gctx = read_graphics_context(context, p_gctx)?;
@@ -234,6 +252,7 @@ pub async fn draw_arc(
     if w <= 0 || h <= 0 {
         return Ok(());
     }
+    let (x, y) = from_context_origin(context, p_gctx, x, y)?;
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst)?)?);
     let gctx = read_graphics_context(context, p_gctx)?;
@@ -266,6 +285,7 @@ pub async fn fill_arc(
     if w <= 0 || h <= 0 {
         return Ok(());
     }
+    let (x, y) = from_context_origin(context, p_gctx, x, y)?;
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst)?)?);
     let gctx = read_graphics_context(context, p_gctx)?;
@@ -386,6 +406,8 @@ pub async fn draw_image(
         image.0
     );
 
+    let (dx, dy) = from_context_origin(context, graphics_context, dx, dy)?;
+
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(framebuffer)?)?);
     let image: ImageRecord = read_generic(context, context.data_ptr(image)?)?;
 
@@ -495,6 +517,8 @@ pub async fn copy_area(
 
         return Ok(());
     }
+    let (dx, dy) = from_context_origin(context, pgc, dx, dy)?;
+    let (x, y) = from_context_origin(context, pgc, x, y)?;
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst)?)?);
 
@@ -559,6 +583,8 @@ pub async fn copy_frame_buffer(
         dst.0,
         src.0
     );
+
+    let (dx, dy) = from_context_origin(context, pgc, dx, dy)?;
 
     let src_framebuffer = FrameBuffer(read_generic(context, context.data_ptr(src)?)?);
     let dst_framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst)?)?);
@@ -636,6 +662,7 @@ pub async fn draw_string(
     let Some(string) = primitives::read_text(context, ptr_string, length)? else {
         return Ok(());
     };
+    let (x, y) = from_context_origin(context, pgc, x, y)?;
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst)?)?);
     let gctx = read_graphics_context(context, pgc)?;
@@ -724,6 +751,7 @@ pub async fn set_rgb_pixels(
     if w <= 0 || h <= 0 {
         return Ok(());
     }
+    let (x, y) = from_context_origin(context, pgc, x, y)?;
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst)?)?);
     let clip = Clip {
@@ -773,6 +801,7 @@ pub async fn draw_rect(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x:
     if w <= 0 || h <= 0 {
         return Ok(());
     }
+    let (x, y) = from_context_origin(context, pgc, x, y)?;
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst)?)?);
     let gctx = read_graphics_context(context, pgc)?;
@@ -790,6 +819,9 @@ pub async fn draw_rect(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x:
 
 pub async fn draw_line(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x1: i32, y1: i32, x2: i32, y2: i32, pgc: WIPICWord) -> Result<()> {
     tracing::debug!("MC_grpDrawLine({:#x}, {x1}, {y1}, {x2}, {y2}, {pgc:#x})", dst.0);
+
+    let (x1, y1) = from_context_origin(context, pgc, x1, y1)?;
+    let (x2, y2) = from_context_origin(context, pgc, x2, y2)?;
 
     let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(dst)?)?);
     let gctx = read_graphics_context(context, pgc)?;
@@ -977,10 +1009,15 @@ mod tests {
             init_context(&mut context, graphics_context).await?;
             let clip = context.alloc_raw(16)?;
             write_generic(&mut context, clip, [2i32, 1, 3, 2])?;
-            for clip_ptr in [clip, 0] {
+            let origin = context.alloc_raw(8)?;
+            // A draw is measured from the context's origin and the clip is not, so the same pixels are
+            // reached wherever the origin is put.
+            for (clip_ptr, origin_x, origin_y) in [(clip, 0, 0), (0, 0, 0), (clip, 3, -2), (0, -1, 1)] {
                 set_context(&mut context, graphics_context, WIPICGraphicsContextIdx::ClipIdx, clip_ptr).await?;
+                write_generic(&mut context, origin, [origin_x, origin_y])?;
+                set_context(&mut context, graphics_context, WIPICGraphicsContextIdx::OffsetIdx, origin).await?;
                 framebuffer.write(&mut context, &[0xe0, 0x07].repeat(12))?;
-                draw_image(&mut context, destination, 1, 1, 3, 1, image, 0, 0, graphics_context).await?;
+                draw_image(&mut context, destination, 1 - origin_x, 1 - origin_y, 3, 1, image, 0, 0, graphics_context).await?;
 
                 let drawn = framebuffer.image(&mut context)?;
                 // The draw reaches the one row it covers and leaves the rows around it alone.
