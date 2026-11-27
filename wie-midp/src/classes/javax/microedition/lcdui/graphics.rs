@@ -246,11 +246,25 @@ impl Graphics {
             .await
     }
 
-    async fn current_font_size(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<f32> {
+    /// The point size text is drawn at, and how far above the anchor point its top lies.
+    async fn text_placement(jvm: &Jvm, this: &ClassInstanceRef<Self>, anchor: &Anchor) -> JvmResult<(f32, i32)> {
         let font: ClassInstanceRef<Font> = jvm
             .get_field(this, "javax/microedition/lcdui/Graphics", "font", "Ljavax/microedition/lcdui/Font;")
             .await?;
-        jvm.get_field(&font, "javax/microedition/lcdui/Font", "pointSize", "F").await
+        let [point_size, height] = jvm
+            .get_fields(&font, "javax/microedition/lcdui/Font", [("pointSize", "F"), ("height", "I")])
+            .await?;
+
+        let height: i32 = height.into();
+        let rise = if anchor.contains(Anchor::BOTTOM) {
+            height
+        } else if anchor.contains(Anchor::BASELINE) {
+            Font::baseline_position(height)
+        } else {
+            0
+        };
+
+        Ok((point_size.into(), rise))
     }
 
     async fn set_color(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, rgb: i32) -> JvmResult<()> {
@@ -515,13 +529,13 @@ impl Graphics {
 
         let string = RustString::from_utf16(&[ch]).unwrap();
 
-        let text_size = Self::current_font_size(jvm, &this).await?;
+        let (text_size, rise) = Self::text_placement(jvm, &this, &anchor).await?;
 
         canvas.draw_text(
             context.system().platform().font(),
             &string,
             (translate_x + x) as _,
-            (translate_y + y) as _,
+            (translate_y + y - rise) as _,
             text_size,
             anchor.into(),
             Rgb8Pixel::to_color(color as _),
@@ -555,13 +569,13 @@ impl Graphics {
         let chars = jvm.load_array(&chars, offset as _, length as _).await?;
         let string = RustString::from_utf16(&chars).unwrap();
 
-        let text_size = Self::current_font_size(jvm, &this).await?;
+        let (text_size, rise) = Self::text_placement(jvm, &this, &anchor).await?;
 
         canvas.draw_text(
             context.system().platform().font(),
             &string,
             (translate_x + x) as _,
-            (translate_y + y) as _,
+            (translate_y + y - rise) as _,
             text_size,
             anchor.into(),
             Rgb8Pixel::to_color(color as _),
@@ -595,13 +609,13 @@ impl Graphics {
             clip,
         } = Self::pen(jvm, &mut this).await?;
 
-        let text_size = Self::current_font_size(jvm, &this).await?;
+        let (text_size, rise) = Self::text_placement(jvm, &this, &anchor).await?;
 
         canvas.draw_text(
             context.system().platform().font(),
             &string,
             (translate_x + x) as _,
-            (translate_y + y) as _,
+            (translate_y + y - rise) as _,
             text_size,
             anchor.into(),
             Rgb8Pixel::to_color(color as _),
@@ -635,13 +649,13 @@ impl Graphics {
             clip,
         } = Self::pen(jvm, &mut this).await?;
 
-        let text_size = Self::current_font_size(jvm, &this).await?;
+        let (text_size, rise) = Self::text_placement(jvm, &this, &anchor).await?;
 
         canvas.draw_text(
             context.system().platform().font(),
             &substring,
             (translate_x + x) as _,
-            (translate_y + y) as _,
+            (translate_y + y - rise) as _,
             text_size,
             anchor.into(),
             Rgb8Pixel::to_color(color as _),

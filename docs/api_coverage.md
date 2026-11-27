@@ -311,6 +311,26 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **Text honours its vertical anchor** (2026-11-28): `Graphics.drawString`,
+  `drawSubstring`, `drawChar` and `drawChars` placed the top of the text at `y`
+  whatever the anchor said, so text drawn with `BOTTOM` or `BASELINE` sat a line
+  too low: 부루마불2007 (KTF) drew its rule-setting values under their fields.
+  The WIPI Graphics specification allows `TOP`, `BASELINE` and `BOTTOM` for
+  text and its example places the same line with `y + getBaselinePosition()` for
+  `BASELINE` and `y + getHeight()` for `BOTTOM`; the text now rises by those two
+  amounts of the Graphics' font. Thirty-three titles' swept frames changed, each
+  toward text sitting in the box drawn for it or text that had been below the
+  screen coming into view: on KTF 부루마불2007 ×2, 금광을찾아서 (shop sign and item
+  bar), 요구르팅 (speaker name), 대물낚시광2 (place name), 드래곤나이트2,
+  2007루노베이스볼, 놈2, 도신노홍철맞고 and 메이플스토리 ×5 (the `Loading...` line);
+  on LGT ezjava 바운티블루스 (chapter title), 팔콤영웅전설 EP1 (speaker name and
+  dialogue), 엑스피드스노보드2006, 크레이지아케이드 BnB (soft key labels), 림오브팬텀
+  and four more; on SK-VM 메이플스토리 ×4 (version and loading lines), MBC무한도전,
+  신시티, 엑스피드스노보드, 크레이지버스 and 더팜1; 간호사타이쿤2 on LGT WIPI (version
+  line). 드래곤나이트2 draws its first save slot with `BOTTOM` and its second with
+  `TOP`, so its two lines are now further apart than before; that is what it asks
+  for. Status counts are unchanged on all four libraries (KTF 310/321 OK, ezjava
+  104/105, SK-VM 85/90, LGT 73/79).
 - **A KTF native method answers in its thread context** (2026-11-28): 던파격투가편
   and 던전앤파이터 격투가 (KTF, one game in two builds) stayed on a white screen.
   Two things kept them there. Their native method bodies do not return their

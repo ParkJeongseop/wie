@@ -18,6 +18,12 @@ pub struct Font;
 impl Font {
     pub const HEIGHT: i32 = 12;
 
+    /// Where the baseline lies below the top of a line of the given height.
+    pub fn baseline_position(height: i32) -> i32 {
+        // the bundled font keeps a sixth of its cell below the baseline
+        (height * 5 + 3) / 6
+    }
+
     pub fn as_proto() -> WieJavaClassProto {
         WieJavaClassProto {
             name: "javax/microedition/lcdui/Font",
@@ -155,8 +161,7 @@ impl Font {
 
         let height: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Font", "height", "I").await?;
 
-        // the bundled font keeps a sixth of its cell below the baseline
-        Ok((height * 5 + 3) / 6)
+        Ok(Self::baseline_position(height))
     }
 
     async fn get_size(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<i32> {
