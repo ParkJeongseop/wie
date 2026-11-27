@@ -53,13 +53,19 @@ impl XDisplay {
         }
     }
 
-    async fn cl_init(jvm: &Jvm, _: &mut WieJvmContext) -> JvmResult<()> {
+    async fn cl_init(jvm: &Jvm, context: &mut WieJvmContext) -> JvmResult<()> {
         tracing::debug!("com.xce.lcdui.XDisplay::<clinit>()");
 
-        // TODO: temp
-        jvm.put_static_field("com/xce/lcdui/XDisplay", "width", "I", 240).await?;
-        jvm.put_static_field("com/xce/lcdui/XDisplay", "height", "I", 320).await?;
-        jvm.put_static_field("com/xce/lcdui/XDisplay", "height2", "I", 320).await?;
+        // all of the display, the rows a Canvas does not report included
+        let (width, height) = {
+            let platform = context.system().platform();
+            let screen = platform.screen();
+            (screen.width() as i32, screen.height() as i32)
+        };
+
+        jvm.put_static_field("com/xce/lcdui/XDisplay", "width", "I", width).await?;
+        jvm.put_static_field("com/xce/lcdui/XDisplay", "height", "I", height).await?;
+        jvm.put_static_field("com/xce/lcdui/XDisplay", "height2", "I", height).await?;
 
         Ok(())
     }

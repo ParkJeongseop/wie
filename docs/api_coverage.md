@@ -272,7 +272,9 @@ Device, SISImage and 3D are thin.
   (`keyPressed` argument and `getGameAction` result per `MIDPKeyCode`; without it
   the SK-VM codes are reported as before), `wie.midp.graphics` names the class
   every Graphics is an instance of, `wie.midp.font.sizes` gives `points:height`
-  for SIZE_SMALL, SIZE_MEDIUM and SIZE_LARGE.
+  for SIZE_SMALL, SIZE_MEDIUM and SIZE_LARGE, `wie.midp.softkeyBand` gives the
+  rows at the bottom of the display that a Canvas does not report (see "An SK-VM
+  Canvas is sixteen rows shorter than the display" below).
 
 ## LG MMPP / ez-java (`wie_mmpp`, `wie_j2me`)
 
@@ -321,6 +323,27 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **An SK-VM Canvas is sixteen rows shorter than the display** (2026-11-28):
+  2006독일축구 painted its menus on an uncleared white screen and nothing lined
+  up. Its canvas takes `getHeight() + 16` for the height of the display, and so
+  do 58 of the 90 SK-VM titles in the library (14 use `getHeight()` as it is, 18
+  never ask): 프린세스메이커4 centres 240 rows in `(getHeight() + 16 - 240) / 2`,
+  고래사냥2 and 매지컬프린세스 lay out from `getHeight() + 16`, 레스토랑타이쿤
+  picks its artwork tree from it. The handset keeps the bottom sixteen rows for
+  its soft keys, reports a Canvas without them, and still lets the Canvas draw on
+  all of the display. `Canvas.getHeight()` returned the whole display, so these
+  titles laid out for a display sixteen rows taller than the one they had:
+  bottom rows fell off the screen and centred pictures sat eight rows low.
+  `Display.getContentHeight` now takes the rows named by `wie.midp.softkeyBand`
+  (set to 16 by `wie-skt`, absent elsewhere) off a Canvas that is neither full
+  screen nor showing commands; the paint clip stays the whole display, and
+  `XDisplay.width` / `height` / `height2` answer the screen's real size instead
+  of a fixed 240x320. Over the 90 SK-VM titles the sweep status is unchanged
+  (85 OK) and 61 titles draw differently: the last entry of 로디아전기's menu,
+  the "no save data" line of 크레이지버스, the second line of 서울타이쿤's
+  dialogue and the whole of 썸머스케치's are on screen now. The titles that
+  never add the sixteen rows back (미니동화TING) leave them empty, as they did
+  on the handset.
 - **LGT exception delivery consumes the handler frame** (2026-11-28):
   서든어택포켓 (LGT) died at `Now Loading` with a memory fault at the end of the
   SVC stub region. Generated LGT code pops an exception-handler frame only when

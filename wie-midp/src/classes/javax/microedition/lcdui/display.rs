@@ -48,6 +48,7 @@ impl Display {
             parent_class: Some("java/lang/Object"),
             interfaces: vec![],
             methods: vec![
+                JavaMethodProto::new("<clinit>", "()V", Self::cl_init, MethodAccessFlags::STATIC),
                 JavaMethodProto::new("<init>", "()V", Self::init, MethodAccessFlags::empty()),
                 JavaMethodProto::new(
                     "setCurrent",
@@ -134,9 +135,30 @@ impl Display {
                 JavaFieldProto::new("repaintHeight", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("alertGeneration", "I", FieldAccessFlags::PRIVATE),
                 JavaFieldProto::new("tickerGeneration", "I", FieldAccessFlags::PRIVATE),
+                // the rows at the bottom of the display that the handset keeps for its own soft keys
+                JavaFieldProto::new("softkeyBand", "I", FieldAccessFlags::PRIVATE | FieldAccessFlags::STATIC),
             ],
             access_flags: ClassAccessFlags::PUBLIC,
         }
+    }
+
+    /// A handset that keeps the bottom rows of its display for its own soft keys reports a Canvas
+    /// without them, yet lets the Canvas draw on all of the display. A platform with such handsets
+    /// gives the number of rows in the `wie.midp.softkeyBand` system property.
+    async fn cl_init(jvm: &Jvm, _context: &mut WieJvmContext) -> JvmResult<()> {
+        tracing::debug!("javax.microedition.lcdui.Display::<clinit>");
+
+        let key = JavaLangString::from_rust_string(jvm, "wie.midp.softkeyBand").await?;
+        let value: ClassInstanceRef<JavaString> = jvm
+            .invoke_static("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", (key,))
+            .await?;
+        let rows: i32 = if value.is_null() {
+            0
+        } else {
+            JavaLangString::to_rust_string(jvm, &value).await?.trim().parse().unwrap_or(0)
+        };
+
+        jvm.put_static_field("javax/microedition/lcdui/Display", "softkeyBand", "I", rows).await
     }
 
     async fn init(jvm: &Jvm, context: &mut WieJvmContext, mut this: ClassInstanceRef<Self>) -> JvmResult<()> {
@@ -202,6 +224,19 @@ impl Display {
         tracing::debug!("javax.microedition.lcdui.Display::getContentHeight({displayable:?}, {width}, {height})");
 
         let layout = Self::chrome_layout(jvm, context, &displayable, width, height).await?;
+
+        // The handset's soft-key band is not part of what a Canvas reports, though it is painted on.
+        let band: i32 = jvm.get_static_field("javax/microedition/lcdui/Display", "softkeyBand", "I").await?;
+        if band > 0
+            && layout.softkey_height == 0
+            && jvm.is_instance(&**displayable, "javax/microedition/lcdui/Canvas")
+            && !jvm
+                .invoke_virtual::<_, bool>(&displayable, "javax/microedition/lcdui/Displayable", "isFullScreen", "()Z", ())
+                .await?
+        {
+            return Ok((layout.content_height - band).max(0));
+        }
+
         Ok(layout.content_height)
     }
 

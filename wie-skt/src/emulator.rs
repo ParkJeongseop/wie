@@ -187,6 +187,8 @@ impl SktEmulator {
             // the handset's extended software version; 택티컬퀘스트 scans its characters at start
             ("m.EXT_SW", ""),
             ("com.xce.wipi.version", ""),
+            // a Canvas is sixteen rows shorter than the display it draws on: most titles lay out against getHeight() + 16
+            ("wie.midp.softkeyBand", "16"),
         ];
         let properties = properties
             .into_iter()

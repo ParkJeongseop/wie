@@ -657,6 +657,23 @@ mod test {
                 assert_eq!(jvm.load_array::<i32>(&painted_clip, 0, 4).await?, clip);
             }
 
+            // a handset that keeps rows for its soft keys reports the canvas without them and still paints all of it
+            jvm.put_static_field("javax/microedition/lcdui/Display", "softkeyBand", "I", 16).await?;
+            let reported: i32 = jvm
+                .invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", "getHeight", "()I", ())
+                .await?;
+            assert_eq!(reported, height - 16);
+            let _: () = jvm
+                .invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", "repaint", "()V", ())
+                .await?;
+            let _: () = jvm
+                .invoke_virtual(&canvas, "javax/microedition/lcdui/Canvas", "serviceRepaints", "()V", ())
+                .await?;
+            let painted_clip: ClassInstanceRef<Array<i32>> = jvm
+                .get_field(&canvas, "javax/microedition/lcdui/TestVisibilityCanvas", "clip", "[I")
+                .await?;
+            assert_eq!(jvm.load_array::<i32>(&painted_clip, 0, 4).await?, whole);
+
             Ok(())
         })
     }
