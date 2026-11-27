@@ -311,6 +311,33 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **A KTF native method answers in its thread context** (2026-11-28): 던파격투가편
+  and 던전앤파이터 격투가 (KTF, one game in two builds) stayed on a white screen.
+  Two things kept them there. Their native method bodies do not return their
+  value in r0: they store it in the JVM thread context (the record the
+  `ptr_current_jvm_thread_context` init parameter points at) — the value at
+  `+0x28` and a type tag (2 for an `int`) at `+0x24` — and leave r0 to whatever
+  it last held. The native-call container was filled from r0, so the delay
+  their game loop asks its native side for came back as 11036 ms. The context
+  record ended at `+0x24`, too, so the stores landed past the allocation. The
+  record now has those words; the tag is cleared before a native body runs and
+  the context's value goes into the container when the body set it, r0 and r1
+  otherwise. Of the 321 KTF titles' images only these two have the idiom.
+- **What a native method draws into the screen framebuffer shows on the Java
+  display** (2026-11-28): the same two titles are Jlets whose Java `paint`
+  clears the Graphics and then calls a native method that draws the whole frame
+  with `MC_grp*` into the framebuffer of `MC_grpGetScreenFrameBuffer`, without
+  `MC_grpFlushLcd`. On the handset that framebuffer and the Java screen are one
+  LCD; here the display presents an image of its own, and the C framebuffer
+  was only ever presented for a Clet. When a native method body returns having
+  drawn into the screen framebuffer (the note `MC_grpRepaint` reads), and the
+  display is one that presents (not a Clet's), the framebuffer is now drawn
+  onto the display's image, which the paint in progress then presents. The
+  whole framebuffer goes over the image: what Java drew earlier in the same
+  paint is not kept under a partial C drawing (no other title's frames changed
+  in the sweep). Both titles now show their logos, intro, title and save slots;
+  KTF 308 to 310 of 321, every other KTF title's kept frames byte-identical,
+  LGT 79 unchanged in status, no measurable CPU change on five C titles.
 - **An opaque card hides the cards under it** (2026-11-28): `CardCanvas` asked
   every card on the stack to paint, bottom to top. The specification draws the
   cards under a card first only for a transparent one (`Card.bTrans`), so a card

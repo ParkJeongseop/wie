@@ -7,12 +7,12 @@ pub use framebuffer::FrameBuffer;
 pub use grp_context::GraphicsContextLayout;
 pub use image::{Rgb565Image, decode_image_framebuffer};
 
-use alloc::{vec, vec::Vec};
+use alloc::{boxed::Box, vec, vec::Vec};
 use core::mem::size_of;
 
 use wie_backend::{
     Event,
-    canvas::{Clip, Color, PixelType, Rgb565Pixel, encode_bmp_region, string_width},
+    canvas::{Clip, Color, Image, PixelType, Rgb565Pixel, encode_bmp_region, string_width},
 };
 use wie_util::{Result, read_generic, write_generic};
 
@@ -914,6 +914,26 @@ pub async fn draw_string(
     write_operated_pixels(context, &framebuffer, pixels).await
 }
 
+/// Whether the C side drew into the screen framebuffer since `take_screen_drawing`.
+pub fn screen_drawn(context: &dyn WIPICContext) -> Result<bool> {
+    let dirty: u32 = read_generic(context, SCREEN_FRAMEBUFFER_DIRTY_PTR)?;
+
+    Ok(dirty != 0)
+}
+
+/// The screen framebuffer, when the C side drew into it since it was last taken.
+pub fn take_screen_drawing(context: &mut dyn WIPICContext) -> Result<Option<Box<dyn Image>>> {
+    let screen: u32 = read_generic(context, SCREEN_FRAMEBUFFER_PTR)?;
+    if screen == 0 || !screen_drawn(context)? {
+        return Ok(None);
+    }
+    write_generic(context, SCREEN_FRAMEBUFFER_DIRTY_PTR, 0u32)?;
+
+    let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(WIPICIndirectPtr(screen))?)?);
+
+    Ok(Some(framebuffer.image(context)?))
+}
+
 /// `MC_grpRepaint` asks the handset to put the LCD's framebuffer on the LCD and to run the
 /// title's paint. The Clet runtimes (KTF and LGT) disable the MIDP display's own flush, so what
 /// reaches the screen is only what the C side presents: a title that draws with `MC_grp*` into
@@ -924,16 +944,8 @@ pub async fn draw_string(
 pub async fn repaint(context: &mut dyn WIPICContext, lcd: i32, x: i32, y: i32, width: i32, height: i32) -> Result<()> {
     tracing::debug!("MC_grpRepaint({lcd}, {x}, {y}, {width}, {height})");
 
-    let dirty: u32 = read_generic(context, SCREEN_FRAMEBUFFER_DIRTY_PTR)?;
-    tracing::debug!("MC_grpRepaint: screen framebuffer dirty={dirty}");
-    if dirty != 0 {
-        write_generic(context, SCREEN_FRAMEBUFFER_DIRTY_PTR, 0u32)?;
-        let screen: u32 = read_generic(context, SCREEN_FRAMEBUFFER_PTR)?;
-        if screen != 0 {
-            let framebuffer = FrameBuffer(read_generic(context, context.data_ptr(WIPICIndirectPtr(screen))?)?);
-            let frame = framebuffer.image(context)?;
-            context.system().platform().screen().paint(&*frame);
-        }
+    if let Some(frame) = take_screen_drawing(context)? {
+        context.system().platform().screen().paint(&*frame);
     }
 
     let platform = context.system().platform();

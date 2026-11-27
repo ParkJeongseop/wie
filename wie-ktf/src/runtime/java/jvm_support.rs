@@ -49,6 +49,9 @@ pub type KtfJvmWord = u32;
 pub struct KtfJvmThreadContext {
     unk: [u32; 8],
     current_java_exception_handler: u32,
+    /// Nonzero once a native method body has stored its answer in `native_result`.
+    native_result_type: u32,
+    native_result: [u32; 2],
 }
 
 #[repr(C)]
@@ -84,7 +87,7 @@ impl KtfJvmSupport {
         let protos = [wie_wipi_java::get_protos().into(), wie_midp::get_protos().into()];
         let jvm_implementation = KtfJvmImplementation::new(core);
         let jvm = JvmSupport::new_jvm(system, jar_name, Box::new(protos), &[], jvm_implementation.clone()).await?;
-        register_java_interface_svc_handler(core, &jvm)?;
+        register_java_interface_svc_handler(core, system, &jvm)?;
 
         let system_class_loader: Box<dyn ClassInstance> = jvm
             .invoke_static("java/lang/ClassLoader", "getSystemClassLoader", "()Ljava/lang/ClassLoader;", [])
@@ -236,6 +239,24 @@ impl KtfJvmSupport {
         let thread_context: KtfJvmThreadContext = read_generic(core, ptr_thread_context)?;
 
         Ok(thread_context.current_java_exception_handler)
+    }
+
+    pub fn clear_native_result(core: &mut ArmCore) -> Result<()> {
+        let ptr_thread_context = Self::current_thread_context(core)?;
+
+        write_generic(
+            core,
+            ptr_thread_context + offset_of!(KtfJvmThreadContext, native_result_type) as u32,
+            0u32,
+        )
+    }
+
+    /// The answer a native method body stored in the thread context, if it stored one.
+    pub fn native_result(core: &ArmCore) -> Result<Option<[u32; 2]>> {
+        let ptr_thread_context = Self::current_thread_context(core)?;
+        let thread_context: KtfJvmThreadContext = read_generic(core, ptr_thread_context)?;
+
+        Ok((thread_context.native_result_type != 0).then_some(thread_context.native_result))
     }
 
     pub fn set_current_thread_context(core: &mut ArmCore, ptr_thread_context: u32) -> Result<()> {
@@ -1105,6 +1126,18 @@ mod test {
             ] {
                 let result: u32 = core.run_function(entry, &args).await?;
                 assert_eq!(result, caller.r4);
+            }
+
+            // A native body answers in its thread context, or else in r0.
+            let ptr_answer = thread_context + offset_of!(KtfJvmThreadContext, native_result_type) as u32;
+            // ldr r2, =ptr_answer; movs r3, #2; str r3, [r2]; movs r3, #7; str r3, [r2, #4]; movs r0, #0x99; bx lr
+            write_generic(&mut core, 0x10700, [0x4a03u16, 0x2302, 0x6013, 0x2307, 0x6053, 0x2099, 0x4770, 0x46c0])?;
+            write_generic(&mut core, 0x10710, ptr_answer)?;
+            write_generic(&mut core, 0x10720, [0x2033u16, 0x4770])?; // movs r0, #0x33; bx lr
+            for (body, expected) in [(0x10701, 7), (0x10721, 0x33)] {
+                let _: u32 = core.run_function(interface.fn_call_native, &[body, 0x10500]).await?;
+                let answer: u32 = read_generic(&core, 0x10500)?;
+                assert_eq!(answer, expected);
             }
 
             done_clone.store(true, Ordering::Relaxed);

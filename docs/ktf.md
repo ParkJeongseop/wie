@@ -65,6 +65,12 @@ AOT-compiled methods live in the ARM binary. When one method calls another:
 3. The target method runs as ARM code and returns its result
 
 For JNI native methods, a separate native-call trampoline is used instead, passing arguments through a data pointer.
+A native method body answers either in r0 (r1 for the high word of a `long`), or by storing the value in the current JVM thread context
+(the value at `+0x28`, a nonzero type tag at `+0x24`) and leaving r0 unset. The trampoline clears the tag before the call and prefers the
+context's value when the body set it.
+
+A Jlet's native methods may draw into the C screen framebuffer during a Java paint. That framebuffer and the Java display's image are
+separate surfaces here, so the framebuffer is drawn onto the display's image when such a body returns.
 
 ## Exception Handling
 

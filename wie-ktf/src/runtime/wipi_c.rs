@@ -14,7 +14,7 @@ pub mod interface;
 mod method_table;
 mod user_memory;
 
-use context::KtfWIPICContext;
+pub use context::KtfWIPICContext;
 
 struct WIPICMethodResult {
     result: WIPICResult,

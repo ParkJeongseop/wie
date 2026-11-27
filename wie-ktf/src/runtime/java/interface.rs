@@ -7,24 +7,30 @@ use alloc::{
 };
 use core::mem::{offset_of, size_of};
 
-use jvm::{ClassInstance, Jvm, runtime::JavaLangString};
+use jvm::{ClassInstance, ClassInstanceRef, Jvm, Result as JvmResult, runtime::JavaLangString};
 use wipi_types::ktf::{InitParam2, java::WIPIJBInterface};
 
+use wie_backend::{
+    System,
+    canvas::{Canvas, Clip},
+};
 use wie_core_arm::{Allocator, ArmCore, ArmCoreContext, EmulatedFunction, ResultWriter, SvcId};
 use wie_jvm_support::JvmSupport;
+use wie_midp::classes::javax::microedition::{lcdui::Image, midlet::MIDlet};
 use wie_util::{ByteRead, Result, WieError, read_generic, read_null_terminated_string_bytes, write_generic};
+use wie_wipi_c::api::graphics;
 
 use crate::runtime::java::jvm_support::{
     JavaClassDefinition, JavaClassInstance, JavaMethod, JavaMethodResult, JavaVtable, KtfJvmSupport, KtfJvmSupportContext, KtfJvmWord,
     SUPPORT_CONTEXT_BASE,
 };
-use crate::runtime::{SVC_CATEGORY_JAVA_INTERFACE, svc_ids::JavaSvcId};
+use crate::runtime::{SVC_CATEGORY_JAVA_INTERFACE, svc_ids::JavaSvcId, wipi_c::KtfWIPICContext};
 
-pub fn register_java_interface_svc_handler(core: &mut ArmCore, jvm: &Jvm) -> Result<()> {
-    core.register_svc_handler(SVC_CATEGORY_JAVA_INTERFACE, handle_java_interface_svc, jvm)
+pub fn register_java_interface_svc_handler(core: &mut ArmCore, system: &System, jvm: &Jvm) -> Result<()> {
+    core.register_svc_handler(SVC_CATEGORY_JAVA_INTERFACE, handle_java_interface_svc, &(system.clone(), jvm.clone()))
 }
 
-async fn handle_java_interface_svc(core: &mut ArmCore, jvm: &mut Jvm, id: SvcId) -> Result<JavaMethodResult> {
+async fn handle_java_interface_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm), id: SvcId) -> Result<JavaMethodResult> {
     let (_, lr) = core.read_pc_lr()?;
     tracing::trace!("Java interface {} from {lr:#x}", id.0);
 
@@ -40,7 +46,7 @@ async fn handle_java_interface_svc(core: &mut ArmCore, jvm: &mut Jvm, id: SvcId)
         JavaSvcId::JbUnk8 => EmulatedFunction::call(&monitor_exit, core, jvm).await?.write(core, lr),
         JavaSvcId::RegisterClass => EmulatedFunction::call(&register_class, core, jvm).await?.write(core, lr),
         JavaSvcId::RegisterJavaString => EmulatedFunction::call(&register_java_string, core, jvm).await?.write(core, lr),
-        JavaSvcId::CallNative => return EmulatedFunction::call(&call_native, core, &mut ()).await,
+        JavaSvcId::CallNative => return EmulatedFunction::call(&call_native, core, &mut (system.clone(), jvm.clone())).await,
     }?;
 
     Ok(JavaMethodResult::new(vec![], None))
@@ -321,7 +327,7 @@ async fn monitor_exit(core: &mut ArmCore, jvm: &mut Jvm, ptr_raw: u32) -> Result
     Ok(0)
 }
 
-async fn call_native(core: &mut ArmCore, _: &mut (), address: u32, ptr_data: u32) -> Result<JavaMethodResult> {
+async fn call_native(core: &mut ArmCore, (system, jvm): &mut (System, Jvm), address: u32, ptr_data: u32) -> Result<JavaMethodResult> {
     tracing::trace!("java_jump_native({address:#x}, {ptr_data:#x})");
 
     if address == 0 {
@@ -330,6 +336,7 @@ async fn call_native(core: &mut ArmCore, _: &mut (), address: u32, ptr_data: u32
 
     // TODO correctly figure out parameter
     let caller = core.save_context();
+    KtfJvmSupport::clear_native_result(core)?;
     let result = match core.run_function::<u64>(address, &[ptr_data, ptr_data]).await {
         Ok(result) => result,
         Err(WieError::JavaExceptionUnwind {
@@ -339,13 +346,73 @@ async fn call_native(core: &mut ArmCore, _: &mut (), address: u32, ptr_data: u32
         }) => return map_exception_unwind(core, &caller, context_base, target, next_pc),
         Err(err) => return Err(err),
     };
+    show_native_drawing(core, system, jvm).await?;
 
-    // Both words of the answer go into the container: the second is what the body left in r1, which
-    // is the high word of a `long` and otherwise whatever the callee was holding, as after a `bl`.
-    write_generic(core, ptr_data, result as u32)?;
-    write_generic(core, ptr_data + 4, (result >> 32) as u32)?;
+    // A body answers either by storing the value in its thread context, leaving r0 to whatever it
+    // was last holding, or as after a `bl`: r0, and r1 for the high word of a `long`. Both words go
+    // into the container either way.
+    let result = match KtfJvmSupport::native_result(core)? {
+        Some(result) => result,
+        None => [result as u32, (result >> 32) as u32],
+    };
+    write_generic(core, ptr_data, result)?;
 
     Ok(JavaMethodResult::new(vec![ptr_data], None))
+}
+
+/// The handset has one LCD: what a native body draws into the screen framebuffer during a Java
+/// paint is on the screen the Java display then shows. Here the two are separate surfaces, so the
+/// C drawing is put onto the display's image as the body returns. A Clet presents the framebuffer
+/// itself, and its display shows nothing.
+async fn show_native_drawing(core: &ArmCore, system: &System, jvm: &Jvm) -> Result<()> {
+    let mut context = KtfWIPICContext::new(core.clone(), system.clone(), jvm.clone());
+    if !graphics::screen_drawn(&context)? {
+        return Ok(());
+    }
+
+    let result: JvmResult<Option<Box<dyn Canvas>>> = async {
+        let midlet: ClassInstanceRef<MIDlet> = jvm
+            .get_static_field("javax/microedition/midlet/MIDlet", "currentMIDlet", "Ljavax/microedition/midlet/MIDlet;")
+            .await?;
+        if midlet.is_null() {
+            return Ok(None);
+        }
+        let display = MIDlet::display(jvm, &midlet).await?;
+        if display.is_null() {
+            return Ok(None);
+        }
+        let [paint_disabled, screen_image] = jvm
+            .get_fields(
+                &display,
+                "javax/microedition/lcdui/Display",
+                [("paintDisabled", "Z"), ("screenImage", "Ljavax/microedition/lcdui/Image;")],
+            )
+            .await?;
+        if bool::from(paint_disabled) {
+            return Ok(None);
+        }
+
+        Ok(Some(Image::canvas(jvm, &screen_image.into()).await?))
+    }
+    .await;
+    let canvas = match result {
+        Ok(canvas) => canvas,
+        Err(error) => return Err(JvmSupport::to_wie_err(jvm, error).await),
+    };
+
+    if let Some(mut canvas) = canvas
+        && let Some(frame) = graphics::take_screen_drawing(&mut context)?
+    {
+        let clip = Clip {
+            x: 0,
+            y: 0,
+            width: frame.width(),
+            height: frame.height(),
+        };
+        canvas.draw(0, 0, frame.width(), frame.height(), &*frame, 0, 0, clip);
+    }
+
+    Ok(())
 }
 
 async fn java_jump_2(core: &mut ArmCore, _: &mut (), arg1: u32, arg2: u32, address: u32) -> Result<JavaMethodResult> {
