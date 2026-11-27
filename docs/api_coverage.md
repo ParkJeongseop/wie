@@ -392,6 +392,24 @@ runs them on `wie_midp` + `wie_mmpp`.
   transparent and covers the clip. The title reaches its menu; KTF 321 and
   LGT 79 show no status worsening (the extra per-card queries shift a few KTF
   titles by a frame).
+- **Not done: an annunciator does not take rows from `Display.getHeight`**
+  (2026-11-28): 232 of the 321 KTF titles (and 17 of the 79 LGT ones) open
+  with `new AnnunciatorComponent(false).show()`, and some carry 240x296 or
+  176x202 art, so giving an opaque strip 24 (18) rows of the screen was tried
+  three ways (height only; the paint clipped above the strip; cards covering
+  up to the strip and the strip's rows cleared) and measured on both
+  libraries. It is not an improvement: 180 KTF titles change, nearly all by
+  losing their last 24 rows to a black band or by sitting at the top instead
+  of centred, and none read as better. About 65 titles create their card
+  before showing the strip and lay out for 320 rows, and titles that show it
+  first still draw to row 319 (방탈출's copyright line, 게임빌프로야구2006's
+  soft-key bar); 2007루노베이스볼 centres a 296-row card on the 320-row screen
+  itself and 삼국장군전 resizes its card to 300 rows, so the titles expect a
+  display that reports the whole screen. The one gain was 부루마불2007, which
+  indexes a 32-entry table by height / 10 and throws six swallowed
+  `ArrayIndexOutOfBoundsException`s at 320 without a visible fault.
+  `AnnunciatorComponent` stays a stub; a handset whose strip takes rows would
+  be a per-title setting, not the default.
 - **The default time zone is Korea's** (2026-11-28): `TimeZone` knew only GMT
   and UTC, answered GMT for any other ID, and defaulted to GMT. 두뇌게임q (KTF)
   looks its zone up by ID, did not find one it knows, and passed `null` to
