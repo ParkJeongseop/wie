@@ -62,6 +62,27 @@ impl JavaClassInstance {
         Ok(raw.ptr_fields + offset + 4)
     }
 
+    /// The value of the field at `address`, of the type its descriptor starts with.
+    fn read_field(&self, address: u32, descriptor: u8) -> Result<JavaValue> {
+        let codec = JavaValueCodec::new(&self.core);
+        let value: KtfJvmWord = read_generic(&self.core, address)?;
+
+        // Reference conversion needs the stored object, not its declared class name.
+        if matches!(descriptor, b'L' | b'[') {
+            return Ok(JavaValue::Object((value != 0).then(|| codec.object_from_raw(value))));
+        }
+        let descriptor = [descriptor];
+        let field_type = JavaType::parse(core::str::from_utf8(&descriptor).unwrap());
+
+        Ok(if matches!(field_type, JavaType::Long | JavaType::Double) {
+            let value_high: KtfJvmWord = read_generic(&self.core, address + 4)?;
+
+            codec.decode_wide(value, value_high, &field_type)
+        } else {
+            codec.decode_word(value, &field_type)
+        })
+    }
+
     pub(super) fn instantiate(core: &mut ArmCore, class: &JavaClassDefinition, field_size: usize) -> Result<Self> {
         let ptr_raw = Allocator::alloc(core, size_of::<RawJavaClassInstance>() as _)?;
         let ptr_fields = Allocator::alloc(core, (field_size + 4) as _)?;
@@ -128,27 +149,31 @@ impl ClassInstance for JavaClassInstance {
         let raw: RawJavaField = read_generic(&self.core, field.ptr_raw).unwrap();
         assert!(!FieldAccessFlags::from_bits_truncate(raw.access_flags as _).contains(FieldAccessFlags::STATIC));
         let address = self.field_address(raw.offset_or_value).unwrap();
-        let codec = JavaValueCodec::new(&self.core);
         let descriptor: u8 = read_generic(&self.core, raw.ptr_name + 1).unwrap();
 
-        // Reference conversion needs the stored object, not its declared class name.
-        if matches!(descriptor, b'L' | b'[') {
-            let value: KtfJvmWord = read_generic(&self.core, address).unwrap();
-            return Ok(JavaValue::Object((value != 0).then(|| codec.object_from_raw(value))));
-        }
-        let descriptor = [descriptor];
-        let field_type = JavaType::parse(core::str::from_utf8(&descriptor).unwrap());
+        Ok(self.read_field(address, descriptor).unwrap())
+    }
 
-        if matches!(field_type, JavaType::Long | JavaType::Double) {
-            let value: KtfJvmWord = read_generic(&self.core, address).unwrap();
-            let value_high: KtfJvmWord = read_generic(&self.core, address + 4).unwrap();
+    fn get_fields(&self, class: &dyn ClassDefinition, names: &[(&str, &str)]) -> JvmResult<Vec<Option<JavaValue>>> {
+        let mut values: Vec<Option<JavaValue>> = names.iter().map(|_| None).collect();
+        let Some(class) = class.as_any().downcast_ref::<JavaClassDefinition>() else {
+            return Ok(values);
+        };
+        let ptr_fields = self.read_raw().unwrap().ptr_fields;
+        // One pass over the field table, and of a field found only its value is read: the descriptor
+        // it was asked for by is the one it has.
+        class
+            .visit_instance_fields(names, |index, field| {
+                let is_open = values[index].is_none();
+                if is_open {
+                    let descriptor = names[index].1.as_bytes()[0];
+                    values[index] = Some(self.read_field(ptr_fields + field.offset_or_value + 4, descriptor)?);
+                }
+                Ok(is_open)
+            })
+            .unwrap();
 
-            Ok(codec.decode_wide(value, value_high, &field_type))
-        } else {
-            let value: KtfJvmWord = read_generic(&self.core, address).unwrap();
-
-            Ok(codec.decode_word(value, &field_type))
-        }
+        Ok(values)
     }
 
     fn put_field(&mut self, field: &dyn Field, value: JavaValue) -> JvmResult<()> {

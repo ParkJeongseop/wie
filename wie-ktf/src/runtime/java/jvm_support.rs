@@ -586,6 +586,23 @@ mod test {
                 .await
                 .unwrap();
             assert!(paint_disabled);
+            // several fields are read in one pass over the class: out of table order, one of them a reference
+            let [paint_disabled, screen_image, width] = jvm
+                .get_fields(
+                    &display,
+                    "javax/microedition/lcdui/Display",
+                    [
+                        ("paintDisabled", "Z"),
+                        ("screenImage", "Ljavax/microedition/lcdui/Image;"),
+                        ("width", "I"),
+                    ],
+                )
+                .await
+                .unwrap();
+            let expected_width: i32 = jvm.get_field(&display, "javax/microedition/lcdui/Display", "width", "I").await.unwrap();
+            assert!(bool::from(paint_disabled));
+            assert_eq!(i32::from(width), expected_width);
+            assert!(Option::<Box<dyn ClassInstance>>::from(screen_image).is_some());
 
             let class = jvm.resolve_class("javax/microedition/lcdui/Display").await.unwrap();
             let class = class.definition.as_any().downcast_ref::<JavaClassDefinition>().unwrap();

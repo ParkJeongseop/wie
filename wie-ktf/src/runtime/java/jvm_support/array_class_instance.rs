@@ -7,7 +7,7 @@ use core::{
 use jvm::{ArrayClassInstance, ArrayRawBuffer, ArrayRawBufferMut, ClassDefinition, ClassInstance, Field, JavaType, JavaValue, Result as JvmResult};
 
 use wie_core_arm::ArmCore;
-use wie_jvm_support::native::{decode_array_values, encode_array_values};
+use wie_jvm_support::native::{array_element_size, decode_array_values, encode_array_values};
 use wie_util::{ByteRead, ByteWrite, read_generic, write_generic};
 
 use super::{Result, array_class_definition::JavaArrayClassDefinition, class_instance::JavaClassInstance, value::JavaValueCodec};
@@ -127,8 +127,8 @@ impl ClassInstance for JavaArrayClassInstance {
 
 impl ArrayClassInstance for JavaArrayClassInstance {
     fn store(&mut self, offset: usize, values: Box<[JavaValue]>) -> JvmResult<()> {
-        let element_size = self.element_size().unwrap();
         let element_type = self.element_type().unwrap();
+        let element_size = array_element_size(&element_type);
         let raw_values = encode_array_values(&JavaValueCodec::new(&self.core), &element_type, &values);
 
         let offset = offset * element_size;
@@ -138,13 +138,12 @@ impl ArrayClassInstance for JavaArrayClassInstance {
     }
 
     fn load(&self, offset: usize, count: usize) -> JvmResult<Vec<JavaValue>> {
-        let element_size = self.element_size().unwrap();
+        let element_type = self.element_type().unwrap();
+        let element_size = array_element_size(&element_type);
         let offset = offset * element_size;
 
         let mut values_raw = vec![0; count * element_size];
         self.load_raw(offset as _, &mut values_raw).unwrap();
-
-        let element_type = self.element_type().unwrap();
 
         Ok(decode_array_values(&JavaValueCodec::new(&self.core), &element_type, &values_raw))
     }

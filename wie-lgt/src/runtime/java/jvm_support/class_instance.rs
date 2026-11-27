@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec};
+use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
 use core::{
     fmt::{self, Debug, Formatter},
     hash::{Hash, Hasher},
@@ -74,6 +74,39 @@ impl JavaClassInstance {
         }
 
         Ok(raw.unk1)
+    }
+
+    /// The value of the field at `address`, of the type its descriptor starts with. `describe` names the
+    /// field where what it holds has to be reported.
+    fn read_field(&self, word_index: u32, address: u32, descriptor: u8, describe: impl Fn() -> String) -> Result<JavaValue> {
+        let low = read_generic(&self.core, address)?;
+        let codec = JavaValueCodec::new(&self.core);
+
+        if matches!(descriptor, b'L' | b'[') {
+            // Guest code owns these words and the reference layout is inferred (field tables or the
+            // compiler's reference bitmap), so a word the collector is told is a reference can hold
+            // something else. Decoding it would panic in the middle of a collection; report it and
+            // treat it as null instead.
+            if low != 0 && !Self::is_live_instance(&self.core, low) {
+                let holder = self.class().map(|class| ClassDefinition::name(&class).into_owned()).unwrap_or_default();
+                tracing::error!(
+                    "{holder} {:#x} field {} (word {word_index}) holds {low:#x}, which is not a live object; reading it as null",
+                    self.ptr_raw,
+                    describe()
+                );
+                return Ok(JavaValue::Object(None));
+            }
+            return Ok(JavaValue::Object((low != 0).then(|| codec.object_from_raw(low))));
+        }
+        let descriptor = [descriptor];
+        let field_type = JavaType::parse(core::str::from_utf8(&descriptor).unwrap());
+
+        Ok(if matches!(field_type, JavaType::Long | JavaType::Double) {
+            let high = read_generic(&self.core, address + 4)?;
+            codec.decode_wide(low, high, &field_type)
+        } else {
+            codec.decode_word(low, &field_type)
+        })
     }
 
     fn java_field_address(&self, field: &RawJavaField) -> Result<u32> {
@@ -215,35 +248,33 @@ impl ClassInstance for JavaClassInstance {
             let word_index = field.as_any().downcast_ref::<JavaReferenceField>().unwrap().word_index;
             (word_index, self.field_address(word_index).unwrap(), b'L')
         };
-        let low = read_generic(&self.core, address).unwrap();
-        let codec = JavaValueCodec::new(&self.core);
 
-        if matches!(descriptor, b'L' | b'[') {
-            // Guest code owns these words and the reference layout is inferred (field tables or the
-            // compiler's reference bitmap), so a word the collector is told is a reference can hold
-            // something else. Decoding it would panic in the middle of a collection; report it and
-            // treat it as null instead.
-            if low != 0 && !Self::is_live_instance(&self.core, low) {
-                let holder = self.class().map(|class| ClassDefinition::name(&class).into_owned()).unwrap_or_default();
-                tracing::error!(
-                    "{holder} {:#x} field {}{} (word {word_index}) holds {low:#x}, which is not a live object; reading it as null",
-                    self.ptr_raw,
-                    field.name(),
-                    field.descriptor()
-                );
-                return Ok(JavaValue::Object(None));
-            }
-            return Ok(JavaValue::Object((low != 0).then(|| codec.object_from_raw(low))));
-        }
-        let descriptor = [descriptor];
-        let field_type = JavaType::parse(core::str::from_utf8(&descriptor).unwrap());
+        Ok(self
+            .read_field(word_index, address, descriptor, || format!("{}{}", field.name(), field.descriptor()))
+            .unwrap())
+    }
 
-        Ok(if matches!(field_type, JavaType::Long | JavaType::Double) {
-            let high = read_generic(&self.core, address + 4).unwrap();
-            codec.decode_wide(low, high, &field_type)
-        } else {
-            codec.decode_word(low, &field_type)
-        })
+    fn get_fields(&self, class: &dyn ClassDefinition, names: &[(&str, &str)]) -> JvmResult<Vec<Option<JavaValue>>> {
+        let mut values: Vec<Option<JavaValue>> = names.iter().map(|_| None).collect();
+        let Some(class) = class.as_any().downcast_ref::<JavaClassDefinition>() else {
+            return Ok(values);
+        };
+        // One pass over the field table, and of a field found only its value is read: the descriptor
+        // it was asked for by is the one it has.
+        class
+            .visit_instance_fields(names, |index, field| {
+                let is_open = values[index].is_none();
+                if is_open {
+                    let (name, descriptor) = names[index];
+                    let address = self.java_field_address(field)?;
+                    let value = self.read_field(field.word_index, address, descriptor.as_bytes()[0], || format!("{name}{descriptor}"))?;
+                    values[index] = Some(value);
+                }
+                Ok(is_open)
+            })
+            .unwrap();
+
+        Ok(values)
     }
 
     fn put_field(&mut self, field: &dyn Field, value: JavaValue) -> JvmResult<()> {

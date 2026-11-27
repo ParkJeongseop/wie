@@ -350,14 +350,17 @@ impl ArmRegister {
 const TOTAL_MEMORY: u64 = 0x100000000;
 const PAGE_SIZE: usize = 0x10000;
 const PAGE_MASK: u32 = (PAGE_SIZE - 1) as _;
-const SMALL_COPY_SIZE: usize = 32;
+const SMALL_COPY_SIZE: usize = 64;
 
 /// Copies at most `SMALL_COPY_SIZE` bytes between slices of one length as two fixed-size moves that may
 /// overlap, which are loads and stores where a copy of unknown length is a call.
 #[inline(always)]
 fn copy_small(source: &[u8], destination: &mut [u8]) {
     let size = source.len();
-    if let (Some(head), Some(tail)) = (source.first_chunk::<16>(), source.last_chunk::<16>()) {
+    if let (Some(head), Some(tail)) = (source.first_chunk::<32>(), source.last_chunk::<32>()) {
+        destination[..32].copy_from_slice(head);
+        destination[size - 32..].copy_from_slice(tail);
+    } else if let (Some(head), Some(tail)) = (source.first_chunk::<16>(), source.last_chunk::<16>()) {
         destination[..16].copy_from_slice(head);
         destination[size - 16..].copy_from_slice(tail);
     } else if let (Some(head), Some(tail)) = (source.first_chunk::<8>(), source.last_chunk::<8>()) {
@@ -1120,6 +1123,21 @@ mod tests {
 
         memory.read_range(0x10900, 0x1000, &mut buf).unwrap();
         assert_eq!(buf, [100; 0x1000]);
+
+        // every short length is copied whole and nothing beside it is touched
+        let pattern: [u8; 72] = core::array::from_fn(|index| index as u8 + 1);
+        for size in 0..=pattern.len() {
+            memory.write_range(0x20000, &[0xee; 80]).unwrap();
+            memory.write_range(0x20004, &pattern[..size]).unwrap();
+            let mut around = [0; 80];
+            memory.read_range(0x20000, around.len(), &mut around).unwrap();
+            assert_eq!(around[4..4 + size], pattern[..size], "{size}");
+            assert!(around[..4].iter().chain(&around[4 + size..]).all(|&byte| byte == 0xee), "{size}");
+            let mut read = [0xdd; 80];
+            memory.read_range(0x20004, size, &mut read).unwrap();
+            assert_eq!(read[..size], pattern[..size], "{size}");
+            assert!(read[size..].iter().all(|&byte| byte == 0xdd), "{size}");
+        }
 
         let mut arm32cpu_memory = memory.as_arm32cpu_memory();
 

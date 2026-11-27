@@ -275,26 +275,26 @@ impl JavaClassDefinition {
         Ok(ptr_field.map(|ptr_field| JavaField::from_raw(ptr_field, &self.core)))
     }
 
-    /// The fields `names` gives as (name, descriptor), in that order, found in one pass over the field table.
-    pub fn find_fields(&self, names: &[(&str, &str)], is_static: bool) -> Result<Vec<Option<JavaField>>> {
-        let mut fields: Vec<Option<JavaField>> = names.iter().map(|_| None).collect();
+    /// Passes over the field table once for the instance fields `names` gives as (name, descriptor). `take` is
+    /// handed the place in `names` of each one met and its record, and tells whether that place was still
+    /// open; the pass ends when every place is taken.
+    pub fn visit_instance_fields(&self, names: &[(&str, &str)], mut take: impl FnMut(usize, &RawJavaField) -> Result<bool>) -> Result<()> {
         let Some(ptr_fields) = self.ptr_fields()? else {
-            return Ok(fields);
+            return Ok(());
         };
-        let mut missing = fields.len();
+        let mut missing = names.len();
         self.find_member(ptr_fields, |ptr_field| {
             let raw: RawJavaField = read_generic(&self.core, ptr_field)?;
-            if FieldAccessFlags::from_bits_truncate(raw.access_flags as _).contains(FieldAccessFlags::STATIC) == is_static
+            if !FieldAccessFlags::from_bits_truncate(raw.access_flags as _).contains(FieldAccessFlags::STATIC)
                 && let Some(index) = JavaFullName::position(&self.core, raw.ptr_name, names)?
-                && fields[index].is_none()
+                && take(index, &raw)?
             {
-                fields[index] = Some(JavaField::from_raw(ptr_field, &self.core));
                 missing -= 1;
             }
             Ok(missing == 0)
         })?;
 
-        Ok(fields)
+        Ok(())
     }
 
     /// The field table, which an array class has an element type in place of.
@@ -355,6 +355,11 @@ impl ClassDefinition for JavaClassDefinition {
         self.name().unwrap().into()
     }
 
+    fn is_same(&self, other: &dyn ClassDefinition) -> bool {
+        // One class record is one class; only records apart are told by the names they carry.
+        other.as_any().downcast_ref::<Self>().is_some_and(|other| other.ptr_raw == self.ptr_raw) || self.name().unwrap() == other.name()
+    }
+
     fn super_class_name(&self) -> Option<String> {
         self.parent_class().unwrap().map(|x| x.name().unwrap())
     }
@@ -396,11 +401,6 @@ impl ClassDefinition for JavaClassDefinition {
 
     fn field(&self, name: &str, descriptor: &str, is_static: bool) -> Option<Box<dyn Field>> {
         self.field(name, descriptor, is_static).unwrap().map(|x| Box::new(x) as _)
-    }
-
-    fn find_fields(&self, names: &[(&str, &str)], is_static: bool) -> Vec<Option<Box<dyn Field>>> {
-        let fields = self.find_fields(names, is_static).unwrap();
-        fields.into_iter().map(|field| field.map(|x| Box::new(x) as _)).collect()
     }
 
     fn fields(&self) -> Vec<Box<dyn Field>> {

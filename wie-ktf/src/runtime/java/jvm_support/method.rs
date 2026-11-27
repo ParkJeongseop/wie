@@ -25,7 +25,9 @@ use alloc::sync::Arc;
 use wie_core_arm::{
     Allocator, ArmCore, EmulatedFunction, EmulatedFunctionParam, RUN_FUNCTION_LR, RegisteredFunction, RegisteredFunctionHolder, ResultWriter, SvcId,
 };
-use wie_jvm_support::native::{NativeJavaValueCodec, decode_method_arguments, encode_method_arguments, method_argument_word_count};
+use wie_jvm_support::native::{
+    NativeJavaValueCodec, decode_method_arguments, encode_method_arguments, method_argument_word_count, method_return_type,
+};
 use wie_util::{ByteWrite, Result, WieError, read_generic, write_generic};
 
 use crate::runtime::{SVC_CATEGORY_JAVA, java::JavaSvcFunctions, java::jvm_support::JavaClassDefinition, with_arm_context};
@@ -112,7 +114,7 @@ impl JavaMethod {
 
     pub async fn run(&self, args: Box<[JavaValue]>) -> Result<JavaValue> {
         let raw: RawJavaMethod = read_generic(&self.core, self.ptr_raw)?;
-        let return_type = JavaType::parse(&self.descriptor()).as_method().1.clone();
+        let return_type = method_return_type(JavaFullName::from_ptr(&self.core, raw.ptr_name)?.descriptor());
 
         let mut core = self.core.clone();
 

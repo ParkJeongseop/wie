@@ -42,6 +42,7 @@ impl JavaFullName {
     pub fn matches(core: &ArmCore, ptr: u32, name: &str, descriptor: &str) -> Result<bool> {
         let expected = Self::text_parts(name, descriptor);
         let length = descriptor.len() + name.len() + 2;
+        let last = name.as_bytes().last().copied().unwrap_or(b'+');
         let mut compared = 0;
         let mut buffer = [0; 32];
         while compared != length {
@@ -55,8 +56,9 @@ impl JavaFullName {
             if read != size {
                 return Err(WieError::FatalError(format!("Short read at {cursor:#x}: expected {size}, got {read}")));
             }
-            // A name of another length is told apart by where it ends, before its text is compared.
-            let ends = compared + size != length || buffer[size - 1] == 0;
+            // A name of another length is told apart by where it ends, and most of the same length by their
+            // last letter, before the text is compared.
+            let ends = compared + size != length || (buffer[size - 1] == 0 && (size == 1 || buffer[size - 2] == last));
             if !ends || !Self::text_continues(&buffer[..size], compared, expected) {
                 return Ok(false);
             }
@@ -73,10 +75,13 @@ impl JavaFullName {
             Err(WieError::InvalidMemoryAccess(_)) => 0,
             result => result?,
         };
+        let end = buffer[..read].iter().position(|&byte| byte == 0);
         for (index, (name, descriptor)) in names.iter().enumerate() {
             let length = descriptor.len() + name.len() + 2;
-            // A name of another length is told apart by where it ends, before its text is compared.
-            if length <= read && buffer[length - 1] != 0 {
+            // A name of another length is told apart by where it ends, and most of the same length by their
+            // last letter, before the text is compared.
+            let last = name.as_bytes().last().copied().unwrap_or(b'+');
+            if end.map_or(length <= read, |end| end + 1 != length || buffer[end - 1] != last) {
                 continue;
             }
             let head = &buffer[..read.min(length)];
@@ -184,6 +189,23 @@ mod tests {
             assert!(!JavaFullName::matches(&core, 0x1000, name, descriptor)?);
             assert!(JavaFullName::matches(&core, 0x1000, "updated", "J")?);
         }
+        // Names told apart by their length, their last letter or only their text.
+        core.write_bytes(0x1000, &[0; 64])?;
+        core.write_bytes(0x1000, &JavaFullName::new("clip", "I").as_bytes())?;
+        assert!(!JavaFullName::matches(&core, 0x1000, "clipX", "I")?);
+        assert_eq!(
+            JavaFullName::position(&core, 0x1000, &[("clipX", "I"), ("cli", "I"), ("clip", "I")])?,
+            Some(2)
+        );
+        core.write_bytes(0x1000, &JavaFullName::new("clipX", "I").as_bytes())?;
+        for other in ["clipY", "slipX", "clip"] {
+            assert!(!JavaFullName::matches(&core, 0x1000, other, "I")?);
+        }
+        assert!(!JavaFullName::matches(&core, 0x1000, "clipX", "J")?);
+        assert_eq!(
+            JavaFullName::position(&core, 0x1000, &[("clipY", "I"), ("slipX", "I"), ("clip", "I"), ("clipX", "I")])?,
+            Some(3)
+        );
         let long_name = "member".repeat(12);
         for name in ["x", long_name.as_str()] {
             let bytes = JavaFullName::new(name, "I").as_bytes();

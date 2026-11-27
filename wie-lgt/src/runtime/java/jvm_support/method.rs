@@ -9,7 +9,9 @@ use wipi_types::lgt::java::LgtJavaClassMethod as RawJavaMethod;
 use wie_core_arm::{
     Allocator, ArmCore, EmulatedFunction, EmulatedFunctionParam, RegisteredFunction, RegisteredFunctionHolder, ResultWriter, RunFunctionResult,
 };
-use wie_jvm_support::native::{NativeJavaValueCodec, decode_method_arguments, encode_method_arguments, method_argument_word_count};
+use wie_jvm_support::native::{
+    NativeJavaValueCodec, decode_method_arguments, encode_method_arguments, method_argument_word_count, method_return_type,
+};
 use wie_util::{Result, WieError, read_generic, read_null_terminated_string_bytes, write_generic, write_null_terminated_string_bytes};
 
 use crate::runtime::{SVC_CATEGORY_JAVA, java::JavaSvcFunctions, with_arm_context};
@@ -153,7 +155,7 @@ impl Method for JavaMethod {
     }
 
     async fn run(&self, jvm: &Jvm, args: Box<[JavaValue]>) -> JvmResult<JavaValue> {
-        let return_type = JavaType::parse(&self.descriptor()).as_method().1.clone();
+        let return_type = method_return_type(&self.descriptor());
         let codec = JavaValueCodec::new(&self.core);
         let raw_args = encode_method_arguments(&codec, &args);
         let target = self.target().unwrap();

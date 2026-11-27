@@ -106,6 +106,10 @@ where
             break;
         }
 
+        // A string that outgrows one chunk is rarely longer than two: room for both saves regrowing it.
+        if result.is_empty() {
+            result.reserve(2 * size);
+        }
         result.extend_from_slice(bytes);
         cursor = cursor.wrapping_add(size as u32);
     }

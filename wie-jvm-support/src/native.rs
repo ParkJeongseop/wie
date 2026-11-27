@@ -54,6 +54,12 @@ pub trait NativeJavaValueCodec {
     }
 }
 
+/// What a method with `descriptor` gives back. Its parameters are left unread: a caller that already
+/// holds the arguments as values needs only this.
+pub fn method_return_type(descriptor: &str) -> JavaType {
+    JavaType::parse(&descriptor[descriptor.rfind(')').map_or(0, |end| end + 1)..])
+}
+
 pub fn method_argument_word_count(types: &[JavaType]) -> usize {
     types
         .iter()
