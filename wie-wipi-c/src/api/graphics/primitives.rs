@@ -21,6 +21,18 @@ pub fn read_text(context: &dyn WIPICContext, address: u32, length: i32) -> Resul
     Ok(Some(encoding_rs::EUC_KR.decode(&bytes).0.into_owned()))
 }
 
+/// Whether the `length` bytes at `address` end on the first byte of a two-byte character.
+pub fn ends_inside_character(context: &dyn WIPICContext, address: u32, length: i32) -> Result<bool> {
+    let mut bytes = vec![0; length as usize];
+    context.read_bytes(address, &mut bytes)?;
+
+    let mut end = 0;
+    while end < bytes.len() {
+        end += if (0x81..=0xfe).contains(&bytes[end]) { 2 } else { 1 };
+    }
+    Ok(end > bytes.len())
+}
+
 fn write_canvas<F>(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, operation: F) -> Result<()>
 where
     F: FnOnce(&mut dyn Canvas),

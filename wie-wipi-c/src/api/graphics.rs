@@ -607,6 +607,14 @@ pub async fn get_font_descent(_: &mut dyn WIPICContext, font: i32) -> Result<i32
 pub async fn get_string_width(context: &mut dyn WIPICContext, font: i32, ptr_string: WIPICWord, length: i32) -> Result<i32> {
     tracing::debug!("MC_grpGetStringWidth({font}, {ptr_string:#x}, {length})");
 
+    // A length that stops inside a two-byte character measures that character whole. A title that wraps
+    // a paragraph by measuring one byte more at a time until it no longer fits breaks the line before the
+    // character that way, and through the middle of it when its first byte is taken for anything less.
+    let length = if length > 0 && primitives::ends_inside_character(context, ptr_string, length)? {
+        length + 1
+    } else {
+        length
+    };
     let Some(string) = primitives::read_text(context, ptr_string, length)? else {
         return Ok(0);
     };
@@ -890,6 +898,12 @@ mod tests {
         assert!((0..top).all(|y| (0..32).all(|x| image.get_pixel(x, y).r == 0)));
         assert!((top..=16).any(|y| (0..32).any(|x| image.get_pixel(x, y).r != 0)));
         assert!((bottom..32).all(|y| (0..32).all(|x| image.get_pixel(x, y).r == 0)));
+
+        // Half of the character is as wide as all of it.
+        assert_eq!(
+            get_string_width(&mut context, 0, text, 1).await?,
+            get_string_width(&mut context, 0, text, 2).await?
+        );
         Ok(())
     }
 

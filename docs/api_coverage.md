@@ -1825,6 +1825,13 @@ Aggregating crashes during the 30s input scenario:
   바이오크로니클's dialog title below the header border, 메이플스토리 도적편 (LGT) clear of its icon.
   The shared primitive takes the cell top and nothing else. The baseline test now also requires the
   rows above the cell to stay empty, which the stacked shift fails.
+- `MC_grpGetStringWidth` measures a two-byte character whole when the length stops on its first byte
+  (2026-11-27). 테일즈위버 이스핀편 (LGT) wraps its notice by measuring the paragraph one byte more at
+  a time (`1, 2, 3, …`, with `strlen` as the bound and no look at the bytes themselves) and breaks the
+  line one byte before the first length that does not fit. That only ever lands between characters if
+  the first byte of a character already weighs as much as the character; measured as half a cell, the
+  break fell through the middle of one and the halves drew as unknown glyphs on both lines
+  ("별도의 □" / "□□□ 발생하지"). The decoded text is unchanged for a length that ends on a character.
 
 Keep this document updated in the same change set as the implementation work
 it describes.
