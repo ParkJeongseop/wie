@@ -8,14 +8,15 @@ use core::{
 use jvm::{ClassDefinition, ClassInstance, Field, JavaType, JavaValue, Result as JvmResult};
 use jvm_types::FieldAccessFlags;
 use wipi_types::lgt::java::{
-    LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor as RawJavaClassDescriptor, LgtJavaClassInstance as RawJavaClassInstance,
+    LgtJavaClass as RawJavaClass, LgtJavaClassDescriptor as RawJavaClassDescriptor, LgtJavaClassField as RawJavaField,
+    LgtJavaClassInstance as RawJavaClassInstance,
 };
 
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::native::NativeJavaValueCodec;
 use wie_util::{ByteRead, ByteWrite, Result, read_generic, read_null_terminated_string_bytes, write_generic};
 
-use super::{JavaClassDefinition, JavaField, JavaReferenceField, LgtJvmWord, value::JavaValueCodec};
+use super::{JavaClassDefinition, JavaField, JavaReferenceField, LgtJvmWord, field::EXTENSION_FIELD, value::JavaValueCodec};
 
 #[derive(Clone)]
 pub struct JavaClassInstance {
@@ -75,13 +76,19 @@ impl JavaClassInstance {
         Ok(raw.unk1)
     }
 
-    fn java_field_address(&self, field: &JavaField) -> Result<u32> {
-        let word_index = field.word_index()?;
-        if field.is_extension()? {
-            Ok(self.extension_address(&self.class()?)? + word_index * size_of::<LgtJvmWord>() as u32)
-        } else {
-            self.field_address(word_index)
+    fn java_field_address(&self, field: &RawJavaField) -> Result<u32> {
+        if field.unk2 & EXTENSION_FIELD == 0 {
+            return self.field_address(field.word_index);
         }
+        // The class is only read to size an extension block that is not there yet.
+        let raw: RawJavaClassInstance = read_generic(&self.core, self.ptr_raw)?;
+        let extension = if raw.unk1 != 0 {
+            raw.unk1
+        } else {
+            self.extension_address(&self.class()?)?
+        };
+
+        Ok(extension + field.word_index * size_of::<LgtJvmWord>() as u32)
     }
 
     /// Whether `ptr_instance` points at an allocated object whose header chain is intact
@@ -198,30 +205,38 @@ impl ClassInstance for JavaClassInstance {
 
     fn get_field(&self, field: &dyn Field) -> JvmResult<JavaValue> {
         debug_assert!(!field.access_flags().contains(FieldAccessFlags::STATIC));
-        let field_type = JavaType::parse(&field.descriptor());
-        let (word_index, address) = if let Some(field) = field.as_any().downcast_ref::<JavaField>() {
-            (field.word_index().unwrap(), self.java_field_address(field).unwrap())
+        // The field record is read once, and of the descriptor only its first character: that tells
+        // a reference from a primitive, and a reference is decoded from the stored object.
+        let (word_index, address, descriptor) = if let Some(field) = field.as_any().downcast_ref::<JavaField>() {
+            let raw = field.raw().unwrap();
+            let descriptor: u8 = read_generic(&self.core, raw.ptr_descriptor).unwrap();
+            (raw.word_index, self.java_field_address(&raw).unwrap(), descriptor)
         } else {
             let word_index = field.as_any().downcast_ref::<JavaReferenceField>().unwrap().word_index;
-            (word_index, self.field_address(word_index).unwrap())
+            (word_index, self.field_address(word_index).unwrap(), b'L')
         };
         let low = read_generic(&self.core, address).unwrap();
         let codec = JavaValueCodec::new(&self.core);
 
-        // Guest code owns these words and the reference layout is inferred (field tables or the
-        // compiler's reference bitmap), so a word the collector is told is a reference can hold
-        // something else. Decoding it would panic in the middle of a collection; report it and
-        // treat it as null instead.
-        if matches!(field_type, JavaType::Class(_) | JavaType::Array(_)) && low != 0 && !Self::is_live_instance(&self.core, low) {
-            let holder = self.class().map(|class| ClassDefinition::name(&class).into_owned()).unwrap_or_default();
-            tracing::error!(
-                "{holder} {:#x} field {}{} (word {word_index}) holds {low:#x}, which is not a live object; reading it as null",
-                self.ptr_raw,
-                field.name(),
-                field.descriptor()
-            );
-            return Ok(JavaValue::Object(None));
+        if matches!(descriptor, b'L' | b'[') {
+            // Guest code owns these words and the reference layout is inferred (field tables or the
+            // compiler's reference bitmap), so a word the collector is told is a reference can hold
+            // something else. Decoding it would panic in the middle of a collection; report it and
+            // treat it as null instead.
+            if low != 0 && !Self::is_live_instance(&self.core, low) {
+                let holder = self.class().map(|class| ClassDefinition::name(&class).into_owned()).unwrap_or_default();
+                tracing::error!(
+                    "{holder} {:#x} field {}{} (word {word_index}) holds {low:#x}, which is not a live object; reading it as null",
+                    self.ptr_raw,
+                    field.name(),
+                    field.descriptor()
+                );
+                return Ok(JavaValue::Object(None));
+            }
+            return Ok(JavaValue::Object((low != 0).then(|| codec.object_from_raw(low))));
         }
+        let descriptor = [descriptor];
+        let field_type = JavaType::parse(core::str::from_utf8(&descriptor).unwrap());
 
         Ok(if matches!(field_type, JavaType::Long | JavaType::Double) {
             let high = read_generic(&self.core, address + 4).unwrap();
@@ -234,7 +249,7 @@ impl ClassInstance for JavaClassInstance {
     fn put_field(&mut self, field: &dyn Field, value: JavaValue) -> JvmResult<()> {
         debug_assert!(!field.access_flags().contains(FieldAccessFlags::STATIC));
         let address = if let Some(field) = field.as_any().downcast_ref::<JavaField>() {
-            self.java_field_address(field).unwrap()
+            self.java_field_address(&field.raw().unwrap()).unwrap()
         } else {
             self.field_address(field.as_any().downcast_ref::<JavaReferenceField>().unwrap().word_index)
                 .unwrap()

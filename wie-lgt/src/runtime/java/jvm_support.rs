@@ -929,6 +929,17 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(own1, 0x7654_3210);
+            // several fields are read in one search of the class: out of table order, one of them the parent's
+            let [own1, inherited, own0] = jvm
+                .get_fields(
+                    &field_child_instance,
+                    "net/wie/test/FieldChild",
+                    [("own1", "I"), ("f5", "Ljava/lang/Object;"), ("own0", "I")],
+                )
+                .await
+                .unwrap();
+            assert_eq!((i32::from(own1), i32::from(own0)), (0x7654_3210, 0x1234_5678));
+            assert!(Option::<Box<dyn ClassInstance>>::from(inherited).is_none());
 
             done_clone.store(true, Ordering::Relaxed);
             Ok(())

@@ -371,36 +371,41 @@ impl Image {
     }
 
     pub async fn image(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<Box<dyn BackendImage>> {
-        let width: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "w", "I").await?;
-        let bpl: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "bpl", "I").await?;
-
-        let bytes_per_pixel = Self::bytes_per_pixel(width, bpl);
+        let (raw_buffer, width, height, bytes_per_pixel) = Self::pixel_array(jvm, this).await?;
 
         Ok(match bytes_per_pixel {
-            1 => Box::new(JavaImageBuffer::<Rgb332Pixel>::new(jvm, this).await?) as _,
-            2 => Box::new(JavaImageBuffer::<Rgb565Pixel>::new(jvm, this).await?) as _,
-            4 => Box::new(JavaImageBuffer::<ArgbPixel>::new(jvm, this).await?) as _,
+            1 => Box::new(JavaImageBuffer::<Rgb332Pixel>::new(raw_buffer, width, height)) as _,
+            2 => Box::new(JavaImageBuffer::<Rgb565Pixel>::new(raw_buffer, width, height)) as _,
+            4 => Box::new(JavaImageBuffer::<ArgbPixel>::new(raw_buffer, width, height)) as _,
             _ => unimplemented!("Unsupported pixel format: {bytes_per_pixel}"),
         })
     }
 
     pub async fn canvas(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<Box<dyn Canvas>> {
-        let width: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "w", "I").await?;
-        let bpl: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "bpl", "I").await?;
-
-        let bytes_per_pixel = Self::bytes_per_pixel(width, bpl);
+        let (raw_buffer, width, height, bytes_per_pixel) = Self::pixel_array(jvm, this).await?;
 
         Ok(match bytes_per_pixel {
-            1 => Box::new(ImageBufferCanvas::new(JavaImageBuffer::<Rgb332Pixel>::new(jvm, this).await?)) as _,
-            2 => Box::new(ImageBufferCanvas::new(JavaImageBuffer::<Rgb565Pixel>::new(jvm, this).await?)) as _,
-            4 => Box::new(ImageBufferCanvas::new(JavaImageBuffer::<ArgbPixel>::new(jvm, this).await?)) as _,
+            1 => Box::new(ImageBufferCanvas::new(JavaImageBuffer::<Rgb332Pixel>::new(raw_buffer, width, height))) as _,
+            2 => Box::new(ImageBufferCanvas::new(JavaImageBuffer::<Rgb565Pixel>::new(raw_buffer, width, height))) as _,
+            4 => Box::new(ImageBufferCanvas::new(JavaImageBuffer::<ArgbPixel>::new(raw_buffer, width, height))) as _,
             _ => unimplemented!("Unsupported pixel format: {bytes_per_pixel}"),
         })
     }
 
-    // An empty image (the no-argument constructor) has no row to measure; treat it as ARGB.
-    fn bytes_per_pixel(width: i32, bpl: i32) -> i32 {
-        if width > 0 { bpl / width } else { 4 }
+    // The pixel array of the image, its width and height and the bytes a pixel takes. An empty image
+    // (the no-argument constructor) has no row to measure; treat it as ARGB.
+    async fn pixel_array(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<(Box<dyn ArrayRawBufferMut>, i32, i32, i32)> {
+        let [data, width, height, bpl] = jvm
+            .get_fields(
+                this,
+                "javax/microedition/lcdui/Image",
+                [("imgData", "[B"), ("w", "I"), ("h", "I"), ("bpl", "I")],
+            )
+            .await?;
+        let raw_buffer = jvm.array_raw_buffer_mut(&mut data.into()).await?;
+        let (width, height, bpl): (i32, i32, i32) = (width.into(), height.into(), bpl.into());
+
+        Ok((raw_buffer, width, height, if width > 0 { bpl / width } else { 4 }))
     }
 
     async fn create_image_instance(jvm: &Jvm, width: u32, height: u32, data: &[u8], bytes_per_pixel: u32) -> JvmResult<ClassInstanceRef<Image>> {
@@ -443,14 +448,8 @@ impl<T> JavaImageBuffer<T>
 where
     T: PixelType,
 {
-    pub async fn new(jvm: &Jvm, this: &ClassInstanceRef<Image>) -> JvmResult<Self> {
-        let mut java_img_data = jvm.get_field(this, "javax/microedition/lcdui/Image", "imgData", "[B").await?;
-        let raw_buffer = jvm.array_raw_buffer_mut(&mut java_img_data).await?;
-
-        let width: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "w", "I").await?;
-        let height: i32 = jvm.get_field(this, "javax/microedition/lcdui/Image", "h", "I").await?;
-
-        Ok(Self {
+    pub fn new(raw_buffer: Box<dyn ArrayRawBufferMut>, width: i32, height: i32) -> Self {
+        Self {
             width,
             height,
             raw_buffer,
@@ -458,7 +457,7 @@ where
                 top: 0,
                 rows: VecDeque::new(),
             }),
-        })
+        }
     }
 
     fn contains(&self, x: i32, y: i32) -> bool {
@@ -722,7 +721,8 @@ mod tests {
     async fn check_pixel_buffer<T: PixelType>(jvm: &Jvm, pixels: [T::DataType; 2]) -> JvmResult<()> {
         let size = size_of::<T::DataType>();
         let image = Image::create_image_instance(jvm, 2, 1, bytemuck::cast_slice(&pixels), size as u32).await?;
-        let mut buffer = JavaImageBuffer::<T>::new(jvm, &image).await?;
+        let (raw_buffer, width, height, _) = Image::pixel_array(jvm, &image).await?;
+        let mut buffer = JavaImageBuffer::<T>::new(raw_buffer, width, height);
         let actual = buffer.get_pixel(1, 0);
         let expected = T::to_color(pixels[1]);
         assert_eq!((actual.a, actual.r, actual.g, actual.b), (expected.a, expected.r, expected.g, expected.b));
@@ -742,7 +742,11 @@ mod tests {
 
         // What was drawn reaches the pixel array once the buffer is dropped.
         drop(buffer);
-        assert_eq!(&*JavaImageBuffer::<T>::new(jvm, &image).await?.raw(), bytemuck::cast_slice(&expected));
+        let (raw_buffer, width, height, _) = Image::pixel_array(jvm, &image).await?;
+        assert_eq!(
+            &*JavaImageBuffer::<T>::new(raw_buffer, width, height).raw(),
+            bytemuck::cast_slice(&expected)
+        );
         Ok(())
     }
 

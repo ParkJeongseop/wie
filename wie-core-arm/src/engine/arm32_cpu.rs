@@ -350,6 +350,29 @@ impl ArmRegister {
 const TOTAL_MEMORY: u64 = 0x100000000;
 const PAGE_SIZE: usize = 0x10000;
 const PAGE_MASK: u32 = (PAGE_SIZE - 1) as _;
+const SMALL_COPY_SIZE: usize = 32;
+
+/// Copies at most `SMALL_COPY_SIZE` bytes between slices of one length as two fixed-size moves that may
+/// overlap, which are loads and stores where a copy of unknown length is a call.
+#[inline(always)]
+fn copy_small(source: &[u8], destination: &mut [u8]) {
+    let size = source.len();
+    if let (Some(head), Some(tail)) = (source.first_chunk::<16>(), source.last_chunk::<16>()) {
+        destination[..16].copy_from_slice(head);
+        destination[size - 16..].copy_from_slice(tail);
+    } else if let (Some(head), Some(tail)) = (source.first_chunk::<8>(), source.last_chunk::<8>()) {
+        destination[..8].copy_from_slice(head);
+        destination[size - 8..].copy_from_slice(tail);
+    } else if let (Some(head), Some(tail)) = (source.first_chunk::<4>(), source.last_chunk::<4>()) {
+        destination[..4].copy_from_slice(head);
+        destination[size - 4..].copy_from_slice(tail);
+    } else if let (Some(head), Some(tail)) = (source.first_chunk::<2>(), source.last_chunk::<2>()) {
+        destination[..2].copy_from_slice(head);
+        destination[size - 2..].copy_from_slice(tail);
+    } else if let Some(&byte) = source.first() {
+        destination[0] = byte;
+    }
+}
 
 pub(crate) struct EmulatedMemory {
     pages: Box<[MemoryPage; 0x10000]>,
@@ -385,6 +408,17 @@ impl EmulatedMemory {
     }
 
     fn read_range(&self, address: u32, size: usize, result: &mut [u8]) -> Result<usize> {
+        // Nearly every read is a word, a record or a short name inside one page.
+        let offset = (address & PAGE_MASK) as usize;
+        if size <= SMALL_COPY_SIZE && offset + size <= PAGE_SIZE {
+            let page_data = self.pages[address as usize / PAGE_SIZE]
+                .bytes
+                .as_ref()
+                .ok_or(WieError::InvalidMemoryAccess(address))?;
+            copy_small(&page_data[offset..offset + size], &mut result[..size]);
+            return Ok(size);
+        }
+
         let mut remaining_size = size;
         let mut current_address = address;
 
@@ -406,6 +440,16 @@ impl EmulatedMemory {
     }
 
     fn write_range(&mut self, address: u32, data: &[u8]) -> Result<()> {
+        let offset = (address & PAGE_MASK) as usize;
+        if data.len() <= SMALL_COPY_SIZE && offset + data.len() <= PAGE_SIZE {
+            let page_data = self.pages[address as usize / PAGE_SIZE]
+                .bytes
+                .as_mut()
+                .ok_or(WieError::InvalidMemoryAccess(address))?;
+            copy_small(data, &mut page_data[offset..offset + data.len()]);
+            return Ok(());
+        }
+
         let mut current_address = address;
         let mut data_index = 0;
 

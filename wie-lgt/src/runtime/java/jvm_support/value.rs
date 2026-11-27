@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 
-use jvm::{ClassDefinition, ClassInstance};
+use jvm::ClassInstance;
 
 use wie_core_arm::ArmCore;
 use wie_jvm_support::native::NativeJavaValueCodec;
@@ -26,7 +26,7 @@ impl NativeJavaValueCodec for JavaValueCodec {
             // freed; name the pointer so the matching "Destroying" trace line can be found.
             panic!("LGT object reference {raw:#x} has no readable class header: {error}")
         });
-        if ClassDefinition::name(&class).starts_with('[') {
+        if class.is_array().unwrap() {
             Box::new(JavaArrayClassInstance::from_raw(raw, &self.core))
         } else {
             Box::new(instance)

@@ -345,6 +345,13 @@ impl JavaClassDefinition {
         read_generic(&self.core, self.raw()?.ptr_descriptor)
     }
 
+    /// Whether this is an array class, told by the first character of its name.
+    pub fn is_array(&self) -> Result<bool> {
+        let first: u8 = read_generic(&self.core, self.descriptor()?.ptr_name)?;
+
+        Ok(first == b'[')
+    }
+
     pub fn methods(&self) -> Result<Vec<JavaMethod>> {
         let ptr_methods = self.descriptor()?.ptr_methods;
         if ptr_methods == 0 {
@@ -379,7 +386,7 @@ impl JavaClassDefinition {
 
     /// The address of the first entry of a counted member table that `accepts` takes. Members are
     /// looked at where they are, so a search costs no more than the entries it passes.
-    fn find_member<T>(&self, ptr_table: u32, mut accepts: impl FnMut(T) -> Result<bool>) -> Result<Option<u32>>
+    fn find_member<T>(&self, ptr_table: u32, mut accepts: impl FnMut(u32, T) -> Result<bool>) -> Result<Option<u32>>
     where
         T: Copy + AnyBitPattern + NoUninit,
     {
@@ -389,7 +396,7 @@ impl JavaClassDefinition {
         let count: u32 = read_generic(&self.core, ptr_table)?;
         for index in 0..count {
             let ptr_member = ptr_table + size_of::<u32>() as u32 + index * size_of::<T>() as u32;
-            if accepts(read_generic(&self.core, ptr_member)?)? {
+            if accepts(ptr_member, read_generic(&self.core, ptr_member)?)? {
                 return Ok(Some(ptr_member));
             }
         }
@@ -891,7 +898,7 @@ impl ClassDefinition for JavaClassDefinition {
 
     fn method(&self, name: &str, descriptor: &str, is_static: bool) -> Option<Box<dyn Method>> {
         let ptr_methods = self.descriptor().unwrap().ptr_methods;
-        self.find_member(ptr_methods, |raw: RawJavaMethod| {
+        self.find_member(ptr_methods, |_, raw: RawJavaMethod| {
             Ok(
                 MethodAccessFlags::from_bits_truncate(raw.access_flags).contains(MethodAccessFlags::STATIC) == is_static
                     && null_terminated_string_equals(&self.core, raw.ptr_name, name.as_bytes())?
@@ -904,7 +911,7 @@ impl ClassDefinition for JavaClassDefinition {
 
     fn field(&self, name: &str, descriptor: &str, is_static: bool) -> Option<Box<dyn Field>> {
         let ptr_fields = self.descriptor().unwrap().ptr_fields;
-        self.find_member(ptr_fields, |raw: RawJavaField| {
+        self.find_member(ptr_fields, |_, raw: RawJavaField| {
             Ok(
                 FieldAccessFlags::from_bits_truncate(raw.flags as _).contains(FieldAccessFlags::STATIC) == is_static
                     && null_terminated_string_equals(&self.core, raw.ptr_name, name.as_bytes())?
@@ -913,6 +920,43 @@ impl ClassDefinition for JavaClassDefinition {
         })
         .unwrap()
         .map(|ptr_field| Box::new(JavaField::from_raw(ptr_field, &self.core)) as Box<_>)
+    }
+
+    fn find_fields(&self, names: &[(&str, &str)], is_static: bool) -> Vec<Option<Box<dyn Field>>> {
+        let mut fields: Vec<Option<Box<dyn Field>>> = names.iter().map(|_| None).collect();
+        let mut missing = fields.len();
+        let ptr_fields = self.descriptor().unwrap().ptr_fields;
+        // One pass over the table, each entry's name read once for all the names asked for.
+        self.find_member(ptr_fields, |ptr_field, raw: RawJavaField| {
+            if FieldAccessFlags::from_bits_truncate(raw.flags as _).contains(FieldAccessFlags::STATIC) != is_static {
+                return Ok(false);
+            }
+            let mut buffer = [0; 32];
+            let read = match self.core.read_bytes(raw.ptr_name, &mut buffer) {
+                // A name may end at the memory boundary.
+                Err(WieError::InvalidMemoryAccess(_)) => 0,
+                result => result?,
+            };
+            for (field, (name, descriptor)) in fields.iter_mut().zip(names) {
+                if field.is_some() {
+                    continue;
+                }
+                let is_named = if name.len() < read {
+                    // A name of another length is told apart by where it ends, before its text is compared.
+                    buffer[name.len()] == 0 && buffer[..name.len()] == *name.as_bytes()
+                } else {
+                    null_terminated_string_equals(&self.core, raw.ptr_name, name.as_bytes())?
+                };
+                if is_named && null_terminated_string_equals(&self.core, raw.ptr_descriptor, descriptor.as_bytes())? {
+                    *field = Some(Box::new(JavaField::from_raw(ptr_field, &self.core)));
+                    missing -= 1;
+                    break;
+                }
+            }
+            Ok(missing == 0)
+        })
+        .unwrap();
+        fields
     }
 
     fn fields(&self) -> Vec<Box<dyn Field>> {

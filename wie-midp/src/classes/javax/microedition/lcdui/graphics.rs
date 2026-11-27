@@ -50,6 +50,16 @@ impl From<Anchor> for TextAlignment {
     }
 }
 
+/// What a drawing call takes from its Graphics. It is read together: a drawing call needs nearly all of
+/// it, and each field read on its own is another search of the class.
+struct Pen {
+    canvas: Box<dyn BackendCanvas>,
+    color: i32,
+    translate_x: i32,
+    translate_y: i32,
+    clip: Clip,
+}
+
 // class javax.microedition.lcdui.Graphics
 pub struct Graphics;
 
@@ -328,10 +338,8 @@ impl Graphics {
     ) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::clipRect({this:?}, {x}, {y}, {width}, {height})");
 
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
+        let (translate_x, translate_y, current_clip) = Self::placement(jvm, &this).await?;
 
-        let current_clip = Self::clip(jvm, &this).await?;
         let rect = Clip {
             x: x + translate_x,
             y: y + translate_y,
@@ -366,14 +374,13 @@ impl Graphics {
     ) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::fillRoundRect({this:?}, {x}, {y}, {width}, {height}, {arc_width}, {arc_height})");
 
-        let rgb: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
-
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
+        let Pen {
+            mut canvas,
+            color: rgb,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         if width < 0 || height < 0 {
             return Ok(());
@@ -406,14 +413,13 @@ impl Graphics {
     ) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::fillArc({this:?}, {x}, {y}, {width}, {height}, {start_angle}, {arc_angle})");
 
-        let rgb: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
-
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
+        let Pen {
+            mut canvas,
+            color: rgb,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         if width < 0 || height < 0 {
             return Ok(());
@@ -436,14 +442,13 @@ impl Graphics {
     async fn fill_rect(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, x: i32, y: i32, width: i32, height: i32) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::fillRect({this:?}, {x}, {y}, {width}, {height})");
 
-        let rgb: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
-
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
+        let Pen {
+            mut canvas,
+            color: rgb,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         if width < 0 || height < 0 {
             return Ok(());
@@ -464,14 +469,13 @@ impl Graphics {
     async fn draw_rect(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, x: i32, y: i32, width: i32, height: i32) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::drawRect({this:?}, {x}, {y}, {width}, {height})");
 
-        let rgb: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
-
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
+        let Pen {
+            mut canvas,
+            color: rgb,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         if width < 0 || height < 0 {
             return Ok(());
@@ -501,16 +505,16 @@ impl Graphics {
     ) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::drawChar({this:?}, {ch}, {x}, {y}, {})", anchor.0);
 
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
+        let Pen {
+            mut canvas,
+            color,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         let string = RustString::from_utf16(&[ch]).unwrap();
 
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let color: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
         let text_size = Self::current_font_size(jvm, &this).await?;
 
         canvas.draw_text(
@@ -540,17 +544,17 @@ impl Graphics {
     ) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::drawChar({this:?}, {chars:?}, {offset}, {length}, {x}, {y})");
 
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
+        let Pen {
+            mut canvas,
+            color,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         let chars = jvm.load_array(&chars, offset as _, length as _).await?;
         let string = RustString::from_utf16(&chars).unwrap();
 
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let color: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
         let text_size = Self::current_font_size(jvm, &this).await?;
 
         canvas.draw_text(
@@ -583,14 +587,14 @@ impl Graphics {
 
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
 
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
+        let Pen {
+            mut canvas,
+            color,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let color: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
         let text_size = Self::current_font_size(jvm, &this).await?;
 
         canvas.draw_text(
@@ -623,14 +627,14 @@ impl Graphics {
         let string = JavaLangString::to_rust_string(jvm, &string).await?;
         let substring = string.chars().skip(offset as usize).take(len as usize).collect::<RustString>();
 
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
+        let Pen {
+            mut canvas,
+            color,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let color: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
         let text_size = Self::current_font_size(jvm, &this).await?;
 
         canvas.draw_text(
@@ -650,18 +654,18 @@ impl Graphics {
     async fn draw_line(jvm: &Jvm, _: &mut WieJvmContext, mut this: ClassInstanceRef<Self>, x1: i32, y1: i32, x2: i32, y2: i32) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::drawLine({this:?}, {x1}, {y1}, {x2}, {y2})");
 
-        let color: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
+        let Pen {
+            mut canvas,
+            color,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         let x1 = x1 + translate_x;
         let y1 = y1 + translate_y;
         let x2 = x2 + translate_x;
         let y2 = y2 + translate_y;
-
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
-
-        let clip = Self::clip(jvm, &this).await?;
 
         canvas.draw_line(x1 as _, y1 as _, x2 as _, y2 as _, Rgb8Pixel::to_color(color as _), clip);
 
@@ -685,7 +689,13 @@ impl Graphics {
 
         let src_image = Image::image(jvm, &img).await?;
 
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
+        let Pen {
+            mut canvas,
+            translate_x,
+            translate_y,
+            clip,
+            ..
+        } = Self::pen(jvm, &mut this).await?;
 
         let x_delta = if anchor.contains(Anchor::HCENTER) {
             -((src_image.width() / 2) as i32)
@@ -703,13 +713,8 @@ impl Graphics {
             0
         };
 
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
         let x = translate_x + x + x_delta;
         let y = translate_y + y + y_delta;
-
-        let clip = Self::clip(jvm, &this).await?;
 
         canvas.draw(x as _, y as _, src_image.width(), src_image.height(), &*src_image, 0, 0, clip);
 
@@ -747,7 +752,13 @@ impl Graphics {
         };
         let (width, height) = (region.width() as i32, region.height() as i32);
 
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
+        let Pen {
+            mut canvas,
+            translate_x,
+            translate_y,
+            clip,
+            ..
+        } = Self::pen(jvm, &mut this).await?;
 
         let x_delta = if anchor.contains(Anchor::HCENTER) {
             -width / 2
@@ -765,13 +776,8 @@ impl Graphics {
             0
         };
 
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
         let x = translate_x + x + x_delta;
         let y = translate_y + y + y_delta;
-
-        let clip = Self::clip(jvm, &this).await?;
 
         canvas.draw(x as _, y as _, width as _, height as _, &region, 0, 0, clip);
 
@@ -791,14 +797,13 @@ impl Graphics {
     ) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::drawRoundRect({this:?}, {x}, {y}, {width}, {height}, {arc_width}, {arc_height})");
 
-        let rgb: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
-
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
+        let Pen {
+            mut canvas,
+            color: rgb,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         if width < 0 || height < 0 {
             return Ok(());
@@ -832,14 +837,13 @@ impl Graphics {
     ) -> JvmResult<()> {
         tracing::debug!("javax.microedition.lcdui.Graphics::drawArc({this:?}, {x}, {y}, {width}, {height}, {start_angle}, {arc_angle})");
 
-        let rgb: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "color", "I").await?;
-
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
-
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
-
-        let clip = Self::clip(jvm, &this).await?;
+        let Pen {
+            mut canvas,
+            color: rgb,
+            translate_x,
+            translate_y,
+            clip,
+        } = Self::pen(jvm, &mut this).await?;
 
         if width < 0 || height < 0 {
             return Ok(());
@@ -952,15 +956,16 @@ impl Graphics {
         // TODO proper scanlength support
         let pixel_data: Vec<i32> = jvm.load_array(&rgb_data, offset as _, (width * height) as _).await?;
 
-        let mut canvas = Self::canvas(jvm, &mut this).await?;
-
-        let translate_x: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateX", "I").await?;
-        let translate_y: i32 = jvm.get_field(&this, "javax/microedition/lcdui/Graphics", "translateY", "I").await?;
+        let Pen {
+            mut canvas,
+            translate_x,
+            translate_y,
+            clip,
+            ..
+        } = Self::pen(jvm, &mut this).await?;
 
         let x = translate_x + x;
         let y = translate_y + y;
-
-        let clip = Self::clip(jvm, &this).await?;
 
         if process_alpha {
             let src_image = VecImageBuffer::<ArgbPixel>::from_raw(width as _, height as _, cast_vec(pixel_data));
@@ -1120,10 +1125,29 @@ impl Graphics {
     }
 
     async fn canvas(jvm: &Jvm, this: &mut ClassInstanceRef<Graphics>) -> JvmResult<Box<dyn BackendCanvas>> {
-        let image = Self::image(jvm, this).await?;
+        let [image, xor_mode, alpha] = jvm
+            .get_fields(
+                this,
+                "javax/microedition/lcdui/Graphics",
+                [("img", "Ljavax/microedition/lcdui/Image;"), ("xorMode", "Z"), ("alpha", "I")],
+            )
+            .await?;
+
+        Self::canvas_on(jvm, this, image, xor_mode, alpha).await
+    }
+
+    async fn canvas_on(
+        jvm: &Jvm,
+        this: &mut ClassInstanceRef<Graphics>,
+        image: JavaValue,
+        xor_mode: JavaValue,
+        alpha: JavaValue,
+    ) -> JvmResult<Box<dyn BackendCanvas>> {
+        let (mut image, xor_mode, alpha): (ClassInstanceRef<Image>, bool, i32) = (image.into(), xor_mode.into(), alpha.into());
+        if image.is_null() {
+            image = Self::image(jvm, this).await?;
+        }
         let mut canvas = Image::canvas(jvm, &image).await?;
-        let xor_mode: bool = jvm.get_field(this, "javax/microedition/lcdui/Graphics", "xorMode", "Z").await?;
-        let alpha: i32 = jvm.get_field(this, "javax/microedition/lcdui/Graphics", "alpha", "I").await?;
 
         canvas.set_xor_mode(xor_mode);
         canvas.set_alpha(alpha.clamp(0, 255) as u8);
@@ -1182,17 +1206,67 @@ impl Graphics {
     }
 
     pub async fn clip(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<Clip> {
-        let x: i32 = jvm.get_field(this, "javax/microedition/lcdui/Graphics", "clipX", "I").await?;
-        let y: i32 = jvm.get_field(this, "javax/microedition/lcdui/Graphics", "clipY", "I").await?;
-        let width: i32 = jvm.get_field(this, "javax/microedition/lcdui/Graphics", "clipWidth", "I").await?;
-        let height: i32 = jvm.get_field(this, "javax/microedition/lcdui/Graphics", "clipHeight", "I").await?;
+        Ok(Self::placement(jvm, this).await?.2)
+    }
 
-        Ok(Clip {
+    /// The translation and the clip of the Graphics.
+    async fn placement(jvm: &Jvm, this: &ClassInstanceRef<Self>) -> JvmResult<(i32, i32, Clip)> {
+        let [translate_x, translate_y, x, y, width, height] = jvm
+            .get_fields(
+                this,
+                "javax/microedition/lcdui/Graphics",
+                [
+                    ("translateX", "I"),
+                    ("translateY", "I"),
+                    ("clipX", "I"),
+                    ("clipY", "I"),
+                    ("clipWidth", "I"),
+                    ("clipHeight", "I"),
+                ],
+            )
+            .await?;
+
+        Ok((translate_x.into(), translate_y.into(), Self::clip_from(x, y, width, height)))
+    }
+
+    async fn pen(jvm: &Jvm, this: &mut ClassInstanceRef<Self>) -> JvmResult<Pen> {
+        let [image, xor_mode, alpha, color, translate_x, translate_y, x, y, width, height] = jvm
+            .get_fields(
+                this,
+                "javax/microedition/lcdui/Graphics",
+                [
+                    ("img", "Ljavax/microedition/lcdui/Image;"),
+                    ("xorMode", "Z"),
+                    ("alpha", "I"),
+                    ("color", "I"),
+                    ("translateX", "I"),
+                    ("translateY", "I"),
+                    ("clipX", "I"),
+                    ("clipY", "I"),
+                    ("clipWidth", "I"),
+                    ("clipHeight", "I"),
+                ],
+            )
+            .await?;
+
+        Ok(Pen {
+            canvas: Self::canvas_on(jvm, this, image, xor_mode, alpha).await?,
+            color: color.into(),
+            translate_x: translate_x.into(),
+            translate_y: translate_y.into(),
+            clip: Self::clip_from(x, y, width, height),
+        })
+    }
+
+    fn clip_from(x: JavaValue, y: JavaValue, width: JavaValue, height: JavaValue) -> Clip {
+        let (x, y, width, height): (i32, i32, i32, i32) = (x.into(), y.into(), width.into(), height.into());
+
+        Clip {
             x: x as _,
             y: y as _,
             width: width as _,
             height: height as _,
-        })
+        }
     }
 }
 

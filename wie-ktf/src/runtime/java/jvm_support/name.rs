@@ -40,8 +40,7 @@ impl JavaFullName {
     }
 
     pub fn matches(core: &ArmCore, ptr: u32, name: &str, descriptor: &str) -> Result<bool> {
-        // The text a member carries after its tag, in the pieces it is compared by.
-        let expected = [descriptor.as_bytes(), b"+", name.as_bytes(), b"\0"];
+        let expected = Self::text_parts(name, descriptor);
         let length = descriptor.len() + name.len() + 2;
         let mut compared = 0;
         let mut buffer = [0; 32];
@@ -56,21 +55,58 @@ impl JavaFullName {
             if read != size {
                 return Err(WieError::FatalError(format!("Short read at {cursor:#x}: expected {size}, got {read}")));
             }
-
-            let (mut skipped, mut bytes) = (compared, &buffer[..size]);
-            for part in expected {
-                let rest = part.get(skipped..).unwrap_or_default();
-                skipped = skipped.saturating_sub(part.len());
-                let (head, tail) = bytes.split_at(rest.len().min(bytes.len()));
-                // These are a few bytes each; comparing them in place is cheaper than a call.
-                if head.iter().zip(rest).any(|(read, expected)| read != expected) {
-                    return Ok(false);
-                }
-                bytes = tail;
+            // A name of another length is told apart by where it ends, before its text is compared.
+            let ends = compared + size != length || buffer[size - 1] == 0;
+            if !ends || !Self::text_continues(&buffer[..size], compared, expected) {
+                return Ok(false);
             }
             compared += size;
         }
         Ok(true)
+    }
+
+    /// Which of `names`, given as (name, descriptor), the member name at `ptr` is. The name is read once for
+    /// all of them unless it is longer than what is read or ends at the memory boundary.
+    pub fn position(core: &ArmCore, ptr: u32, names: &[(&str, &str)]) -> Result<Option<usize>> {
+        let mut buffer = [0; 32];
+        let read = match core.read_bytes(ptr.wrapping_add(1), &mut buffer) {
+            Err(WieError::InvalidMemoryAccess(_)) => 0,
+            result => result?,
+        };
+        for (index, (name, descriptor)) in names.iter().enumerate() {
+            let length = descriptor.len() + name.len() + 2;
+            // A name of another length is told apart by where it ends, before its text is compared.
+            if length <= read && buffer[length - 1] != 0 {
+                continue;
+            }
+            let head = &buffer[..read.min(length)];
+            if Self::text_continues(head, 0, Self::text_parts(name, descriptor))
+                && (head.len() == length || Self::matches(core, ptr, name, descriptor)?)
+            {
+                return Ok(Some(index));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The text a member carries after its tag, in the pieces it is compared by.
+    fn text_parts<'a>(name: &'a str, descriptor: &'a str) -> [&'a [u8]; 4] {
+        [descriptor.as_bytes(), b"+", name.as_bytes(), b"\0"]
+    }
+
+    /// Whether `bytes` are what the text `expected` gives in pieces holds from its byte `skipped` on.
+    fn text_continues(mut bytes: &[u8], mut skipped: usize, expected: [&[u8]; 4]) -> bool {
+        for part in expected {
+            let rest = part.get(skipped..).unwrap_or_default();
+            skipped = skipped.saturating_sub(part.len());
+            let (head, tail) = bytes.split_at(rest.len().min(bytes.len()));
+            // These are a few bytes each; comparing them in place is cheaper than a call.
+            if head.iter().zip(rest).any(|(read, expected)| read != expected) {
+                return false;
+            }
+            bytes = tail;
+        }
+        true
     }
 
     pub fn name(&self) -> &str {
@@ -135,6 +171,11 @@ mod tests {
             assert!(JavaFullName::matches(&core, 0x1000, name, descriptor)?);
             assert!(!JavaFullName::matches(&core, 0x1000, "other", descriptor)?);
             assert!(!JavaFullName::matches(&core, 0x1000, name, "J")?);
+            assert_eq!(
+                JavaFullName::position(&core, 0x1000, &[("other", descriptor), (name, "J"), (name, descriptor)])?,
+                Some(2)
+            );
+            assert_eq!(JavaFullName::position(&core, 0x1000, &[("other", descriptor)])?, None);
 
             core.write_bytes(0x1000, &JavaFullName::new("updated", "J").as_bytes())?;
             let updated = JavaFullName::from_ptr(&core, 0x1000)?;
@@ -150,6 +191,8 @@ mod tests {
             core.write_bytes(address, &bytes)?;
             assert!(JavaFullName::matches(&core, address, name, "I")?);
             assert!(!JavaFullName::matches(&core, address, &format!("{name}suffix"), "I")?);
+            assert_eq!(JavaFullName::position(&core, address, &[("y", "I"), (name, "I")])?, Some(1));
+            assert_eq!(JavaFullName::position(&core, address, &[(&format!("{name}suffix"), "I")])?, None);
         }
         Ok(())
     }
