@@ -1,7 +1,7 @@
 use alloc::vec;
 
 use jvm_class_proto::JavaMethodProto;
-use jvm_types::ClassAccessFlags;
+use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 use wie_jvm_support::WieJavaClassProto;
 
 // interface org.kwis.msp.lwc.ActionListener
@@ -17,7 +17,7 @@ impl ActionListener {
             methods: vec![JavaMethodProto::new_abstract(
                 "action",
                 "(Lorg/kwis/msp/lwc/Component;Ljava/lang/Object;)V",
-                Default::default(),
+                MethodAccessFlags::PUBLIC | MethodAccessFlags::ABSTRACT,
             )],
             fields: vec![],
             access_flags: ClassAccessFlags::INTERFACE,

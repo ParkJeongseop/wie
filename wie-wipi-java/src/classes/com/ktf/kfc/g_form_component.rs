@@ -6,17 +6,20 @@ use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::org::kwis::msp::{lcdui::Display, lwc::Component};
+use crate::classes::{
+    net::wie::ComponentState,
+    org::kwis::msp::{lcdui::Display, lwc::Component},
+};
 
-// class com.ktf.kfc.GFormComponent: a shell that places children at given bounds
-// (미니게임패밀리, 미니고치).
+// class com.ktf.kfc.GFormComponent: a form that places children at given bounds (미니게임패밀리,
+// 미니고치). The shell it is shown in draws each child where it was placed (`net.wie.ShellCard`).
 pub struct GFormComponent;
 
 impl GFormComponent {
     pub fn as_proto() -> WieJavaClassProto {
         WieJavaClassProto {
             name: "com/ktf/kfc/GFormComponent",
-            parent_class: Some("org/kwis/msp/lwc/ShellComponent"),
+            parent_class: Some("org/kwis/msp/lwc/FormComponent"),
             interfaces: vec![],
             methods: vec![
                 JavaMethodProto::new("<init>", "()V", Self::init, MethodAccessFlags::PUBLIC),
@@ -42,7 +45,7 @@ impl GFormComponent {
     async fn init(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {
         tracing::debug!("com.ktf.kfc.GFormComponent::<init>({this:?})");
 
-        let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/ShellComponent", "<init>", "()V", ()).await?;
+        let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/FormComponent", "<init>", "()V", ()).await?;
 
         Ok(())
     }
@@ -58,9 +61,7 @@ impl GFormComponent {
     ) -> JvmResult<()> {
         tracing::debug!("com.ktf.kfc.GFormComponent::<init>({this:?}, {x}, {y}, {width}, {height})");
 
-        let _: () = jvm
-            .invoke_special(&this, "org/kwis/msp/lwc/ShellComponent", "<init>", "(IIII)V", (x, y, width, height))
-            .await?;
+        let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/FormComponent", "<init>", "()V", ()).await?;
 
         Ok(())
     }
@@ -78,9 +79,7 @@ impl GFormComponent {
     ) -> JvmResult<()> {
         tracing::debug!("com.ktf.kfc.GFormComponent::<init>({this:?}, {disp:?}, {x}, {y}, {width}, {height})");
 
-        let _: () = jvm
-            .invoke_special(&this, "org/kwis/msp/lwc/ShellComponent", "<init>", "(IIII)V", (x, y, width, height))
-            .await?;
+        let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/FormComponent", "<init>", "()V", ()).await?;
 
         Ok(())
     }
@@ -97,6 +96,8 @@ impl GFormComponent {
         height: i32,
     ) -> JvmResult<i32> {
         tracing::debug!("com.ktf.kfc.GFormComponent::addComponent({this:?}, {component:?}, {x}, {y}, {width}, {height})");
+
+        ComponentState::set_bounds(jvm, &component, [x, y, width, height]).await?;
 
         jvm.invoke_virtual(
             &this,

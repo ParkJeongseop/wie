@@ -3,9 +3,13 @@ use alloc::vec;
 use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::JavaMethodProto;
 use jvm_types::{ClassAccessFlags, MethodAccessFlags};
+use rustjava_runtime::classes::java::lang::String;
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::{net::wie::ShellCard, org::kwis::msp::lwc::Component};
+use crate::classes::{
+    net::wie::{ComponentState, ShellCard},
+    org::kwis::msp::lwc::Component,
+};
 
 // class org.kwis.msp.lwc.ShellComponent
 pub struct ShellComponent;
@@ -30,6 +34,7 @@ impl ShellComponent {
                 JavaMethodProto::new("serviceRepaints", "()V", Self::service_repaints, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("layout", "()V", Self::layout, MethodAccessFlags::PUBLIC),
                 JavaMethodProto::new("isShown", "()Z", Self::is_shown, MethodAccessFlags::PUBLIC),
+                JavaMethodProto::new("setTitle", "(Ljava/lang/String;)V", Self::set_title, MethodAccessFlags::PUBLIC),
             ],
             fields: vec![],
             access_flags: ClassAccessFlags::PUBLIC,
@@ -100,6 +105,13 @@ impl ShellComponent {
         tracing::debug!("org.kwis.msp.lwc.ShellComponent::isShown({this:?})");
 
         Ok(!ShellCard::card_of(jvm, &this).await?.is_null())
+    }
+
+    /// The title string the shell shows above its components.
+    async fn set_title(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, title: ClassInstanceRef<String>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.ShellComponent::setTitle({this:?}, {title:?})");
+
+        ComponentState::set_text(jvm, &this, title).await
     }
 
     async fn service_repaints(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<()> {

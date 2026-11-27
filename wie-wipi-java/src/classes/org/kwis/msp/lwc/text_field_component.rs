@@ -33,11 +33,12 @@ impl TextFieldComponent {
         data: ClassInstanceRef<String>,
         constraint: i32,
     ) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.lwc.TextFieldComponent::<init>({this:?}, {data:?}, {constraint:?})");
+        tracing::debug!("org.kwis.msp.lwc.TextFieldComponent::<init>({this:?}, {data:?}, {constraint:?})");
 
         let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/TextComponent", "<init>", "()V", ()).await?;
 
-        Ok(())
+        jvm.invoke_special(&this, "org/kwis/msp/lwc/TextComponent", "setString", "(Ljava/lang/String;)V", (data,))
+            .await
     }
 
     async fn insert(

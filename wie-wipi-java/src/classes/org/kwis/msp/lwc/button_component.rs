@@ -1,18 +1,21 @@
 use alloc::vec;
 
-use jvm::{ClassInstanceRef, Jvm, Result as JvmResult, runtime::JavaLangString};
+use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::JavaMethodProto;
 use jvm_types::{ClassAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::lang::{Object, String};
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::org::kwis::msp::{lcdui::Image, lwc::ActionListener};
+use crate::classes::{
+    net::wie::ComponentState,
+    org::kwis::msp::{lcdui::Image, lwc::ActionListener},
+};
 
 // class org.kwis.msp.lwc.ButtonComponent: a labelled (or pictured) button that reports presses to
-// an ActionListener. Nothing draws it or presses it here, and it keeps no state of its own (titles
-// subclass it; their fields follow the SDK's layout), so a title that builds one (미니고치) links and
-// goes on.
+// an ActionListener. The shell it is shown in draws it and presses it (`net.wie.ShellCard`); its
+// label and listener are kept beside it (`net.wie.ComponentState`), because titles subclass it and
+// their fields follow the SDK's layout; so is its picture.
 pub struct ButtonComponent;
 
 impl ButtonComponent {
@@ -63,43 +66,45 @@ impl ButtonComponent {
         tracing::debug!("org.kwis.msp.lwc.ButtonComponent::<init>({this:?}, {label:?}, {image:?})");
 
         let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/Component", "<init>", "()V", ()).await?;
+        ComponentState::set_text(jvm, &this, label).await?;
+        ComponentState::set_image(jvm, &this, image).await?;
 
         Ok(())
     }
 
-    async fn set_string(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, label: ClassInstanceRef<String>) -> JvmResult<()> {
-        tracing::debug!("stub org.kwis.msp.lwc.ButtonComponent::setString({this:?}, {label:?})");
+    async fn set_string(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, label: ClassInstanceRef<String>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.ButtonComponent::setString({this:?}, {label:?})");
 
-        Ok(())
+        ComponentState::set_text(jvm, &this, label).await
     }
 
     async fn get_string(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<String>> {
-        tracing::debug!("stub org.kwis.msp.lwc.ButtonComponent::getString({this:?})");
+        tracing::debug!("org.kwis.msp.lwc.ButtonComponent::getString({this:?})");
 
-        Ok(JavaLangString::from_rust_string(jvm, "").await?.into())
+        ComponentState::text(jvm, &this).await
     }
 
-    async fn set_image(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, image: ClassInstanceRef<Image>) -> JvmResult<()> {
-        tracing::debug!("stub org.kwis.msp.lwc.ButtonComponent::setImage({this:?}, {image:?})");
+    async fn set_image(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>, image: ClassInstanceRef<Image>) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.lwc.ButtonComponent::setImage({this:?}, {image:?})");
 
-        Ok(())
+        ComponentState::set_image(jvm, &this, image).await
     }
 
-    async fn get_image(_: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Image>> {
-        tracing::debug!("stub org.kwis.msp.lwc.ButtonComponent::getImage({this:?})");
+    async fn get_image(jvm: &Jvm, _: &mut WieJvmContext, this: ClassInstanceRef<Self>) -> JvmResult<ClassInstanceRef<Image>> {
+        tracing::debug!("org.kwis.msp.lwc.ButtonComponent::getImage({this:?})");
 
-        Ok(None.into())
+        ComponentState::image(jvm, &this).await
     }
 
     async fn set_action_listener(
-        _: &Jvm,
+        jvm: &Jvm,
         _: &mut WieJvmContext,
         this: ClassInstanceRef<Self>,
         listener: ClassInstanceRef<ActionListener>,
         data: ClassInstanceRef<Object>,
     ) -> JvmResult<()> {
-        tracing::debug!("stub org.kwis.msp.lwc.ButtonComponent::setActionListener({this:?}, {listener:?}, {data:?})");
+        tracing::debug!("org.kwis.msp.lwc.ButtonComponent::setActionListener({this:?}, {listener:?}, {data:?})");
 
-        Ok(())
+        ComponentState::set_listener(jvm, &this, listener, data).await
     }
 }

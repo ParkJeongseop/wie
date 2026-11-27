@@ -79,7 +79,10 @@ defined at all (measured against WIPI Java API 1.1.1).
 - **media.Volume** — `set`/`get` IMPL; mute + default-volume STUB.
 - **db.DataBase** — CRUD IMPL; STUB: `sortRecord`, `getAccessMode`,
   `getDataBaseSize`, `getLastModified`, `deleteDataBase(String,int)`.
-- **lwc.Component / TextComponent** — all STUB.
+- **lwc** — a shown shell draws and drives its labels, text components, buttons
+  and `com.ktf.kfc.ChoiceText` (see the 2026-11-28 runtime entry); geometry
+  (`getX`/`getY`/`getWidth`/`getHeight`, `configure`), `Component.keyNotify` and
+  layout are STUB, and text takes digits only.
 - **handset.BackLight** — all STUB.
 
 ### Missing classes (defined in 1.1.1, absent here)
@@ -308,6 +311,36 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **A shown lwc shell draws and drives its components** (2026-11-28): the card
+  of a shell only called the shell's own `paint`, so a shell that leaves the
+  drawing to the SDK showed a black screen, and no component ever received a
+  key. 두뇌게임q (KTF) builds its registration screen from a plain
+  `ShellComponent` holding labels, text fields and a button; 미니고치 paints only
+  a backdrop and leaves the children of its `com.ktf.kfc.GFormComponent` to the
+  SDK. `net.wie.ShellCard` now does the SDK's part. A shell that does not draw
+  itself gets a white page with its title and one row per component; over a
+  shell that does, only the components placed with
+  `GFormComponent.addComponent(c, x, y, w, h)` are drawn, where they were
+  placed. Labels, text components (framed), buttons (their label, or their
+  image) and `ChoiceText` (its selected string) are drawn, the focused one
+  marked. UP/DOWN move the focus (`focusNotify`), digits and CLEAR edit a text
+  component up to its `maxLength`, LEFT/RIGHT step a `ChoiceText`, and the
+  select key on a button calls its `ActionListener` — `action` is declared
+  public, because a title's listener lives in another package and would
+  otherwise not override it. A shell with its own `keyNotify` still receives
+  the keys itself. The text, image, bounds and listener of a component are
+  kept in a static table on a wie class (`net.wie.ComponentState`) keyed by the
+  component, so no platform class a title subclasses gains a field.
+  `GFormComponent` now extends `FormComponent` as its documentation says (it
+  was a shell), `FormComponent.setFocus(Component)` exists (미니고치 calls it
+  from its listener), and `ChoiceText` keeps its strings and selection
+  (`getAllText`, `getSelectedIndex`, `setSelectedIndex`). 미니고치 goes through
+  its name form into the game, and 두뇌게임q through its registration steps to
+  the confirmation question. KTF launched twice: 미니고치 goes from shallow to
+  playing and no title is worse (306 to 307 of 321); LGT's shell titles
+  (학교가는길 and the others) draw as before. Not done: Korean text entry (digits
+  only), the SDK's own layout and scrolling, `ListComponent` and the other
+  missing widgets.
 - **PHONEMODEL answers a real handset** (2026-11-03): the C kernel reported
   "Emulator" and the Java HandsetProperty reported "", a model that matches no
   entry in the device tables titles carry. 삼국쟁패2 (KTF) took the no-match path
@@ -531,7 +564,8 @@ runs them on `wie_midp` + `wie_mmpp`.
   the specification's `paintContent`) and hands it `keyNotify`/`showNotify`;
   `repaint` on a shown shell repaints that card. The card of each shell is kept
   in a static table on the wie class, so no platform class gains a method or a
-  field (KTF titles are sensitive to both). Children are not drawn or laid out.
+  field (KTF titles are sensitive to both). Children are not drawn or laid out
+  (drawn since 2026-11-28, see above).
   The title then reached its `TimerTask` replacement, which calls `cancel()`
   through vtable slot 11 of its own `TimerTask` subclass (`run` sits in slot
   10): the LGT ABI table now pins `TimerTask` run/cancel/scheduledExecutionTime
@@ -1415,7 +1449,9 @@ KTF's carrier-specific Java namespaces are not implemented; platform crates
 
 - **KTF** — `com.ktf.kfc` (~32 GUI widgets). Started: GForm, GFormBase,
   GMenubarForm (constructor-only, ShellComponent-based — enough for
-  미니게임패밀리 to boot to its game-select screen). Remaining: GButton,
+  미니게임패밀리 to boot to its game-select screen), GFormComponent (a form
+  that records where each child is placed) and ChoiceText (strings and
+  selection; drawn and stepped by the shell's card). Remaining: GButton,
   GList, GMenuBar, GTextField, GMsgBox, …, `wec` (~25 hardware: Camera, GPS, AddressBook, SubLCD,
   WakeupTimer, …), `com.ktf.ext.am`.
 - **LGT** — remaining of `mmpp.*`: `mmpp.media.Beep`, `LED`,

@@ -6,7 +6,7 @@ use rustjava_runtime::classes::java::lang::String;
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
 
-use crate::classes::org::kwis::msp::lcdui::Image;
+use crate::classes::{net::wie::ComponentState, org::kwis::msp::lcdui::Image};
 
 // class org.kwis.msp.lwc.LabelComponent
 pub struct LabelComponent;
@@ -50,6 +50,7 @@ impl LabelComponent {
         tracing::debug!("org.kwis.msp.lwc.LabelComponent::<init>({this:?}, {str:?})");
 
         let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/Component", "<init>", "()V", ()).await?;
+        ComponentState::set_text(jvm, &this, str).await?;
 
         Ok(())
     }
@@ -64,6 +65,7 @@ impl LabelComponent {
         tracing::debug!("org.kwis.msp.lwc.LabelComponent::<init>({this:?}, {str:?}, {img:?})");
 
         let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/Component", "<init>", "()V", ()).await?;
+        ComponentState::set_text(jvm, &this, str).await?;
 
         Ok(())
     }
@@ -78,6 +80,7 @@ impl LabelComponent {
         tracing::debug!("org.kwis.msp.lwc.LabelComponent::<init>({this:?}, {str:?}, {img_string:?})");
 
         let _: () = jvm.invoke_special(&this, "org/kwis/msp/lwc/Component", "<init>", "()V", ()).await?;
+        ComponentState::set_text(jvm, &this, str).await?;
 
         Ok(())
     }
