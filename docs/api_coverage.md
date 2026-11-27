@@ -1783,5 +1783,23 @@ Aggregating crashes during the 30s input scenario:
   ep1-3 draw their whole screen, text included, this way and showed boxes without text or black;
   귀혼무사편 x2 likewise (KTF 300 to 302).
 
+- A paint is clipped to what was asked to be repainted (2026-11-27): `Canvas.repaint(x, y, w, h)` and
+  WIPI `Card.repaint(x, y, w, h)` were kept only as "a repaint is pending", and every paint had the whole
+  display as its clip. `Display` now keeps the rectangle around the requests made since the last paint
+  (`repaintX/Y/Width/Height`; one without a size, or a paint for the host, is all of the display) and
+  intersects the clip with it, and `CardCanvas` hands that clip on to each card from the card's origin.
+  월드장기체스 (LGT) tells its own `repaint(60, 138, 120, 46)` from the others by `getClipWidth()` in
+  `paint` and never left its logos. Titles that draw past what they ask for no longer show it: 미니게임츄리닝
+  (SK-VM, `repaint(56, 0, 128, 336)`) lost the sprites it parks beside its 128 pixel column, and
+  메이플스토리 법사편, 헬로우닌자 keep to their 196 and 296 pixel high areas. Of 202 titles 37 changed
+  frames against a build with the same class layout; 26 of those only ever ask for all of the display,
+  so what changed for them is timing.
+- LGT: a method without a body runs the receiver's (2026-11-27). `java_get_interface_dispatch_table`
+  answers with the interface's own method table for a receiver whose class is wie's, and those entries
+  were the abstract methods themselves, which threw `AbstractMethodError` (월드장기체스 calling
+  `Enumeration.hasMoreElements` on what `Vector.elements` returned, in `paint`). Such a method now
+  invokes the method of that name on the class of what it is called on; without a receiver, or where
+  that class has none either, it throws as before.
+
 Keep this document updated in the same change set as the implementation work
 it describes.

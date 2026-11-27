@@ -157,6 +157,22 @@ impl CardCanvas {
     async fn paint(jvm: &Jvm, _context: &mut WieJvmContext, this: ClassInstanceRef<Self>, g: ClassInstanceRef<MidpGraphics>) -> JvmResult<()> {
         tracing::debug!("net.wie.CardCanvas::paint({this:?}, {g:?})");
 
+        // The cards are painted within the clip this paint came with, each from its own origin.
+        let translate_x: i32 = jvm
+            .invoke_virtual(&g, "javax/microedition/lcdui/Graphics", "getTranslateX", "()I", ())
+            .await?;
+        let translate_y: i32 = jvm
+            .invoke_virtual(&g, "javax/microedition/lcdui/Graphics", "getTranslateY", "()I", ())
+            .await?;
+        let clip_x: i32 = jvm.invoke_virtual(&g, "javax/microedition/lcdui/Graphics", "getClipX", "()I", ()).await?;
+        let clip_y: i32 = jvm.invoke_virtual(&g, "javax/microedition/lcdui/Graphics", "getClipY", "()I", ()).await?;
+        let clip_width: i32 = jvm
+            .invoke_virtual(&g, "javax/microedition/lcdui/Graphics", "getClipWidth", "()I", ())
+            .await?;
+        let clip_height: i32 = jvm
+            .invoke_virtual(&g, "javax/microedition/lcdui/Graphics", "getClipHeight", "()I", ())
+            .await?;
+
         let graphics = jvm
             .new_class("org/kwis/msp/lcdui/Graphics", "(Ljavax/microedition/lcdui/Graphics;)V", (g,))
             .await?;
@@ -174,6 +190,15 @@ impl CardCanvas {
             let _: () = jvm.invoke_virtual(&graphics, "org/kwis/msp/lcdui/Graphics", "reset", "()V", ()).await?;
             let _: () = jvm
                 .invoke_virtual(&graphics, "org/kwis/msp/lcdui/Graphics", "translate", "(II)V", (x, y))
+                .await?;
+            let _: () = jvm
+                .invoke_virtual(
+                    &graphics,
+                    "org/kwis/msp/lcdui/Graphics",
+                    "setClip",
+                    "(IIII)V",
+                    (translate_x + clip_x - x, translate_y + clip_y - y, clip_width, clip_height),
+                )
                 .await?;
 
             let paint_result: JvmResult<()> = jvm

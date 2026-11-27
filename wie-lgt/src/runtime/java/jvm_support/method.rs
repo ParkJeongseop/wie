@@ -227,7 +227,18 @@ where
 
         let codec = JavaValueCodec::new(core);
         let args = decode_method_arguments(&codec, &self.parameter_types, &raw_args);
-        let result = self.proto.body.call(&self.jvm, &mut self.context.clone(), args.into_boxed_slice()).await;
+        let result = match args.first() {
+            // Compiled code gets to an interface's own method for what wie's classes implement, which have no
+            // table of the interface: a method without a body is carried out by the class of what it is called on.
+            Some(JavaValue::Object(Some(receiver))) if self.proto.access_flags.contains(MethodAccessFlags::ABSTRACT) => {
+                let class = receiver.class_definition();
+                let class_name = class.name();
+                self.jvm
+                    .invoke_virtual(receiver, &class_name, &self.proto.name, &self.proto.descriptor, args[1..].to_vec())
+                    .await
+            }
+            _ => self.proto.body.call(&self.jvm, &mut self.context.clone(), args.into_boxed_slice()).await,
+        };
         let result = match result {
             Ok(value) => value,
             Err(JavaError::JavaException(instance)) => return Err(WieError::JavaException(codec.object_to_raw(&*instance))),
@@ -277,7 +288,7 @@ mod tests {
         sync::atomic::{AtomicBool, Ordering},
     };
 
-    use jvm::{JavaError, JavaValue, Jvm, Method, Result as JvmResult, runtime::JavaLangString};
+    use jvm::{ClassInstance, JavaError, JavaValue, Jvm, Method, Result as JvmResult, runtime::JavaLangString};
     use jvm_class_proto::{JavaClassProto, JavaMethodProto};
     use jvm_types::{ClassAccessFlags, MethodAccessFlags};
     use spin::Mutex;
@@ -557,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn abstract_method_target_throws_abstract_method_error() -> Result<()> {
+    fn abstract_method_target_runs_the_receiver_method_or_throws() -> Result<()> {
         let mut system = System::new(Box::new(TestPlatform::new()), "", "", DefaultTaskRunner);
         let done = Arc::new(AtomicBool::new(false));
         let done_clone = done.clone();
@@ -604,6 +615,32 @@ mod tests {
                 )
                 .await
                 .unwrap();
+            // An interface's own method, which compiled code gets to for what wie's classes implement, is
+            // carried out by the class of what it is called on.
+            let vector = jvm.new_class("java/util/Vector", "()V", ()).await.unwrap();
+            let has_more_elements = jvm
+                .resolve_class("java/util/Enumeration")
+                .await
+                .unwrap()
+                .definition
+                .method("hasMoreElements", "()Z", false)
+                .unwrap();
+            for expected in [false, true] {
+                let elements: Box<dyn ClassInstance> = jvm
+                    .invoke_virtual(&vector, "java/util/Vector", "elements", "()Ljava/util/Enumeration;", ())
+                    .await
+                    .unwrap();
+                let result = has_more_elements
+                    .run(&jvm, vec![JavaValue::Object(Some(elements.clone()))].into_boxed_slice())
+                    .await
+                    .unwrap();
+                assert_eq!(bool::from(result), expected);
+                let _: bool = jvm
+                    .invoke_virtual(&vector, "java/util/Vector", "add", "(Ljava/lang/Object;)Z", (elements,))
+                    .await
+                    .unwrap();
+            }
+
             let method = class.method("call", "()V", false).unwrap();
             let caller = core.save_context();
             let result = method.run(&jvm, vec![JavaValue::Object(None)].into_boxed_slice()).await;
