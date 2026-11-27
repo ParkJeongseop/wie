@@ -6,6 +6,7 @@ use jvm_types::{ClassAccessFlags, FieldAccessFlags, MethodAccessFlags};
 use rustjava_runtime::classes::java::{
     io::{FileDescriptor, InputStream, OutputStream, RandomAccessFile},
     lang::String,
+    util::zip::ZipEntry,
 };
 
 use wie_jvm_support::{WieJavaClassProto, WieJvmContext};
@@ -320,10 +321,11 @@ impl XFile {
         Ok(())
     }
 
+    // An entry of another JAR in the application's storage, read like a resource of its own JAR.
     async fn init_with_jar(
         jvm: &Jvm,
-        _context: &mut WieJvmContext,
-        this: ClassInstanceRef<Self>,
+        context: &mut WieJvmContext,
+        mut this: ClassInstanceRef<Self>,
         jar_file: ClassInstanceRef<String>,
         name: ClassInstanceRef<String>,
     ) -> JvmResult<()> {
@@ -334,8 +336,47 @@ impl XFile {
         }
 
         let _: () = jvm.invoke_special(&this, "java/lang/Object", "<init>", "()V", ()).await?;
-        tracing::warn!("unsupported com.xce.io.XFile::<init>(jarfile, name)");
-        Err(jvm.exception("java/io/IOException", "JAR file selection is not supported").await)
+
+        let guest_path = JavaLangString::to_rust_string(jvm, &jar_file).await?;
+        if !context.system().filesystem().is_valid_path(&guest_path) {
+            return Err(jvm.exception("java/io/IOException", "Invalid file path").await);
+        }
+        let file = jvm.new_class("java/io/File", "(Ljava/lang/String;)V", (jar_file,)).await?;
+        let exists: bool = jvm.invoke_virtual(&file, "java/io/File", "exists", "()Z", ()).await?;
+        if !exists {
+            return Err(jvm.exception("java/io/IOException", "File not found").await);
+        }
+
+        let zip = jvm.new_class("java/util/zip/ZipFile", "(Ljava/io/File;)V", (file,)).await?;
+        let entry: ClassInstanceRef<ZipEntry> = jvm
+            .invoke_virtual(
+                &zip,
+                "java/util/zip/ZipFile",
+                "getEntry",
+                "(Ljava/lang/String;)Ljava/util/zip/ZipEntry;",
+                (name,),
+            )
+            .await?;
+        if entry.is_null() {
+            return Err(jvm.exception("java/io/IOException", "Entry not found").await);
+        }
+        let stream: ClassInstanceRef<InputStream> = jvm
+            .invoke_virtual(
+                &zip,
+                "java/util/zip/ZipFile",
+                "getInputStream",
+                "(Ljava/util/zip/ZipEntry;)Ljava/io/InputStream;",
+                (entry,),
+            )
+            .await?;
+
+        jvm.put_field(&mut this, "com/xce/io/XFile", "type", "I", FILE_JAR).await?;
+        jvm.put_field(&mut this, "com/xce/io/XFile", "mode", "I", READ_RESOURCE).await?;
+        jvm.put_field(&mut this, "com/xce/io/XFile", "offset", "I", 0).await?;
+        jvm.put_field(&mut this, "com/xce/io/XFile", "is", "Ljava/io/InputStream;", stream)
+            .await?;
+
+        Ok(())
     }
 
     async fn exists(jvm: &Jvm, context: &mut WieJvmContext, name: ClassInstanceRef<String>) -> JvmResult<bool> {
@@ -832,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_paths_and_unsupported_jar_selection_raise_io_exception() {
+    fn invalid_paths_and_missing_jars_raise_io_exception() {
         let result = run_jvm_test(
             Box::new([Box::new([XFile::as_proto(), FileInputStream::as_proto(), FileOutputStream::as_proto()])]),
             |jvm| async move {
@@ -863,7 +904,64 @@ mod tests {
                     .await
                     .map(Into::into);
                 let Err(JavaError::JavaException(exception)) = jar_result else {
-                    panic!("XFile silently ignored the selected JAR");
+                    panic!("XFile opened an entry of a missing JAR");
+                };
+                assert!(jvm.is_instance(&*exception, "java/io/IOException"));
+
+                Ok(())
+            },
+        );
+
+        assert!(result.is_ok(), "JVM test failed: {result:?}");
+    }
+
+    #[test]
+    fn jar_selection_reads_an_entry_of_a_stored_jar() {
+        // a stored (uncompressed) archive holding `entry.dat` = "wie"
+        const JAR: [i8; 119] = [
+            80, 75, 3, 4, 20, 0, 0, 0, 0, 0, 0, 0, 33, 0, -2, -30, 24, 39, 3, 0, 0, 0, 3, 0, 0, 0, 9, 0, 0, 0, 101, 110, 116, 114, 121, 46, 100, 97,
+            116, 119, 105, 101, 80, 75, 1, 2, 20, 3, 20, 0, 0, 0, 0, 0, 0, 0, 33, 0, -2, -30, 24, 39, 3, 0, 0, 0, 3, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, -128, 1, 0, 0, 0, 0, 101, 110, 116, 114, 121, 46, 100, 97, 116, 80, 75, 5, 6, 0, 0, 0, 0, 1, 0, 1, 0, 55, 0, 0, 0, 42, 0, 0,
+            0, 0, 0,
+        ];
+
+        let result = run_jvm_test(
+            Box::new([Box::new([XFile::as_proto(), FileInputStream::as_proto(), FileOutputStream::as_proto()])]),
+            |jvm| async move {
+                let write: i32 = jvm.get_static_field("com/xce/io/XFile", "WRITE", "I").await?;
+                let jar: ClassInstanceRef<String> = JavaLangString::from_rust_string(&jvm, "other.jar").await?.into();
+                let output: ClassInstanceRef<XFile> = jvm
+                    .new_class("com/xce/io/XFile", "(Ljava/lang/String;I)V", (jar.clone(), write))
+                    .await?
+                    .into();
+                let mut source = jvm.instantiate_array("B", JAR.len()).await?;
+                jvm.store_array(&mut source, 0, JAR).await?;
+                let _: i32 = jvm
+                    .invoke_virtual(&output, "com/xce/io/XFile", "write", "([BII)I", (source, 0, JAR.len() as i32))
+                    .await?;
+                let _: () = jvm.invoke_virtual(&output, "com/xce/io/XFile", "close", "()V", ()).await?;
+
+                let entry: ClassInstanceRef<String> = JavaLangString::from_rust_string(&jvm, "entry.dat").await?.into();
+                let file: ClassInstanceRef<XFile> = jvm
+                    .new_class("com/xce/io/XFile", "(Ljava/lang/String;Ljava/lang/String;)V", (jar.clone(), entry))
+                    .await?
+                    .into();
+                assert_eq!(jvm.invoke_virtual::<_, i32>(&file, "com/xce/io/XFile", "available", "()I", ()).await?, 3);
+                let target: ClassInstanceRef<Array<i8>> = jvm.instantiate_array("B", 3).await?.into();
+                let read: i32 = jvm
+                    .invoke_virtual(&file, "com/xce/io/XFile", "read", "([BII)I", (target.clone(), 0, 3))
+                    .await?;
+                assert_eq!(read, 3);
+                assert_eq!(jvm.load_array::<i8>(&target, 0, 3).await?, [b'w' as i8, b'i' as i8, b'e' as i8]);
+                let _: () = jvm.invoke_virtual(&file, "com/xce/io/XFile", "close", "()V", ()).await?;
+
+                let missing: ClassInstanceRef<String> = JavaLangString::from_rust_string(&jvm, "missing.dat").await?.into();
+                let missing_result: JvmResult<ClassInstanceRef<XFile>> = jvm
+                    .new_class("com/xce/io/XFile", "(Ljava/lang/String;Ljava/lang/String;)V", (jar, missing))
+                    .await
+                    .map(Into::into);
+                let Err(JavaError::JavaException(exception)) = missing_result else {
+                    panic!("XFile opened an entry the JAR does not hold");
                 };
                 assert!(jvm.is_instance(&*exception, "java/io/IOException"));
 

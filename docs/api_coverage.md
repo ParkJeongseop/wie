@@ -230,6 +230,16 @@ Device, SISImage and 3D are thin.
     title in the library that calls it, passes null second and a 240x1 strip
     fifth, so every row of its screen transition threw NullPointerException
     (swallowed) and the title sat on a black screen behind 400 refreshes.
+  - `XFile(String jarfile, String name)` opens an entry of another JAR in the
+    application's storage (type `FILE_JAR`), read like a resource:
+    `available`, `read`, `close`. It threw IOException as unsupported;
+    프린세스메이커4 keeps its whole script in `data.jar` (`data<n>.txt`, 73
+    entries) beside the application JAR, so every scene was an empty backdrop
+    with the IOException and the NullPointerException that follows swallowed
+    — 124 pairs in 40 s, in a run the sweep counted as OK (2026-11-28). None of
+    the references implements this constructor; the meaning is taken from the
+    signature and the title's call (`new XFile("data.jar", "data" + n +
+    ".txt")`, `available()`, one `read` of that size, `close()`).
     Result: both copies go from a black screen to 36 distinct frames in 40 s (SK-VM 82 to 84 of 90).
   - Result: 82 of the 90 titles progress in a 40 s run with OK every 3 s, 70 before and none worse. 디지몬 RPG II, 코인마스터, 포켓올림픽, 바운티블루스, 어스토니시아ep3, 드래곤아이즈, 센티멘탈러브 and 포트리스 no longer fail at start, 테일즈 오브 히어로즈 gets past the screen it sat on, 미니고치 (both copies) and 서울타이쿤 reach their name entry, 택티컬퀘스트 its character-name screen (one swallowed ArrayIndexOutOfBoundsException in its paint). Every changed title was looked at on contact sheets. The 44-title KTF / LGT WIPI / ez-java sample (16 s) is identical to the baseline, so the shared MIDP and RustJava changes cost nothing there.
   - Still failing: 다크슬레이어2 (both copies: draws its logo, then a black screen and no further drawing — open, see NEXT_SESSION), 크레이지버스 (`m.V3` / `m.A3`, a vector package the jar does not ship and no reference names), 메이플스토리 전사편 J2ME 호환판 (a bare J2ME jar without an .msd, "Unknown archive format"); 어스토니시아ep1 / ep2, 레스토랑타이쿤2006 and 불멸의용병 sit on a title or menu that OK does not advance (digit keys), which is the key script, not the runtime.
