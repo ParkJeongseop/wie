@@ -19,6 +19,9 @@ use crate::runtime::globals::{DISPLAY_PROPERTIES_ROOT, GRAPHICS_STATE_ROOT};
 
 const FRAMEBUFFER_DEPTH: u32 = 16;
 
+/// The pixel operation a context has once its alpha is set: the platform's own blend by that alpha.
+const ALPHA_PIXEL_OP: WIPICWord = 1;
+
 #[derive(Clone, Copy, Pod, Zeroable)]
 #[repr(C)]
 struct LgtGraphicsState {
@@ -61,6 +64,7 @@ struct ResolvedContext {
     translation_x: i32,
     translation_y: i32,
     foreground: u32,
+    alpha: u8,
 }
 
 pub fn init_process_state(core: &mut ArmCore, physical_width: u32, physical_height: u32) -> Result<()> {
@@ -320,6 +324,11 @@ fn normalize_context(raw: LgtGraphicsContext, framebuffer: LgtFramebuffer, view:
         translation_x: raw.offset_x,
         translation_y: raw.offset_y.wrapping_add(adjust_y),
         foreground: raw.foreground,
+        alpha: if raw.pixel_op == ALPHA_PIXEL_OP && raw.xor_enabled == 0 {
+            raw.alpha.min(255) as u8
+        } else {
+            255
+        },
     }
 }
 
@@ -525,7 +534,11 @@ pub async fn set_context(context: &mut dyn WIPICContext, ptr_context: WIPICWord,
         1 => graphics.foreground = value,
         2 => graphics.background = value,
         3 => {}
-        4 if value <= 255 => graphics.alpha = value,
+        4 if value <= 255 => {
+            graphics.alpha = value;
+            graphics.pixel_op = ALPHA_PIXEL_OP;
+            graphics.pixel_param = value;
+        }
         5 => graphics.pixel_op = value,
         6 => graphics.pixel_param = value,
         7 => graphics.font = value,
@@ -536,7 +549,7 @@ pub async fn set_context(context: &mut dyn WIPICContext, ptr_context: WIPICWord,
         }
         9 => {
             graphics.alpha = 0;
-            graphics.pixel_op = 1;
+            graphics.pixel_op = ALPHA_PIXEL_OP;
             graphics.xor_enabled = 1;
         }
         10 if value != 0 => {
@@ -607,7 +620,7 @@ pub async fn put_pixel(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x:
         y.wrapping_add(graphics.translation_y),
         color,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -635,7 +648,7 @@ pub async fn fill_rect(
         height as u32,
         color,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -660,7 +673,7 @@ pub async fn draw_line(
         y2.wrapping_add(graphics.translation_y),
         color,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -688,7 +701,7 @@ pub async fn draw_rect(
         height.saturating_sub(1) as u32,
         color,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -721,7 +734,7 @@ pub async fn draw_arc(
         end_angle.wrapping_sub(start_angle),
         color,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -754,7 +767,7 @@ pub async fn fill_arc(
         end_angle.wrapping_sub(start_angle),
         color,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -789,7 +802,7 @@ pub async fn draw_image(
         source_x,
         source_y,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -825,7 +838,7 @@ pub async fn copy_frame_buffer(
         source_x,
         source_y,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -858,7 +871,7 @@ pub async fn copy_area(
         source_x.wrapping_add(graphics.translation_x),
         source_y.wrapping_add(graphics.translation_y),
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -890,7 +903,7 @@ pub async fn draw_string(
         y.wrapping_add(graphics.translation_y),
         color,
         graphics.clip,
-        255,
+        graphics.alpha,
     )
 }
 
@@ -1144,6 +1157,12 @@ mod tests {
                     [value, u32::MAX, u32::MAX, u32::MAX, u32::MAX]
                 );
             }
+            // Setting the alpha leaves the platform's blend as the operation, with the alpha as its parameter.
+            set_context(&mut context, graphics, 4, 96).await.unwrap();
+            for (operation, value) in [(5, 1), (6, 96)] {
+                get_context(&mut context, graphics, operation, buffer).await.unwrap();
+                assert_eq!(read_generic::<u32, _>(&context, buffer).unwrap(), value);
+            }
             write_generic(&mut context, buffer, [-3i32, 2, 27, 41, 123]).unwrap();
             set_context(&mut context, graphics, 0, buffer).await.unwrap();
             write_generic(&mut context, buffer, [123i32; 5]).unwrap();
@@ -1313,5 +1332,16 @@ mod tests {
         assert_eq!(normalized.translation_x, 3);
         assert_eq!(normalized.translation_y, 28);
         assert_eq!(normalized.foreground, 0xf800);
+        assert_eq!(normalized.alpha, 255);
+
+        // The alpha counts once it is the context's operation; a record that only holds a number there draws as it is.
+        let blended = LgtGraphicsContext {
+            alpha: 96,
+            pixel_op: 1,
+            ..raw
+        };
+        assert_eq!(normalize_context(blended, framebuffer, view, state).alpha, 96);
+        let plain = LgtGraphicsContext { alpha: 96, ..raw };
+        assert_eq!(normalize_context(plain, framebuffer, view, state).alpha, 255);
     }
 }

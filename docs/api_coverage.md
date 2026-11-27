@@ -1887,8 +1887,26 @@ Aggregating crashes during the 30s input scenario:
   seconds for a virtual minute instead of 0.7, 랩업만이살길 2.5 instead of 1.7, 럭키당구 3.9 instead
   of 3.5 and 액션히어로3D 1.9 instead of 1.7; the other 74 KTF C titles keep their frames and their
   sweep status. The transparent pixel,
-  XOR mode and style of the context are still not applied, and the LGT draws apply none of this (no
-  LGT title of the 79 has been seen to need it; their frames are byte-identical).
+  XOR mode and style of the context are still not applied.
+- An LGT draw blends by the context's alpha (2026-11-27). The LGT draws are their own
+  implementation over the same primitives and passed none of the context's alpha on. Twenty of the
+  79 LGT C titles set `MC_GRP_CONTEXT_ALPHA_IDX`, twelve of them to something short of opaque.
+  Setting it now marks the record's operation as the platform's blend and copies the alpha into the
+  parameter, as on KTF; the titles agree with that reading where they can be told apart — 크로이센
+  puts the alpha, then the parameter, then the operation back after a fade, and 게임빌2010슈퍼사커
+  clears the operation before it sets an alpha, never after. A record whose operation is none, a
+  title's function or XOR draws as before. Five titles change: 테라-영원의혼돈's publisher logo was
+  hidden under the white rectangle that fades it in, 메탈슬러그 서바이벌's and 테일즈위버
+  이스핀편's notice boxes and 창세기전3ep1's copyright strip are tinted panels instead of solid
+  ones, and 게임빌2010슈퍼사커's menu gets its translucent bar. The titles that blend in their own
+  blitters (메이플스토리 도적편, 일지매영웅전기2, 데몬헌터, 크로이센) read the alpha from the record
+  themselves and are unchanged; the sweep status of all 79 is unchanged.
+  One LGT title installs functions of its own: 몬스터마스터 sets `MC_GRP_CONTEXT_PIXELOP_IDX` after
+  every alpha. Its three functions take their arguments the other way round from the KTF titles —
+  `(pixel already there, pixel being written)`: each answers its first argument when the second is
+  its key colour, and its second when its alpha is 255. They are not called yet (the title stops at
+  its network certificate dialog either way, drawn as before); calling them the KTF way would leave
+  that dialog blank.
 
 Keep this document updated in the same change set as the implementation work
 it describes.
