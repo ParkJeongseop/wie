@@ -1832,6 +1832,22 @@ Aggregating crashes during the 30s input scenario:
   the first byte of a character already weighs as much as the character; measured as half a cell, the
   break fell through the middle of one and the halves drew as unknown glyphs on both lines
   ("별도의 □" / "□□□ 발생하지"). The decoded text is unchanged for a length that ends on a character.
+- `MC_GrpContext` is laid out per carrier (2026-11-27). The record belongs to the title, which may
+  read it instead of asking `MC_grpGetContext`: 크로이센 sets `MC_GRP_CONTEXT_ALPHA_IDX` to 0xff and
+  its own blitter then takes the opacity straight from the record. The two builds of that one title
+  read different offsets — the LGT build the byte at 0x18, the KTF build the word at 0x20 — and the
+  KTF binary reserves 0x40 bytes for the record where the LGT shape needs 0x34. KTF keeps the clip
+  and the offset as `M_Int32` (mask 0x00, clip 0x04, foreground 0x14, background 0x18, transparent
+  0x1c, alpha 0x20, offset 0x24, pixel operation 0x2c, then parameter, reserved, font, style); LGT
+  keeps them as 16-bit fields (alpha 0x18). With the LGT shape on KTF the title read our pixel
+  operation pointer, 0, as its alpha: every blended draw came out as background × 255 / 256, which
+  left the dialogue text a shade off its panel, the logos faint and the sprites missing. Each
+  platform now declares its layout through `WIPICContext::graphics_context_layout` and the graphics
+  calls read and write the record through it; the values kept are the same on both. Three more KTF C
+  titles of the 78 changed with it, all for the better and none of them told apart by the sweep's
+  status: 헬싱 (white logo screen, story subtitles and the red bands of its menu, all absent before),
+  액션히어로3D (title logo, combo counter and item bar) and 폴라폴리2007 (cell outlines). The 79 LGT
+  titles are byte-identical.
 
 Keep this document updated in the same change set as the implementation work
 it describes.

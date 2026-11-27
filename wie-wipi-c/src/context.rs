@@ -7,6 +7,7 @@ use wie_util::{ByteRead, ByteWrite, Result};
 
 use crate::{
     WIPICMethodBody,
+    api::graphics::GraphicsContextLayout,
     method::{ParamConverter, ResultConverter},
 };
 
@@ -26,6 +27,8 @@ pub trait WIPICContext: ByteRead + ByteWrite + Send + Sync {
     /// Bytes the guest holds on its heap; what MC_knlGetFreeMemory reports is the reported heap size
     /// less this.
     fn used_memory(&self) -> Result<WIPICWord>;
+    /// Where the carrier's own headers put the fields of `MC_GrpContext`.
+    fn graphics_context_layout(&self) -> GraphicsContextLayout;
 }
 
 pub struct WIPICResult {
@@ -91,7 +94,7 @@ pub mod test {
     use wie_backend::{Instant, System};
     use wie_util::{ByteRead, ByteWrite, Result, WieError};
 
-    use super::{WIPICContext, WIPICMethodBody};
+    use super::{GraphicsContextLayout, WIPICContext, WIPICMethodBody};
 
     const TEST_MEMORY_SIZE: usize = 0x20000;
     const TEST_ALLOC_START: usize = 0x10000;
@@ -103,6 +106,7 @@ pub mod test {
         last_alloc: usize,
         system: Option<System>,
         resources: Vec<(String, Vec<u8>)>,
+        graphics_context_layout: GraphicsContextLayout,
         pub functions: Vec<(WIPICWord, Arc<WIPICMethodBody>)>,
         pub function_calls: Vec<(WIPICWord, Vec<WIPICWord>)>,
         pub timers: VecDeque<(Instant, WIPICMethodBody)>,
@@ -117,6 +121,7 @@ pub mod test {
                 last_alloc: TEST_ALLOC_START,
                 system: None,
                 resources: Vec::new(),
+                graphics_context_layout: GraphicsContextLayout::Narrow,
                 functions: Vec::new(),
                 function_calls: Vec::new(),
                 timers: VecDeque::new(),
@@ -130,6 +135,7 @@ pub mod test {
                 last_alloc: TEST_ALLOC_START,
                 system: Some(system),
                 resources: Vec::new(),
+                graphics_context_layout: GraphicsContextLayout::Narrow,
                 functions: Vec::new(),
                 function_calls: Vec::new(),
                 timers: VecDeque::new(),
@@ -138,6 +144,11 @@ pub mod test {
 
         pub fn with_resource(mut self, name: &str, data: &[u8]) -> Self {
             self.resources.push((String::from(name), data.to_vec()));
+            self
+        }
+
+        pub fn with_graphics_context_layout(mut self, layout: GraphicsContextLayout) -> Self {
+            self.graphics_context_layout = layout;
             self
         }
     }
@@ -180,6 +191,10 @@ pub mod test {
 
         fn used_memory(&self) -> Result<WIPICWord> {
             Ok((self.last_alloc - TEST_ALLOC_START) as WIPICWord)
+        }
+
+        fn graphics_context_layout(&self) -> GraphicsContextLayout {
+            self.graphics_context_layout
         }
 
         fn spawn(&mut self, _callback: WIPICMethodBody) -> Result<()> {

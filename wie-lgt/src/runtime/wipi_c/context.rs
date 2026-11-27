@@ -9,7 +9,7 @@ use wipi_types::wipic::{WIPICIndirectPtr, WIPICWord};
 use wie_backend::{AsyncCallable, Event, Instant, System};
 use wie_core_arm::{Allocator, ArmCore};
 use wie_util::{ByteRead, ByteWrite, Result, WieError, read_generic, write_generic};
-use wie_wipi_c::{WIPICContext, WIPICMethodBody};
+use wie_wipi_c::{WIPICContext, WIPICMethodBody, api::graphics::GraphicsContextLayout};
 
 use crate::runtime::with_arm_context;
 
@@ -35,6 +35,10 @@ impl WIPICContext for LgtWIPICContext {
 
     fn used_memory(&self) -> Result<WIPICWord> {
         Allocator::used_size(&self.core)
+    }
+
+    fn graphics_context_layout(&self) -> GraphicsContextLayout {
+        GraphicsContextLayout::Narrow
     }
 
     fn alloc(&mut self, size: WIPICWord) -> Result<WIPICIndirectPtr> {
