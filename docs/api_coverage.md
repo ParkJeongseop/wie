@@ -671,7 +671,20 @@ runs them on `wie_midp` + `wie_mmpp`.
   (2026-10-29): both were unnamed stubs. 게임빌2010프로야구 posts itself event
   `0xa600` from its first paint through the pair; the event now reaches the
   clet's `handleCletEvent` through the shared `MC_grpPostEvent`. The title still
-  paints nothing after it (its C++ event dispatch does not act on it yet).
+  painted nothing after it, and that was not the event (2026-11-28): its handler
+  for `0xa600` is an empty method; the frames come from a 50 ms `MC_knlSetTimer`
+  the title arms at the end of start-up, unless its error flag is set. The
+  archive carries the handset's first-run files (`P/game_*.sav`, `P/audio.adt`),
+  each holding the subscriber number of the handset it was taken from; the save
+  loader compares that with `PHONENUMBER`, sets the error flag and never arms
+  the timer, and the authentication record alone ends in "인증에 실패하였습니다"
+  and `MC_knlExit`. Without them the title takes its first-run path (server
+  connection attempt, then title, menu and team selection). Like 티어즈오브메탈's
+  save below this is a handset leftover, not the emulator's to fix: the host
+  drops the files (wie-mobile `HANDSET_FILES`, the manifest's `strip` column).
+  영웅서기4's "no frame after 16 s" in the same sweep is the virtual clock: its
+  loading takes 18 virtual seconds (1 ms per clock read) and under a second on
+  the real clock.
 - **LGT modules are entered where their `.raptor` record says** (2026-10-29):
   the toolchain writes the entry a second time in the `.raptor` section (magic
   `RAPT`, then at +12 the entry as an offset from the image base with the
