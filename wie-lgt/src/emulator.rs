@@ -245,7 +245,7 @@ mod tests {
     use wie_core_arm::{Allocator, ArmCore};
     use wie_util::Result;
 
-    use crate::runtime::exception::{pending, pop, push, unwind};
+    use crate::runtime::exception::{pending, push, unwind};
 
     use super::{LgtAppInfo, LgtTaskRunner};
 
@@ -281,8 +281,7 @@ mod tests {
                 YieldFuture::new().await;
                 assert_eq!(pending(&thread_core)?, resume);
 
-                pop(&mut thread_core)?;
-                assert_eq!(pending(&thread_core)?, 0);
+                // delivery consumed the frame, so nothing is left to catch a second exception
                 assert_eq!(unwind(&mut thread_core, 0x5678)?, None);
                 Ok(())
             }))

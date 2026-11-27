@@ -297,7 +297,7 @@ Known functions in Java import table `0x64` are:
 - Instance and static field links produce word indexes rather than byte offsets.
 - Virtual call sites add one word to the virtual-table base before applying the linked virtual index.
 - Descriptor status `3` and class-object word value `5` represent separate stages.
-- Exception imports maintain a native handler stack and expose the currently pending Java exception to generated ARM code.
+- Exception imports maintain a native handler stack and expose the currently pending Java exception to generated ARM code. Delivering an exception removes the handler frame it is delivered to: generated code pops a frame only when its `try` body completes, a catch path continues without popping, and a handler that does not match rethrows expecting the enclosing frame.
 
 ## Unresolved areas
 

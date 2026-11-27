@@ -311,6 +311,19 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **LGT exception delivery consumes the handler frame** (2026-11-28):
+  서든어택포켓 (LGT) died at `Now Loading` with a memory fault at the end of the
+  SVC stub region. Generated LGT code pops an exception-handler frame only when
+  its `try` body completes; a catch path carries on without popping (it may push
+  the next frame straight away) and a handler whose type test fails rethrows
+  through the same import expecting the enclosing frame. The runtime kept the
+  frame current after delivering to it, so a method that caught a
+  `FileNotFoundException` and returned left its frame behind, and the caller's
+  next exception was delivered to that dead frame's stack pointer and return
+  address. Delivery now unlinks and frees the frame. 서든어택포켓 reaches its
+  opening sequence, title, main menu and mission select; the 79-title LGT sweep
+  is otherwise frame-identical (73 OK, unchanged) and its only logged fault is
+  gone.
 - **Text honours its vertical anchor** (2026-11-28): `Graphics.drawString`,
   `drawSubstring`, `drawChar` and `drawChars` placed the top of the text at `y`
   whatever the anchor said, so text drawn with `BOTTOM` or `BASELINE` sat a line

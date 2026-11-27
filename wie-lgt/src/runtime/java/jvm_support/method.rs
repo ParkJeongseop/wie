@@ -512,8 +512,6 @@ mod tests {
             let pending = LgtJvmSupport::class_instance_from_raw(&core, exception::pending(&core)?);
             assert!(jvm.is_instance(&*pending, "org/kwis/msp/db/DataBaseRecordException"));
             assert_eq!(core.save_context().sp, context.sp);
-            exception::pop(&mut core)?;
-            assert_eq!(exception::pending(&core)?, 0);
 
             register_java_system_svc_handler(&mut core, &jvm, 0)?;
             let initialize = get_java_interface_method(&mut core, 0x0d)?;
@@ -555,7 +553,6 @@ mod tests {
                 pending.class_definition().name()
             );
             assert_eq!(core.save_context().sp, context.sp);
-            exception::pop(&mut core)?;
 
             done_clone.store(true, Ordering::Relaxed);
             Ok(())
