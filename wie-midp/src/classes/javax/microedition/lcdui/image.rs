@@ -472,6 +472,8 @@ where
     fn row<'a>(raw_buffer: &dyn ArrayRawBufferMut, rows: &'a mut Rows<T>, width: i32, y: i32) -> &'a mut (Vec<T::DataType>, bool) {
         if rows.rows.is_empty() {
             rows.top = y;
+            // A drawing call mostly takes a run of rows; room for a few saves growing through the first sizes.
+            rows.rows.reserve(32);
         }
         while y < rows.top {
             rows.rows.push_front((Vec::new(), false));

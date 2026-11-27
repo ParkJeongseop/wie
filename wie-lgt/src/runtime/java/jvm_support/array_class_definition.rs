@@ -4,8 +4,8 @@ use core::fmt::{self, Debug, Formatter};
 use jvm::{ArrayClassDefinition, ClassDefinition, ClassInstance, JavaType, Jvm, Result as JvmResult};
 
 use wie_core_arm::ArmCore;
-use wie_jvm_support::native::array_element_size;
-use wie_util::{Result, WieError};
+use wie_jvm_support::native::{array_element_size, primitive_array_element_type};
+use wie_util::{Result, WieError, read_generic};
 
 use crate::runtime::java::JavaSvcFunctions;
 
@@ -36,8 +36,12 @@ impl JavaArrayClassDefinition {
         array_element_size(&self.element_type())
     }
 
+    /// The element type, told for a primitive array by the three bytes its class name takes.
     pub fn element_type(&self) -> JavaType {
-        JavaType::parse(&self.element_type_descriptor())
+        read_generic(&self.core, self.class.descriptor().unwrap().ptr_name)
+            .ok()
+            .and_then(primitive_array_element_type)
+            .unwrap_or_else(|| JavaType::parse(&self.element_type_descriptor()))
     }
 }
 

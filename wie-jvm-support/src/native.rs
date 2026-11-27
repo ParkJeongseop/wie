@@ -96,6 +96,26 @@ pub fn decode_method_arguments(codec: &impl NativeJavaValueCodec, types: &[JavaT
         .collect()
 }
 
+/// The element type of the primitive array class whose name starts with `name`, which is all of such a name
+/// with its terminator. None for an array of anything else and for what is not an array class name.
+pub fn primitive_array_element_type(name: [u8; 3]) -> Option<JavaType> {
+    let [b'[', element, 0] = name else {
+        return None;
+    };
+
+    Some(match element {
+        b'Z' => JavaType::Boolean,
+        b'B' => JavaType::Byte,
+        b'C' => JavaType::Char,
+        b'S' => JavaType::Short,
+        b'I' => JavaType::Int,
+        b'F' => JavaType::Float,
+        b'J' => JavaType::Long,
+        b'D' => JavaType::Double,
+        _ => return None,
+    })
+}
+
 pub fn array_element_size(r#type: &JavaType) -> usize {
     match r#type {
         JavaType::Boolean | JavaType::Byte => 1,

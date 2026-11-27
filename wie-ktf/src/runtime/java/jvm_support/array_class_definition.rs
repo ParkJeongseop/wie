@@ -13,7 +13,7 @@ use jvm::{ArrayClassDefinition, ClassInstance, JavaType, Jvm, Result as JvmResul
 use wipi_types::ktf::java::{JavaClass as RawJavaClass, JavaClassDescriptor as RawJavaClassDescriptor};
 
 use wie_core_arm::{Allocator, ArmCore};
-use wie_jvm_support::native::array_element_size;
+use wie_jvm_support::native::{array_element_size, primitive_array_element_type};
 use wie_util::{read_generic, write_generic, write_null_terminated_string_bytes};
 
 use super::{KtfJvmSupport, Result, array_class_instance::JavaArrayClassInstance, class_definition::JavaClassDefinition};
@@ -97,16 +97,26 @@ impl JavaArrayClassDefinition {
         Ok(class_name[1..].to_string())
     }
 
-    pub fn element_size(&self) -> Result<usize> {
+    /// The element type, told for a primitive array by the three bytes its class name takes.
+    pub fn element_type(&self) -> Result<JavaType> {
+        let raw: RawJavaClass = read_generic(&self.core, self.class.ptr_raw)?;
+        let descriptor: RawJavaClassDescriptor = read_generic(&self.core, raw.ptr_descriptor)?;
+        if let Some(element_type) = read_generic(&self.core, descriptor.ptr_name).ok().and_then(primitive_array_element_type) {
+            return Ok(element_type);
+        }
+
         let descriptor = self.element_type_descriptor()?;
         // Apps sometimes hand us a non-array object where an array is expected;
-        // the "descriptor" is then garbage. Fall back to pointer size with a
+        // the "descriptor" is then garbage. Fall back to object elements with a
         // warning instead of aborting on the parse.
-        let Some(r#type) = JavaType::try_parse(&descriptor) else {
-            tracing::warn!("invalid array element descriptor {descriptor:?}; assuming pointer-sized elements");
-            return Ok(4);
-        };
-        Ok(array_element_size(&r#type))
+        Ok(JavaType::try_parse(&descriptor).unwrap_or_else(|| {
+            tracing::warn!("invalid array element descriptor {descriptor:?}; assuming object elements");
+            JavaType::Class("java/lang/Object".into())
+        }))
+    }
+
+    pub fn element_size(&self) -> Result<usize> {
+        Ok(array_element_size(&self.element_type()?))
     }
 }
 

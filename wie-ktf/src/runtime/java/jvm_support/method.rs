@@ -182,7 +182,8 @@ impl JavaMethod {
 
             result?
         } else {
-            let mut params = vec![0];
+            let mut params = Vec::with_capacity(raw_args.len() + 1);
+            params.push(0);
             params.extend(raw_args);
 
             tracing::trace!("Calling method: {:#x}", raw.fn_body);
@@ -429,8 +430,9 @@ where
             if matches!(param, JavaType::Array(_))
                 && let JavaValue::Object(Some(obj)) = value
                 && let Some(instance) = obj.as_any().downcast_ref::<JavaClassInstance>()
-                && let Ok(name) = instance.class().and_then(|x| x.name())
-                && !name.starts_with('[')
+                && let Ok(class) = instance.class()
+                && let Ok(false) = class.is_array()
+                && let Ok(name) = class.name()
             {
                 let (pc, lr) = core.read_pc_lr().unwrap_or((0, 0));
                 tracing::warn!(
