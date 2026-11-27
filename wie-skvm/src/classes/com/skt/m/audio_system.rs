@@ -87,22 +87,27 @@ impl AudioSystem {
         Ok(Self::MAX_VOLUME)
     }
 
-    async fn get_volume(jvm: &Jvm, _context: &mut WieJvmContext, format: ClassInstanceRef<String>) -> JvmResult<i32> {
-        tracing::warn!("stub com.skt.m.AudioSystem::getVolume({format:?})");
+    async fn get_volume(jvm: &Jvm, context: &mut WieJvmContext, format: ClassInstanceRef<String>) -> JvmResult<i32> {
+        tracing::debug!("com.skt.m.AudioSystem::getVolume({format:?})");
 
         if format.is_null() {
             return Err(jvm.exception("java/lang/NullPointerException", "format is null").await);
         }
 
-        Ok(0)
+        Ok(context.system().audio().volume() as i32 * Self::MAX_VOLUME / 100)
     }
 
-    async fn set_volume(jvm: &Jvm, _context: &mut WieJvmContext, format: ClassInstanceRef<String>, level: i32) -> JvmResult<()> {
-        tracing::warn!("stub com.skt.m.AudioSystem::setVolume({format:?}, {level})");
+    async fn set_volume(jvm: &Jvm, context: &mut WieJvmContext, format: ClassInstanceRef<String>, level: i32) -> JvmResult<()> {
+        tracing::debug!("com.skt.m.AudioSystem::setVolume({format:?}, {level})");
 
         if format.is_null() {
             return Err(jvm.exception("java/lang/NullPointerException", "format is null").await);
         }
+
+        context
+            .system()
+            .audio()
+            .set_volume((level.clamp(0, Self::MAX_VOLUME) * 100 / Self::MAX_VOLUME) as _);
 
         Ok(())
     }
@@ -112,14 +117,14 @@ impl AudioSystem {
 mod test {
     use alloc::boxed::Box;
 
-    use jvm::{ClassInstanceRef, JavaError, Result as JvmResult};
+    use jvm::{ClassInstanceRef, JavaError, Result as JvmResult, runtime::JavaLangString};
     use rustjava_runtime::classes::java::lang::String;
     use test_utils::run_jvm_test;
 
     use crate::{classes::com::skt::m::AudioClip, get_protos};
 
     #[test]
-    fn audio_system_rejects_null_format_arguments() {
+    fn audio_system_keeps_the_volume_and_rejects_null_format_arguments() {
         let result = run_jvm_test(Box::new([wie_midp::get_protos().into(), get_protos().into()]), |jvm| async move {
             let null_format = ClassInstanceRef::<String>::new(None);
 
@@ -153,6 +158,15 @@ mod test {
                 panic!("AudioSystem.setVolume accepted a null format");
             };
             assert!(jvm.is_instance(&*exception, "java/lang/NullPointerException"));
+
+            let format: ClassInstanceRef<String> = JavaLangString::from_rust_string(&jvm, "mmf").await?.into();
+            let _: () = jvm
+                .invoke_static("com/skt/m/AudioSystem", "setVolume", "(Ljava/lang/String;I)V", (format.clone(), 6))
+                .await?;
+            let volume: i32 = jvm
+                .invoke_static("com/skt/m/AudioSystem", "getVolume", "(Ljava/lang/String;)I", (format,))
+                .await?;
+            assert_eq!(volume, 6);
 
             Ok(())
         });

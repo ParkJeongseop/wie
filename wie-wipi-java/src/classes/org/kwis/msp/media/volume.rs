@@ -48,14 +48,16 @@ impl Volume {
         }
     }
 
-    async fn get(_: &Jvm, _: &mut WieJvmContext) -> JvmResult<i32> {
-        tracing::warn!("stub org.kwis.msp.media.Volume::get()");
+    async fn get(_: &Jvm, context: &mut WieJvmContext) -> JvmResult<i32> {
+        tracing::debug!("org.kwis.msp.media.Volume::get()");
 
-        Ok(0)
+        Ok(context.system().audio().volume() as _)
     }
 
-    async fn set(_: &Jvm, _: &mut WieJvmContext, level: i32) -> JvmResult<()> {
-        tracing::warn!("stub org.kwis.msp.media.Volume::set({level})");
+    async fn set(_: &Jvm, context: &mut WieJvmContext, level: i32) -> JvmResult<()> {
+        tracing::debug!("org.kwis.msp.media.Volume::set({level})");
+
+        context.system().audio().set_volume(level.clamp(0, 100) as _);
 
         Ok(())
     }

@@ -170,33 +170,43 @@ pub async fn clip_set_position(_context: &mut dyn WIPICContext, clip: WIPICWord,
     Ok(0)
 }
 
-pub async fn clip_get_volume(_context: &mut dyn WIPICContext, clip: WIPICWord) -> Result<WIPICWord> {
-    tracing::warn!("stub MC_mdaClipGetVolume({clip:#x})");
+pub async fn clip_get_volume(context: &mut dyn WIPICContext, clip: WIPICWord) -> Result<WIPICWord> {
+    tracing::debug!("MC_mdaClipGetVolume({clip:#x})");
+
+    Ok(context.system().audio().volume() as _)
+}
+
+// No clip has a volume of its own here: every clip shares the device's, which the specification allows.
+pub async fn clip_set_volume(context: &mut dyn WIPICContext, clip: WIPICWord, volume: i32) -> Result<WIPICWord> {
+    tracing::debug!("MC_mdaClipSetVolume({clip:#x}, {volume})");
+
+    // titles set the volume of a clip they failed to create
+    if clip != 0 {
+        context.system().audio().set_volume(volume.clamp(0, 100) as _);
+    }
 
     Ok(0)
 }
 
-pub async fn clip_set_volume(_context: &mut dyn WIPICContext, clip: WIPICWord, volume: WIPICWord) -> Result<WIPICWord> {
-    tracing::warn!("stub MC_mdaClipSetVolume({clip:#x}, {volume:#x})");
+pub async fn get_volume(context: &mut dyn WIPICContext) -> Result<WIPICWord> {
+    tracing::debug!("MC_mdaGetVolume()");
 
-    Ok(0)
+    Ok(context.system().audio().volume() as _)
 }
 
-pub async fn get_volume(_context: &mut dyn WIPICContext) -> Result<WIPICWord> {
-    tracing::warn!("stub MC_mdaGetVolume()");
+pub async fn set_volume(context: &mut dyn WIPICContext, volume: i32) -> Result<()> {
+    tracing::debug!("MC_mdaSetVolume({volume})");
 
-    Ok(0)
-}
-
-pub async fn set_volume(_context: &mut dyn WIPICContext, volume: i32) -> Result<()> {
-    tracing::warn!("stub MC_mdaSetVolume({volume})");
+    context.system().audio().set_volume(volume.clamp(0, 100) as _);
 
     Ok(())
 }
 
-pub async fn get_default_volume(_context: &mut dyn WIPICContext, category: WIPICWord) -> Result<i32> {
-    tracing::warn!("stub OEMC_mdaGetDefaultVolume({category:#x})");
-    Ok(0)
+// Whichever category is asked for, the level a title starts from is the device's.
+pub async fn get_default_volume(context: &mut dyn WIPICContext, category: WIPICWord) -> Result<i32> {
+    tracing::debug!("OEMC_mdaGetDefaultVolume({category:#x})");
+
+    Ok(context.system().audio().volume() as _)
 }
 
 pub async fn play(context: &mut dyn WIPICContext, ptr_clip: WIPICWord, repeat: WIPICWord) -> Result<i32> {

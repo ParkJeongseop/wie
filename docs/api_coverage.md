@@ -29,7 +29,7 @@ See also `CONTRIBUTING.md`.
 |-------|---------|-------------|--------------|
 | `wie_wipi_c` | WIPI-C (104 fns) | ~66% | fonts, audio control, network, UIC widgets |
 | `wie_wipi_java` | `org.kwis.*` | ~62% | LWC widgets (20 classes missing), `msf.core`/`msf.io` networking, Display capability queries |
-| `wie_skvm` | `com.skt.m.*`, `com.xce.*` | ~65% of 262 methods; every class, method and field the 90 SKT titles link against | audio volume, Device control, SISImage, 3D, SMS |
+| `wie_skvm` | `com.skt.m.*`, `com.xce.*` | ~65% of 262 methods; every class, method and field the 90 SKT titles link against | Device control, SISImage, 3D, SMS |
 | `wie_midp` | `javax.microedition.*` | ~60% | Alert/Form/Command, media.control |
 | `wie_mmpp` | LGT `mmpp.*` (LG MMPP) | 8 of 14 classes; everything the 105 ez-java titles link against | TextFieldX Hangul/symbol input, MathFP trigonometry, `mmpp.media.phrase`, Beep, LED |
 | carrier ext | KTF `kfc`/`wec` | 0% | entire namespaces unimplemented |
@@ -46,9 +46,10 @@ fonts, audio control, networking, and the UIC widget system are the weak spots.
   decode/draw, copy_area, offscreen buffers, RGB<->pixel are IMPL. STUB: all
   font metrics (`get_font`, `get_font_height/ascent/descent` return constants).
 - **database** — fully IMPL (stream + record modes, KTF variants, write-through).
-- **media** — `clip_put_data`, `play`, `stop`, `vibrator` are IMPL. STUB:
-  `pause`, `resume`, `record`, all volume/mute (`clip_set_volume`,
-  `clip_get_volume`, `get_volume`, `set/get_mute_state`), `clip_get_type/info`.
+- **media** — `clip_put_data`, `play`, `stop`, `vibrator` and the volume
+  (`get/set_volume`, `clip_get/set_volume`, `get_default_volume`: one device
+  volume, of which only silence is applied) are IMPL. STUB: `pause`, `resume`,
+  `record`, `set/get_mute_state`, `clip_get_type/info`.
 - **net** — `connect`, `close`, `socket_close` are STUB (fail immediately).
 - **uic** — entire WIPI native widget surface is STUB
   (`create_application_context`, `get_class`, `create`, `destroy`, `get_menu_item`).
@@ -126,8 +127,9 @@ Device, SISImage and 3D are thin.
   it for Korean text), **TextComponentHandler + TextComponent** (the handset's
   keypad input method: 천지인 Hangul, English multi-tap, digits — see below),
   XEventHandler, InputMethodHandler, XTextField (text state, keypad input,
-  paint), AudioSystem.getMaxVolume.
-- **STUB**: AudioSystem get/setVolume, Device (setColorMode/backlight/keytone/…;
+  paint), AudioSystem.getMaxVolume / getVolume / setVolume (the device volume
+  in tenths).
+- **STUB**: Device (setColorMode/backlight/keytone/…;
   isKeyToneEnabled exists but returns a constant), BackLight, Call, PhoneBook,
   SISImage, SMS (partly), Graphics3D / Object3D (3D), Graphics2D.captureLCD,
   XDisplay copyLCD / refresh (refresh requests a redraw), XFile.fsavail /
@@ -1613,7 +1615,8 @@ Common gaps ranked by how many games they affect:
    Graphics honors it. Remaining: `wie_wipi_c` `get_font*` metrics and
    face/style rendering.
 2. ~~**Audio playback (SKVM)**~~ — done: `WieAudioClip` plays through the
-   backend SMAF audio. Remaining: volume/mute and pause/resume across crates.
+   backend SMAF audio. Remaining: volume levels short of silence, mute and
+   pause/resume across crates.
 3. ~~**Display capability queries**~~ — done for the color/depth/repeat
    queries (report against the 16bpp color framebuffer). Note: only lightly
    exercised by the current 31-game sample (getBitsPerPixel by one game), so
@@ -2091,6 +2094,26 @@ Aggregating crashes during the 30s input scenario:
   its key colour, and its second when its alpha is 255. They are not called yet (the title stops at
   its network certificate dialog either way, drawn as before); calling them the KTF way would leave
   that dialog blank.
+- The device has a volume, and a volume of 0 is silence (2026-11-28). Every volume call was a stub
+  that answered 0: 223 of the 595 titles call one (112 KTF, 53 LGT, 58 SK-VM). There is now one
+  device volume, 0 to 100 and 100 until a title sets it, behind `MC_mdaGetVolume` /
+  `MC_mdaSetVolume`, `MC_mdaClipGetVolume` / `MC_mdaClipSetVolume` (the specification lets clips
+  share one volume source), `OEMC_mdaGetDefaultVolume`, `org.kwis.msp.media.Volume.get` / `set` and
+  `com.skt.m.AudioSystem.getVolume` / `setVolume` (in tenths). A getter has to answer before a
+  setter can be believed: the Com2uS titles (미니게임천국, 액션퍼즐패밀리, 붕어빵타이쿤3, …) read
+  the volume of a scratch clip once and set it on every clip they play, so they were setting the
+  stub's 0. Only silence reaches the output. While the volume is 0 nothing is played, what was
+  playing stops, and a repeating clip starts again when the volume is raised. Titles turn their
+  sound off this way and go on calling play: 드래곤로드 sets 70 on a clean start and 0 with the
+  sound switched off in its save, then plays its title music either way; 데몬헌터 sets 0 on each
+  clip before playing it; 리듬페스티발 plays a clip at 0 to time the handset for its sync
+  calibration. All three were audible. Levels between are kept and answered but not applied: the
+  titles set 40 to 60 for the most part, some 20, and the SK-VM titles disagree about the scale
+  (엑스피드스노보드 assumes a maximum of 5, 노리타이쿤 starts from 50), so applying them would
+  make most titles quieter than now by an amount nobody has heard. Mute state stays a stub on
+  purpose: about thirty LGT titles call `MC_mdaSetMuteState(6, 1)` at start as boilerplate, on a
+  source that is not the game's. Frames and the number of play calls of all 223 titles are
+  unchanged.
 
 Keep this document updated in the same change set as the implementation work
 it describes.

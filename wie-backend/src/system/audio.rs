@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, collections::BTreeMap, collections::BTreeSet, sync::Arc, vec, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec, vec::Vec};
 
 use smaf_player::{SmafEvent, parse_smaf};
 
@@ -12,8 +12,10 @@ pub enum AudioError {
 pub struct Audio {
     sink: Box<dyn AudioSink>,
     files: BTreeMap<AudioHandle, Arc<AudioSequence>>,
-    playing: BTreeSet<AudioHandle>,
+    // whether each started playback repeats
+    playing: BTreeMap<AudioHandle, bool>,
     last_audio_handle: AudioHandle,
+    volume: u8,
 }
 
 impl Audio {
@@ -21,8 +23,9 @@ impl Audio {
         Self {
             sink,
             files: BTreeMap::new(),
-            playing: BTreeSet::new(),
+            playing: BTreeMap::new(),
             last_audio_handle: 0,
+            volume: 100,
         }
     }
 
@@ -40,12 +43,14 @@ impl Audio {
         let sequence = self.files.get(&audio_handle).cloned().ok_or(AudioError::InvalidHandle)?;
 
         self.stop(audio_handle);
-        self.playing.insert(audio_handle);
-        self.sink.send(AudioCommand::Play {
-            handle: audio_handle,
-            sequence,
-            repeat,
-        });
+        self.playing.insert(audio_handle, repeat);
+        if self.volume != 0 {
+            self.sink.send(AudioCommand::Play {
+                handle: audio_handle,
+                sequence,
+                repeat,
+            });
+        }
 
         Ok(())
     }
@@ -56,8 +61,37 @@ impl Audio {
     }
 
     pub fn stop(&mut self, audio_handle: AudioHandle) {
-        if self.playing.remove(&audio_handle) {
+        if self.playing.remove(&audio_handle).is_some() && self.volume != 0 {
             self.sink.send(AudioCommand::Stop { handle: audio_handle });
+        }
+    }
+
+    /// The device's volume, 0 (silent) to 100. Every clip plays through it.
+    pub fn volume(&self) -> u8 {
+        self.volume
+    }
+
+    /// Only silence reaches the output: titles turn their sound off by setting the volume to 0 and go on playing.
+    pub fn set_volume(&mut self, volume: u8) {
+        let was_silent = self.volume == 0;
+        self.volume = volume.min(100);
+
+        if self.volume == 0 && !was_silent {
+            for &handle in self.playing.keys() {
+                self.sink.send(AudioCommand::Stop { handle });
+            }
+        } else if self.volume != 0 && was_silent {
+            // a clip that plays once has had its turn by now
+            self.playing.retain(|_, repeat| *repeat);
+            for &handle in self.playing.keys() {
+                if let Some(sequence) = self.files.get(&handle) {
+                    self.sink.send(AudioCommand::Play {
+                        handle,
+                        sequence: sequence.clone(),
+                        repeat: true,
+                    });
+                }
+            }
         }
     }
 
@@ -192,5 +226,26 @@ mod tests {
 
         assert_eq!(commands.lock().unwrap()[1], AudioCommand::Stop { handle });
         assert!(audio.play(handle, false).is_err());
+    }
+
+    #[test]
+    fn zero_volume_silences_playback_until_it_is_raised() {
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let mut audio = Audio::new(Box::new(RecordingSink(commands.clone())));
+        let looped = audio.load_smaf(&[]).unwrap();
+        let once = audio.load_smaf(&[]).unwrap();
+
+        audio.play(looped, true).unwrap();
+        audio.set_volume(0);
+        audio.play(once, false).unwrap();
+        audio.stop(once);
+        audio.play(once, false).unwrap();
+        assert_eq!(commands.lock().unwrap()[1..], [AudioCommand::Stop { handle: looped }]);
+
+        audio.set_volume(60);
+        assert_eq!(audio.volume(), 60);
+        let commands = commands.lock().unwrap();
+        assert!(matches!(commands[2], AudioCommand::Play { handle, repeat: true, .. } if handle == looped));
+        assert_eq!(commands.len(), 3);
     }
 }
