@@ -202,19 +202,10 @@ pub async fn unset_timer(context: &mut dyn WIPICContext, ptr_timer: WIPICWord) -
     cancel_timer(context, ptr_timer)
 }
 
-pub async fn alloc(context: &mut dyn WIPICContext, size: WIPICWord) -> Result<WIPICIndirectPtr> {
-    tracing::debug!("MC_knlAlloc({size:#x})");
-
-    if size == 0 {
-        return Ok(WIPICIndirectPtr(0));
-    }
-
-    context.alloc(size)
-}
-
-pub async fn calloc(context: &mut dyn WIPICContext, size: WIPICWord) -> Result<WIPICIndirectPtr> {
-    tracing::debug!("MC_knlCalloc({size:#x})");
-
+// Blocks come from the heap the Java runtime frees into as well, so a new one is cleared rather than
+// handed out with what a freed object left in it: a title reads fields of a record it never set
+// (테트리스2006's drawing surface took its origin from a freed string and clipped every draw away).
+fn alloc_cleared(context: &mut dyn WIPICContext, size: WIPICWord) -> Result<WIPICIndirectPtr> {
     if size == 0 {
         return Ok(WIPICIndirectPtr(0));
     }
@@ -225,6 +216,18 @@ pub async fn calloc(context: &mut dyn WIPICContext, size: WIPICWord) -> Result<W
     context.write_bytes(context.data_ptr(memory)?, &zero)?;
 
     Ok(memory)
+}
+
+pub async fn alloc(context: &mut dyn WIPICContext, size: WIPICWord) -> Result<WIPICIndirectPtr> {
+    tracing::debug!("MC_knlAlloc({size:#x})");
+
+    alloc_cleared(context, size)
+}
+
+pub async fn calloc(context: &mut dyn WIPICContext, size: WIPICWord) -> Result<WIPICIndirectPtr> {
+    tracing::debug!("MC_knlCalloc({size:#x})");
+
+    alloc_cleared(context, size)
 }
 
 pub async fn free(context: &mut dyn WIPICContext, memory: WIPICIndirectPtr) -> Result<WIPICIndirectPtr> {
@@ -543,6 +546,21 @@ mod test {
         assert_eq!(alloc(&mut context, 0).await.unwrap().0, 0);
         assert_eq!(calloc(&mut context, 0).await.unwrap().0, 0);
         assert_eq!(free(&mut context, wipi_types::wipic::WIPICIndirectPtr(0)).await.unwrap().0, 0);
+
+        Ok(())
+    }
+
+    #[futures_test::test]
+    async fn test_alloc_clears_what_the_heap_held() -> Result<()> {
+        let mut context = TestContext::new();
+
+        let next = context.alloc(0)?.0;
+        context.write_bytes(next, &[0xff; 16])?;
+
+        let memory = alloc(&mut context, 16).await?;
+        let mut data = [0xff; 16];
+        context.read_bytes(context.data_ptr(memory)?, &mut data)?;
+        assert_eq!(data, [0; 16]);
 
         Ok(())
     }

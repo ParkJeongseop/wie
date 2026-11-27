@@ -1800,6 +1800,14 @@ Aggregating crashes during the 30s input scenario:
   `Enumeration.hasMoreElements` on what `Vector.elements` returned, in `paint`). Such a method now
   invokes the method of that name on the class of what it is called on; without a receiver, or where
   that class has none either, it throws as before.
+- `MC_knlAlloc` answers a cleared block (2026-11-27), as `MC_knlCalloc` did. The C heap here is the
+  one the Java runtime frees into as well, so a new block could hold what a freed object left. 테트리스2006
+  (KTF) allocates the record of its drawing surface (0x54 bytes), sets most of it and reads the
+  translation and the destination offset it never set: they were the characters of a freed string
+  ("jar:file…"), its clip came out empty, every draw of its own blitter left at the clip test and the
+  screen stayed black from the logo on. It draws now. Its archive carries a 176x220 and a 240x176
+  layout and picks the second on any taller display, so at 240x320 its menus are right and its board
+  is not: a title for the size it declares.
 
 Keep this document updated in the same change set as the implementation work
 it describes.
