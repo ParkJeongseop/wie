@@ -53,6 +53,8 @@ impl JvmSupport {
 
         let properties = [
             ("file.encoding", "EUC-KR"),
+            // the handsets kept Korean time, and titles look their zone up by this name
+            ("user.timezone", "KST"),
             ("java.class.path", &class_path),
             //("rustjava.disable_explicit_gc", "true"),
         ]

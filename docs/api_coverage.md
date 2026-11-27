@@ -311,6 +311,19 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **The default time zone is Korea's** (2026-11-28): `TimeZone` knew only GMT
+  and UTC, answered GMT for any other ID, and defaulted to GMT. 두뇌게임q (KTF)
+  looks its zone up by ID, did not find one it knows, and passed `null` to
+  `Calendar.getInstance` — a NullPointerException at the end of its
+  registration, on "입력한 정보가 맞아? 1.응". RustJava now knows `JST` and `KST`
+  (nine hours east) and takes the default zone from the `user.timezone`
+  property, which the JVM is created with as `KST`: the handsets kept Korean
+  time. The title goes on to its first training game. Calendar fields are
+  therefore nine hours ahead of what they were for every Java title. A/B over
+  the libraries, launched twice: KTF 321 no title worse (seventeen change
+  their distinct-frame count by one or two), LGT 79, SK-VM 90 and LGT ez-java
+  105 unchanged in status and depth; five LGT titles draw a different random
+  pick on the same screens (놈3's blocks, 학교가는길's character).
 - **A shown lwc shell draws and drives its components** (2026-11-28): the card
   of a shell only called the shell's own `paint`, so a shell that leaves the
   drawing to the SDK showed a black screen, and no component ever received a

@@ -148,8 +148,8 @@ wie-core-arm-native = { workspace = true, optional = true }
 # unmerged delta (handset runtime extensions, deterministic GC order, time
 # slices), applied as a patch.
 [patch.crates-io]
-jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "62171ff" }
-jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "62171ff" }
-jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "62171ff" }
-jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "62171ff" }
-rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "62171ff" }
+jvm = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "380de5e" }
+jvm-bytecode = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "380de5e" }
+jvm-class-proto = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "380de5e" }
+jvm-types = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "380de5e" }
+rustjava-runtime = { git = "https://github.com/ParkJeongseop/RustJava.git", rev = "380de5e" }

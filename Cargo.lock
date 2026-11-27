@@ -984,7 +984,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 [[package]]
 name = "classfile"
 version = "0.4.1"
-source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=62171ff#62171ff504f0bb3b0f1ea2a3bcb8b9c08ba7054c"
+source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=380de5e#380de5efe3bd95f7dc33878155f016177f1a15cf"
 dependencies = [
  "jvm-types",
  "nom",
@@ -3256,7 +3256,7 @@ dependencies = [
 [[package]]
 name = "jvm"
 version = "0.4.1"
-source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=62171ff#62171ff504f0bb3b0f1ea2a3bcb8b9c08ba7054c"
+source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=380de5e#380de5efe3bd95f7dc33878155f016177f1a15cf"
 dependencies = [
  "anyhow",
  "async-recursion",
@@ -3275,7 +3275,7 @@ dependencies = [
 [[package]]
 name = "jvm-bytecode"
 version = "0.4.1"
-source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=62171ff#62171ff504f0bb3b0f1ea2a3bcb8b9c08ba7054c"
+source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=380de5e#380de5efe3bd95f7dc33878155f016177f1a15cf"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -3292,7 +3292,7 @@ dependencies = [
 [[package]]
 name = "jvm-class-proto"
 version = "0.4.1"
-source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=62171ff#62171ff504f0bb3b0f1ea2a3bcb8b9c08ba7054c"
+source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=380de5e#380de5efe3bd95f7dc33878155f016177f1a15cf"
 dependencies = [
  "async-trait",
  "dyn-clone",
@@ -3303,7 +3303,7 @@ dependencies = [
 [[package]]
 name = "jvm-types"
 version = "0.4.1"
-source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=62171ff#62171ff504f0bb3b0f1ea2a3bcb8b9c08ba7054c"
+source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=380de5e#380de5efe3bd95f7dc33878155f016177f1a15cf"
 dependencies = [
  "bitflags 2.13.2",
 ]
@@ -5125,7 +5125,7 @@ dependencies = [
 [[package]]
 name = "rustjava-runtime"
 version = "0.4.1"
-source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=62171ff#62171ff504f0bb3b0f1ea2a3bcb8b9c08ba7054c"
+source = "git+https://github.com/ParkJeongseop/RustJava.git?rev=380de5e#380de5efe3bd95f7dc33878155f016177f1a15cf"
 dependencies = [
  "async-trait",
  "bytemuck",
