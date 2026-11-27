@@ -1077,11 +1077,17 @@ mod test {
                         "net/wie/CardCanvas",
                         "pushCard",
                         "(Lorg/kwis/msp/lcdui/Card;)V",
-                        (mutating_card,),
+                        (mutating_card.clone(),),
                     )
                     .await?;
                 let _: () = jvm
-                    .invoke_virtual(&canvas, "net/wie/CardCanvas", "pushCard", "(Lorg/kwis/msp/lcdui/Card;)V", (drawing_card,))
+                    .invoke_virtual(
+                        &canvas,
+                        "net/wie/CardCanvas",
+                        "pushCard",
+                        "(Lorg/kwis/msp/lcdui/Card;)V",
+                        (drawing_card.clone(),),
+                    )
                     .await?;
 
                 let image: ClassInstanceRef<MidpImage> = jvm
@@ -1171,6 +1177,30 @@ mod test {
                 assert_eq!((second_dirty.r, second_dirty.g, second_dirty.b), (0, 0xff, 0));
                 assert_eq!((second_outside.r, second_outside.g, second_outside.b), (0, 0, 0));
                 assert_eq!((below_dirty.r, below_dirty.g, below_dirty.b), (0, 0, 0));
+
+                // a paint that an opaque card covers does not reach the cards under it
+                let under_count: i32 = jvm.get_field(&mutating_card, "test/TestCard", "paintCount", "I").await?;
+                let cover_count: i32 = jvm.get_field(&drawing_card, "test/TestCard", "paintCount", "I").await?;
+                let _: () = jvm
+                    .invoke_virtual(&graphics, "javax/microedition/lcdui/Graphics", "setClip", "(IIII)V", (5, 2, 2, 3))
+                    .await?;
+                let _: () = jvm
+                    .invoke_virtual(
+                        &canvas,
+                        "net/wie/CardCanvas",
+                        "paint",
+                        "(Ljavax/microedition/lcdui/Graphics;)V",
+                        (graphics.clone(),),
+                    )
+                    .await?;
+                assert_eq!(
+                    jvm.get_field::<i32>(&mutating_card, "test/TestCard", "paintCount", "I").await?,
+                    under_count
+                );
+                assert_eq!(
+                    jvm.get_field::<i32>(&drawing_card, "test/TestCard", "paintCount", "I").await?,
+                    cover_count + 1
+                );
 
                 Ok(())
             },

@@ -311,6 +311,17 @@ runs them on `wie_midp` + `wie_mmpp`.
 
 ## Platform Runtime Gaps (empirical)
 
+- **An opaque card hides the cards under it** (2026-11-28): `CardCanvas` asked
+  every card on the stack to paint, bottom to top. The specification draws the
+  cards under a card first only for a transparent one (`Card.bTrans`), so a card
+  left under an opaque successor is never asked to paint. 광란의수족관! (KTF)
+  frees its logo card's images and pushes the next card over it without popping
+  the logo card; the logo card's paint then threw a NullPointerException on
+  every repaint, and the error left the card on top unpainted — the title stayed
+  on its last logo. Painting now starts at the topmost card that is not
+  transparent and covers the clip. The title reaches its menu; KTF 321 and
+  LGT 79 show no status worsening (the extra per-card queries shift a few KTF
+  titles by a frame).
 - **The default time zone is Korea's** (2026-11-28): `TimeZone` knew only GMT
   and UTC, answered GMT for any other ID, and defaulted to GMT. 두뇌게임q (KTF)
   looks its zone up by ID, did not find one it knows, and passed `null` to

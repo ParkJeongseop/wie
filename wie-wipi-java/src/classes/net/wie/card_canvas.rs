@@ -1,4 +1,4 @@
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 
 use jvm::{ClassInstanceRef, Jvm, Result as JvmResult};
 use jvm_class_proto::{JavaFieldProto, JavaMethodProto};
@@ -180,13 +180,29 @@ impl CardCanvas {
         let cards = jvm.get_field(&this, "net/wie/CardCanvas", "cards", "Ljava/util/Vector;").await?;
         let length = jvm.invoke_virtual(&cards, "java/util/Vector", "size", "()I", ()).await?;
 
-        for i in 0..length {
-            let card = jvm
+        // A card that is not transparent hides what is under it: the cards under a card are drawn first only for a
+        // transparent one (`Card.bTrans`). So painting starts at the topmost opaque card that covers the clip, and a
+        // card left under its successor is not asked to paint (광란의수족관! frees its logo card's images and pushes
+        // the next card over it).
+        let (left, top) = (translate_x + clip_x, translate_y + clip_y);
+        let mut visible: Vec<(ClassInstanceRef<Card>, i32, i32)> = Vec::new();
+        for i in (0..length).rev() {
+            let card: ClassInstanceRef<Card> = jvm
                 .invoke_virtual(&cards, "java/util/Vector", "elementAt", "(I)Ljava/lang/Object;", (i,))
                 .await?;
             let x: i32 = jvm.invoke_virtual(&card, "org/kwis/msp/lcdui/Card", "getX", "()I", ()).await?;
             let y: i32 = jvm.invoke_virtual(&card, "org/kwis/msp/lcdui/Card", "getY", "()I", ()).await?;
+            let width: i32 = jvm.invoke_virtual(&card, "org/kwis/msp/lcdui/Card", "getWidth", "()I", ()).await?;
+            let height: i32 = jvm.invoke_virtual(&card, "org/kwis/msp/lcdui/Card", "getHeight", "()I", ()).await?;
+            let transparent: bool = jvm.get_field(&card, "org/kwis/msp/lcdui/Card", "transparent", "Z").await?;
+            visible.push((card, x, y));
 
+            if !transparent && x <= left && y <= top && x + width >= left + clip_width && y + height >= top + clip_height {
+                break;
+            }
+        }
+
+        for (card, x, y) in visible.into_iter().rev() {
             let _: () = jvm.invoke_virtual(&graphics, "org/kwis/msp/lcdui/Graphics", "reset", "()V", ()).await?;
             let _: () = jvm
                 .invoke_virtual(&graphics, "org/kwis/msp/lcdui/Graphics", "translate", "(II)V", (x, y))
