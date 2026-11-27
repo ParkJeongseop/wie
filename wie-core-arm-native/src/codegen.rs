@@ -6,7 +6,7 @@ use cranelift_codegen::{
     ir::{Block, InstBuilder, MemFlagsData, Type, Value, condcodes::IntCC, types},
     isa::TargetIsa,
 };
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
 
 use wie_core_arm_aot::{
     CompiledExit, RunFrame,
@@ -192,6 +192,9 @@ pub(crate) fn emit_region(ir: &RegionIr, context: &mut Context, builder_context:
     let fault = builder.create_block();
     builder.append_block_param(fault, types::I32);
     builder.append_block_param(fault, types::I32);
+    let spent = builder.create_block();
+    builder.append_block_param(spent, types::I32);
+    let budget = builder.declare_var(types::I32);
     let entries: BTreeMap<_, _> = ir
         .blocks
         .iter()
@@ -209,7 +212,12 @@ pub(crate) fn emit_region(ir: &RegionIr, context: &mut Context, builder_context:
         entries,
         dispatch,
         fault,
+        spent,
+        budget,
     };
+    // The time slice lives in a host register while the region runs; every exit writes it back.
+    let remaining = emitter.load_frame(offset_of!(RunFrame, budget));
+    emitter.builder.def_var(budget, remaining);
     let pc = emitter.load_frame(offset_of!(RunFrame, regs) + 15 * size_of::<u32>());
     let shift = if ir.entry.thumb { 1 } else { 2 };
     let index = emitter.builder.ins().ushr_imm_s(pc, shift);
@@ -234,6 +242,7 @@ pub(crate) fn emit_region(ir: &RegionIr, context: &mut Context, builder_context:
             emitter.builder.ins().jump(dispatch, &[]);
             continue;
         }
+        emitter.count();
         let fallthrough = emitter.pc.wrapping_add(u32::from(instruction.size));
         let skipped = if instruction.condition != Condition::Always {
             let condition = emitter.condition(&instruction.condition);
@@ -269,8 +278,14 @@ pub(crate) fn emit_region(ir: &RegionIr, context: &mut Context, builder_context:
             emitter.commit(next, fixed, fallthrough);
         }
     }
+    emitter.builder.switch_to_block(spent);
+    let pc = emitter.builder.block_params(spent)[0];
+    emitter.store_register(&Reg::PC, pc);
+    emitter.builder.ins().jump(dispatch, &[]);
     for (block, exit) in [(dispatch, CompiledExit::Dispatch), (fault, CompiledExit::GuestFault)] {
         emitter.builder.switch_to_block(block);
+        let remaining = emitter.builder.use_var(budget);
+        emitter.store_frame(offset_of!(RunFrame, budget), remaining);
         if exit == CompiledExit::GuestFault {
             let pc = emitter.builder.block_params(fault)[0];
             let address = emitter.builder.block_params(fault)[1];
@@ -296,6 +311,8 @@ struct Emitter<'a> {
     entries: BTreeMap<u32, Block>,
     dispatch: Block,
     fault: Block,
+    spent: Block,
+    budget: Variable,
 }
 
 impl Emitter<'_> {
@@ -336,6 +353,17 @@ impl Emitter<'_> {
         let next = self.builder.create_block();
         self.builder.ins().brif(condition, self.dispatch, &[], next, &[]);
         self.builder.switch_to_block(next);
+    }
+
+    /// Charges one instruction to the time slice, leaving at this instruction once the slice is used up.
+    fn count(&mut self) {
+        let remaining = self.builder.use_var(self.budget);
+        let pc = self.builder.ins().iconst(types::I32, i64::from(self.pc));
+        let next = self.builder.create_block();
+        self.builder.ins().brif(remaining, next, &[], self.spent, &[pc.into()]);
+        self.builder.switch_to_block(next);
+        let remaining = self.builder.ins().iadd_imm_s(remaining, -1);
+        self.builder.def_var(self.budget, remaining);
     }
 
     fn boundaries(&mut self, pc: Value) {

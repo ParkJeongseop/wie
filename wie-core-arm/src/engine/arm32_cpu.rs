@@ -1198,9 +1198,7 @@ mod tests {
                     if expected.budget_consumed > 0 {
                         assert!(self.executed.load(Ordering::Relaxed), "native code must execute at {pc:#x}");
                     }
-                    if PORTABLE.get() {
-                        assert_eq!(actual.budget_consumed, expected.budget_consumed, "instructions counted from {pc:#x}");
-                    }
+                    assert_eq!(actual.budget_consumed, expected.budget_consumed, "instructions counted from {pc:#x}");
                     match (&actual.stop_reason, expected.stop_reason) {
                         (EngineStopReason::End, EngineStopReason::End) | (EngineStopReason::Yield, EngineStopReason::Yield) => {}
                         (
@@ -1377,8 +1375,7 @@ mod tests {
         for opcode in [0xee07_0f35u32, 0xee07_0f15] {
             engines.native.mem_write(0x1000, &[1, 0x20]).unwrap();
             engines.reset(0x1001, 0x3f, &[]);
-            // Only the portable executor counts the instructions it runs.
-            assert_eq!(engines.native.run(0x8000, 2).unwrap().budget_consumed, if PORTABLE.get() { 2 } else { 0 });
+            assert_eq!(engines.native.run(0x8000, 2).unwrap().budget_consumed, 2);
             assert_eq!(engines.native.reg_read(ArmRegister::R0), 1);
 
             engines.native.mem_write(0x1000, &[2, 0x20]).unwrap();
@@ -1405,8 +1402,7 @@ mod tests {
                 thread::yield_now();
             }
             engines.reset(0x1001, 0x3f, &[]);
-            // Only the portable executor counts the instructions it runs.
-            assert_eq!(engines.native.run(0x8000, 2).unwrap().budget_consumed, if PORTABLE.get() { 2 } else { 0 });
+            assert_eq!(engines.native.run(0x8000, 2).unwrap().budget_consumed, 2);
             assert_eq!(engines.native.reg_read(ArmRegister::R0), 2);
 
             // Install the original bytes again before testing the next CP15 operation.
@@ -1543,7 +1539,7 @@ mod tests {
     }
 
     #[test]
-    fn native_loops_and_interior_entries_run_without_interpreter_budget() {
+    fn native_loops_and_interior_entries_stop_when_the_budget_runs_out() {
         // subs r0,#1; bne 0x1000; bx lr
         let bytes: Vec<_> = [0x3801u16, 0xd1fd, 0x4770].into_iter().flat_map(u16::to_le_bytes).collect();
         let mut engines = Engines::new(&bytes);
@@ -1557,18 +1553,11 @@ mod tests {
         assert!(matches!(engines.native.run(0x8000, 0).unwrap().stop_reason, EngineStopReason::Yield));
         assert_eq!(engines.native.reg_read(ArmRegister::PC), 0x1000);
         assert_eq!(engines.native.reg_read(ArmRegister::R0), 3);
-        if PORTABLE.get() {
-            let result = engines.native.run(0x8000, 4).unwrap();
-            assert!(matches!(result.stop_reason, EngineStopReason::Yield));
-            assert_eq!(result.budget_consumed, 4);
-            assert_eq!(engines.native.reg_read(ArmRegister::PC), 0x1000);
-            assert_eq!(engines.native.reg_read(ArmRegister::R0), 1);
-        } else {
-            let result = engines.native.run(0x8000, 1).unwrap();
-            assert!(matches!(result.stop_reason, EngineStopReason::End));
-            assert_eq!(result.budget_consumed, 0);
-            assert_eq!(engines.native.reg_read(ArmRegister::R0), 0);
-        }
+        let result = engines.native.run(0x8000, 4).unwrap();
+        assert!(matches!(result.stop_reason, EngineStopReason::Yield));
+        assert_eq!(result.budget_consumed, 4);
+        assert_eq!(engines.native.reg_read(ArmRegister::PC), 0x1000);
+        assert_eq!(engines.native.reg_read(ArmRegister::R0), 1);
 
         for suffix in [0xf802u16, 0xe802] {
             let mut bytes: Vec<_> = [0xf000, suffix, 0x3001, 0x4770].into_iter().flat_map(u16::to_le_bytes).collect();
@@ -1592,6 +1581,6 @@ mod tests {
         native_branch_exchange_pc_loads_and_interpreter_handoffs_match();
         native_code_changes_only_after_explicit_instruction_cache_invalidation();
         native_arithmetic_conditions_and_shifts_match_interpreter();
-        native_loops_and_interior_entries_run_without_interpreter_budget();
+        native_loops_and_interior_entries_stop_when_the_budget_runs_out();
     }
 }

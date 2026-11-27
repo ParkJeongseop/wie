@@ -190,7 +190,7 @@ impl CompiledExecutor for NativeExecutor {
                 _ => return Err(WieError::FatalError(format!("Native ARM AOT returned invalid exit {exit}"))),
             }
             let pc = frame.regs[15];
-            if pc < 0x1000 || pc == frame.end {
+            if pc < 0x1000 || pc == frame.end || frame.budget == 0 {
                 return Ok(CompiledExit::Dispatch);
             }
             let Some(next) = access.resolve(pc, frame.cpsr) else {
@@ -546,6 +546,7 @@ mod tests {
             };
             let mut frame = RunFrame {
                 cpsr: 0x1f,
+                budget: 1024,
                 ..RunFrame::default()
             };
             frame.regs[15] = 0x1000;
@@ -554,6 +555,7 @@ mod tests {
             assert!(executor.execute(handle, &mut frame, &mut access).unwrap() == CompiledExit::Dispatch);
             assert_eq!(frame.regs[15], 0x100c);
             assert_eq!(&frame.regs[..4], [0, 0x8000_0000, 0x8000_0000, 0]);
+            assert_eq!(frame.budget, 1021);
             assert_eq!(frame.cpsr, 0x8000_001f);
             executor.release(handle);
             assert!(executor.modules.lock().compiled.is_empty());
@@ -644,6 +646,7 @@ mod tests {
             let mut frame = RunFrame {
                 cpsr: 0x1f,
                 end: 0x1008,
+                budget: 1024,
                 ..RunFrame::default()
             };
             for pc in [0x1001, 0x1002, 0x1003] {
@@ -792,6 +795,7 @@ mod tests {
             let mut frame = RunFrame {
                 cpsr: 0x1f,
                 end: 0x3000,
+                budget: 1024,
                 ..RunFrame::default()
             };
             frame.regs[..6].copy_from_slice(&[41, 0x1008, 0x2001, 0, load_address, target]);
@@ -813,6 +817,7 @@ mod tests {
         executor.release(second.handle);
         let mut frame = RunFrame {
             cpsr: 0x1f,
+            budget: 1024,
             ..RunFrame::default()
         };
         frame.regs[..3].copy_from_slice(&[41, 0x1008, 0x2001]);

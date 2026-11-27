@@ -17,7 +17,7 @@ pub enum EngineStopReason {
 
 pub struct EngineRunResult {
     pub stop_reason: EngineStopReason,
-    /// Interpreted instructions; compiled execution does not consume this budget.
+    /// Instructions run; a compiled executor that does not count its instructions consumes none.
     pub budget_consumed: u32,
 }
 
