@@ -1815,6 +1815,16 @@ Aggregating crashes during the 30s input scenario:
   alloc fail" and returns, and it creates its placeholder clip with a size of 1, not 0. It plays
   on past the serve now. Of the 117 KTF and LGT C titles that create clips in a 40 second run it is the
   only one to ask for size 0.
+- `MC_grpDrawString` drew 10 pixels too high on both carriers since the 2026-11-04 upstream merge
+  (2026-11-27). Upstream moved its baseline correction into the shared `draw_text` primitive
+  (`y - FONT_SIZE`) while this tree already converts in the callers (KTF baseline to cell top, LGT cell
+  top as given) and its canvas starts the ink at `y`, so the two stacked. A title that clips a line to
+  its own height lost the text whole: 에픽크로니클PE (KTF) clips each menu label to its 12 pixel
+  button and each dialogue line to its row, and showed empty buttons and empty dialogue boxes. The
+  evidence above (2026-09-28) reads true again: 테일즈위버 이스핀편's "OK" is back inside its button,
+  바이오크로니클's dialog title below the header border, 메이플스토리 도적편 (LGT) clear of its icon.
+  The shared primitive takes the cell top and nothing else. The baseline test now also requires the
+  rows above the cell to stay empty, which the stacked shift fails.
 
 Keep this document updated in the same change set as the implementation work
 it describes.

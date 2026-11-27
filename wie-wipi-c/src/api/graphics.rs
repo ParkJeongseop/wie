@@ -884,7 +884,11 @@ mod tests {
 
         let bottom = 16 + get_font_descent(&mut context, 0).await?;
         let image = framebuffer.image(&mut context)?;
-        assert!((0..16).any(|y| (0..32).any(|x| image.get_pixel(x, y).r != 0)));
+        // The glyph's cell ends on the baseline row and starts a font height above it; a title that
+        // clips a line of text to its own height shows none of it otherwise.
+        let top = 16 + 1 - get_font_height(&mut context, 0).await?;
+        assert!((0..top).all(|y| (0..32).all(|x| image.get_pixel(x, y).r == 0)));
+        assert!((top..=16).any(|y| (0..32).any(|x| image.get_pixel(x, y).r != 0)));
         assert!((bottom..32).all(|y| (0..32).all(|x| image.get_pixel(x, y).r == 0)));
         Ok(())
     }
