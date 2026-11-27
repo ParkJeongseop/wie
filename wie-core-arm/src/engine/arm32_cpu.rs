@@ -1,6 +1,6 @@
 use alloc::{boxed::Box, format, vec::Vec};
 
-use arm32_cpu::{Cpu, Memory, Mode, reg};
+use arm32_cpu::{Cpu, Exception, Memory, Mode, reg};
 use hashbrown::HashMap;
 
 use wie_core_arm_aot::{
@@ -11,7 +11,7 @@ use wie_util::{Result, WieError};
 
 use crate::{
     aot::Aot,
-    engine::{ArmEngine, ArmRegister, EngineRunResult, EngineStopReason, MemoryPermission},
+    engine::{ArmEngine, ArmRegister, EngineRunResult, EngineStopReason, MemoryPermission, SVC_STUB_ENTRY, SVC_STUB_RETURN},
 };
 
 pub struct Arm32CpuEngine {
@@ -62,6 +62,50 @@ impl Arm32CpuEngine {
         let category = instruction as u32 & 0xff;
 
         Ok(EngineStopReason::Svc { category, lr, spsr })
+    }
+
+    /// Runs the part of an SVC stub at `pc` at once, as stepping through it would, and gives how many
+    /// instructions that was: the entry up to and including its `svc`, or the return after it. Gives 0 for
+    /// anything else, for what `budget` does not cover and for what would stop or fault on the way.
+    fn run_svc_stub(&mut self, pc: u32, cpsr: u32, end: u32, budget: u32) -> u32 {
+        if cpsr & 0x20 == 0 {
+            return 0;
+        }
+        let Some(page) = self.mem.pages[pc as usize / PAGE_SIZE].bytes.as_ref() else {
+            return 0;
+        };
+        let code = &page[(pc & PAGE_MASK) as usize..];
+        let mode = self.cpu.mode();
+        if code.starts_with(&SVC_STUB_RETURN) {
+            let lr = self.cpu.reg_get(mode, reg::LR);
+            let thumb = lr & 1;
+            self.cpu.reg_set(mode, reg::PC, lr & if thumb == 0 { !3 } else { !1 });
+            self.cpu.reg_set(mode, reg::CPSR, (cpsr & !0x20) | (thumb << 5));
+            return 1;
+        }
+        let Some(stub) = code.first_chunk::<16>() else {
+            return 0;
+        };
+        let entry = SVC_STUB_ENTRY.len();
+        // The id is the word the entry's pc-relative load reads only when the stub is word aligned.
+        if budget < 5
+            || pc & 3 != 0
+            || stub[..entry] != SVC_STUB_ENTRY
+            || stub[entry + 1] != 0xdf
+            || (2..=entry as u32).contains(&end.wrapping_sub(pc))
+        {
+            return 0;
+        }
+        let id = u32::from_le_bytes([stub[12], stub[13], stub[14], stub[15]]);
+        let saved = self.cpu.reg_get(mode, reg::SP).wrapping_sub(4);
+        // The entry leaves r4 as it was, but also in the word under the stack.
+        if saved & 3 != 0 || self.mem.write_range(saved, &self.cpu.reg_get(mode, 4).to_le_bytes()).is_err() {
+            return 0;
+        }
+        self.cpu.reg_set(mode, 12, id);
+        self.cpu.reg_set(mode, reg::PC, pc + entry as u32 + 2);
+        self.cpu.exception(Exception::Software);
+        5
     }
 
     fn instruction_cache_invalidation(&self, pc: u32, cpsr: u32) -> Option<InstructionCacheInvalidation> {
@@ -118,17 +162,15 @@ impl ArmEngine for Arm32CpuEngine {
             }
 
             let cpsr = self.cpu.reg_get(Mode::User, reg::CPSR);
-            if lookup_entry
-                && !interpret_one
-                && cpsr & 0x0100_0000 == 0
-                && let Some(aot) = &mut self.aot
-            {
+            if lookup_entry && !interpret_one && cpsr & 0x0100_0000 == 0 {
                 let key = RegionKey {
                     pc,
                     thumb: cpsr & 0x20 != 0,
                     cpu_mode: (cpsr & 0x1f) as u8,
                 };
-                if let Some(handle) = aot.entries.get(&key).copied() {
+                if let Some(aot) = &mut self.aot
+                    && let Some(handle) = aot.entries.get(&key).copied()
+                {
                     let mut frame = RunFrame {
                         regs: core::array::from_fn(|index| self.cpu.reg_get(Mode::User, index as u8)),
                         cpsr,
@@ -163,7 +205,14 @@ impl ArmEngine for Arm32CpuEngine {
                     lookup_entry = true;
                     continue;
                 }
-                aot.recompile(&key, &self.mem);
+                let stub_instructions = self.run_svc_stub(pc, cpsr, end, count - budget_consumed);
+                if stub_instructions != 0 {
+                    budget_consumed += stub_instructions;
+                    continue;
+                }
+                if let Some(aot) = &mut self.aot {
+                    aot.recompile(&key, &self.mem);
+                }
             }
             let recheck_after_step = interpret_one;
             interpret_one = false;

@@ -10,7 +10,10 @@ use wie_util::{ByteRead, ByteWrite, Result, WieError, read_generic, write_generi
 use crate::{
     Allocator, EmulatedFunction, ResultWriter, ThreadId,
     context::ArmCoreContext,
-    engine::{Arm32CpuEngine, ArmEngine, ArmRegister, DebugInner, DebuggedArm32CpuEngine, EngineStopReason, MemoryPermission},
+    engine::{
+        Arm32CpuEngine, ArmEngine, ArmRegister, DebugInner, DebuggedArm32CpuEngine, EngineStopReason, MemoryPermission, SVC_STUB_ENTRY,
+        SVC_STUB_RETURN,
+    },
     function::{RegisteredFunction, RegisteredFunctionHolder},
     thread::ThreadState,
     thread_wrapper::ArmCoreThreadWrapper,
@@ -493,23 +496,12 @@ impl ArmCore {
         }
         inner.next_stub_address += SVC_STUB_SIZE;
 
-        let stub = [
-            0x10,
-            0xb4, // push {r4}
-            0x02,
-            0x4c, // ldr r4, [pc, #8]
-            0xa4,
-            0x46, // mov r12, r4
-            0x10,
-            0xbc, // pop {r4}
-            category as u8,
-            0xdf, // svc #category
-            0x70,
-            0x47, // bx lr
-        ]
-        .into_iter()
-        .chain(id.to_le_bytes())
-        .collect::<Vec<_>>();
+        let stub = SVC_STUB_ENTRY
+            .into_iter()
+            .chain([category as u8, 0xdf]) // svc #category
+            .chain(SVC_STUB_RETURN)
+            .chain(id.to_le_bytes())
+            .collect::<Vec<_>>();
         inner.engine.mem_write(address, &stub)?;
 
         tracing::trace!("Register SVC stub at {address:#x}, category={category}, id={id}");
@@ -1564,23 +1556,45 @@ mod tests {
         assert_eq!(core.shared_svc_stub(1, 7u32).unwrap(), shared);
         assert_eq!(core.make_svc_stub(1, 7u32).unwrap(), FUNCTIONS_BASE + 3 * SVC_STUB_SIZE + 1);
 
-        let result = {
+        // A stub does the same whether its instructions are stepped through or run at once.
+        for budget in [1, 10] {
             let mut inner = core.inner.lock();
+            inner.engine.mem_write(0x1ffc, &[0; 4]).unwrap();
             inner.engine.reg_write(ArmRegister::Cpsr, 0x3f);
             inner.engine.reg_write(ArmRegister::PC, second);
             inner.engine.reg_write(ArmRegister::LR, RUN_FUNCTION_LR);
-            inner.engine.run(RUN_FUNCTION_LR, 10).unwrap()
-        };
+            inner.engine.reg_write(ArmRegister::R4, 0x44);
+            let run = |inner: &mut ArmCoreInner| {
+                let mut budget_consumed = 0;
+                loop {
+                    let result = inner.engine.run(RUN_FUNCTION_LR, budget).unwrap();
+                    budget_consumed += result.budget_consumed;
+                    if !matches!(result.stop_reason, EngineStopReason::Yield) {
+                        return (budget_consumed, result.stop_reason);
+                    }
+                }
+            };
 
-        assert_eq!(result.budget_consumed, 5);
-        match result.stop_reason {
-            EngineStopReason::Svc { category, lr, spsr } => {
-                assert_eq!(category, 1);
-                assert_eq!(lr, FUNCTIONS_BASE + SVC_STUB_SIZE + 10);
-                assert_ne!(spsr & 0x20, 0);
-            }
-            EngineStopReason::End => panic!("expected SVC, got end"),
-            EngineStopReason::Yield => panic!("expected SVC, got yield"),
+            let (budget_consumed, stop_reason) = run(&mut inner);
+            assert_eq!(budget_consumed, 5);
+            let EngineStopReason::Svc { category, lr, spsr } = stop_reason else {
+                panic!("expected SVC");
+            };
+            assert_eq!((category, lr, spsr & 0x3f), (1, FUNCTIONS_BASE + SVC_STUB_SIZE + 10, 0x3f));
+            let mut saved = [0; 4];
+            inner.engine.mem_read(0x1ffc, 4, &mut saved).unwrap();
+            assert_eq!(saved, 0x44u32.to_le_bytes());
+            assert_eq!(
+                [ArmRegister::R4, ArmRegister::IP, ArmRegister::SP].map(|register| inner.engine.reg_read(register)),
+                [0x44, 1, 0x2000]
+            );
+
+            inner.engine.reg_write(ArmRegister::Cpsr, spsr);
+            inner.engine.reg_write(ArmRegister::PC, lr);
+            let (budget_consumed, stop_reason) = run(&mut inner);
+            assert_eq!(budget_consumed, 1);
+            assert!(matches!(stop_reason, EngineStopReason::End));
+            assert_eq!(inner.engine.reg_read(ArmRegister::Cpsr) & 0x3f, 0x1f);
         }
     }
 

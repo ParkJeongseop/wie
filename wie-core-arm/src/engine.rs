@@ -9,6 +9,12 @@ pub(crate) use arm32_cpu::EmulatedMemory;
 pub use debugged_arm32_cpu::DebuggedArm32CpuEngine;
 pub(crate) use debugged_arm32_cpu::{DebugBreakpointKind, DebugInner, DebugSignal, DebugStopReason};
 
+/// What an SVC stub starts with: push {r4}; ldr r4, [pc, #8]; mov r12, r4; pop {r4}. Its `svc`, its return
+/// and the id the load reads follow.
+pub const SVC_STUB_ENTRY: [u8; 8] = [0x10, 0xb4, 0x02, 0x4c, 0xa4, 0x46, 0x10, 0xbc];
+/// bx lr
+pub const SVC_STUB_RETURN: [u8; 2] = [0x70, 0x47];
+
 pub enum EngineStopReason {
     End,
     Yield,
