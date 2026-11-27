@@ -80,6 +80,12 @@ struct MdaClip {
 pub async fn clip_create(context: &mut dyn WIPICContext, ptr_type: WIPICWord, buf_size: WIPICWord, callback: WIPICWord) -> Result<WIPICWord> {
     tracing::debug!("MC_mdaClipCreate({ptr_type:#x}, {buf_size:#x}, {callback:#x})");
 
+    // A clip is its buffer, and there is none of no size. A title whose sound did not load asks for
+    // this and takes the null as "no clip"; given one, it goes on to read the data it does not have.
+    if buf_size == 0 {
+        return Ok(0);
+    }
+
     let clip = context.alloc_raw(size_of::<MdaClip>() as u32)?;
 
     Ok(clip)

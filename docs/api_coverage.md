@@ -1808,6 +1808,13 @@ Aggregating crashes during the 30s input scenario:
   screen stayed black from the logo on. It draws now. Its archive carries a 176x220 and a 240x176
   layout and picks the second on any taller display, so at 240x320 its menus are right and its board
   is not: a title for the size it declares.
+- `MC_mdaClipCreate` with a buffer size of 0 answers null (2026-11-27). 슈퍼리얼_테니스 (KTF) asks for
+  `s/serv_smash.mmf` where its archive has `s/serve_smash.mmf`, so that sound has no data and no size;
+  playing it creates a clip of size 0, and with a clip in hand the title read the data through the
+  null handle (a fault at address 0 on the first serve). Its own code takes a null clip as "Track
+  alloc fail" and returns, and it creates its placeholder clip with a size of 1, not 0. It plays
+  on past the serve now. Of the 117 KTF and LGT C titles that create clips in a 40 second run it is the
+  only one to ask for size 0.
 
 Keep this document updated in the same change set as the implementation work
 it describes.
