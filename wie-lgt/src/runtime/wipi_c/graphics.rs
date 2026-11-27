@@ -607,6 +607,7 @@ pub async fn put_pixel(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x:
         y.wrapping_add(graphics.translation_y),
         color,
         graphics.clip,
+        255,
     )
 }
 
@@ -634,6 +635,7 @@ pub async fn fill_rect(
         height as u32,
         color,
         graphics.clip,
+        255,
     )
 }
 
@@ -658,6 +660,7 @@ pub async fn draw_line(
         y2.wrapping_add(graphics.translation_y),
         color,
         graphics.clip,
+        255,
     )
 }
 
@@ -685,6 +688,7 @@ pub async fn draw_rect(
         height.saturating_sub(1) as u32,
         color,
         graphics.clip,
+        255,
     )
 }
 
@@ -717,6 +721,7 @@ pub async fn draw_arc(
         end_angle.wrapping_sub(start_angle),
         color,
         graphics.clip,
+        255,
     )
 }
 
@@ -749,6 +754,7 @@ pub async fn fill_arc(
         end_angle.wrapping_sub(start_angle),
         color,
         graphics.clip,
+        255,
     )
 }
 
@@ -783,6 +789,7 @@ pub async fn draw_image(
         source_x,
         source_y,
         graphics.clip,
+        255,
     )
 }
 
@@ -818,6 +825,7 @@ pub async fn copy_frame_buffer(
         source_x,
         source_y,
         graphics.clip,
+        255,
     )
 }
 
@@ -850,6 +858,7 @@ pub async fn copy_area(
         source_x.wrapping_add(graphics.translation_x),
         source_y.wrapping_add(graphics.translation_y),
         graphics.clip,
+        255,
     )
 }
 
@@ -881,6 +890,7 @@ pub async fn draw_string(
         y.wrapping_add(graphics.translation_y),
         color,
         graphics.clip,
+        255,
     )
 }
 

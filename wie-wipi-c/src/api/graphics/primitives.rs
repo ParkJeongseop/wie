@@ -33,11 +33,14 @@ pub fn ends_inside_character(context: &dyn WIPICContext, address: u32, length: i
     Ok(end > bytes.len())
 }
 
-fn write_canvas<F>(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, operation: F) -> Result<()>
+/// Runs a draw on a canvas of the whole framebuffer at `alpha`: 255 replaces what the draw covers and anything lower
+/// blends it over what is there.
+fn write_canvas<F>(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, alpha: u8, operation: F) -> Result<()>
 where
     F: FnOnce(&mut dyn Canvas),
 {
     let mut canvas = framebuffer.canvas(context, 0..framebuffer.0.height)?;
+    canvas.set_alpha(alpha);
     operation(&mut **canvas);
     canvas.flush()
 }
@@ -45,7 +48,7 @@ where
 /// Runs a draw that stays within the `height` rows from `y` on a canvas of those rows alone, handing it `y` and `clip` as
 /// they are on that canvas. A title that builds its screen out of small images otherwise spends its time copying the
 /// whole framebuffer out of the guest and back for each of them (럭키당구).
-fn write_rows<F>(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, y: i32, height: u32, clip: Clip, operation: F) -> Result<()>
+fn write_rows<F>(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, y: i32, height: u32, clip: Clip, alpha: u8, operation: F) -> Result<()>
 where
     F: FnOnce(&mut dyn Canvas, i32, Clip),
 {
@@ -61,12 +64,15 @@ where
     clip.y -= rows.start as i32;
 
     let mut canvas = framebuffer.canvas(context, rows.clone())?;
+    canvas.set_alpha(alpha);
     operation(&mut **canvas, y - rows.start as i32, clip);
     canvas.flush()
 }
 
-pub fn put_pixel(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, x: i32, y: i32, color: Color, clip: Clip) -> Result<()> {
-    write_rows(context, framebuffer, y, 1, clip, |canvas, y, clip| canvas.put_pixel(x, y, color, clip))
+pub fn put_pixel(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, x: i32, y: i32, color: Color, clip: Clip, alpha: u8) -> Result<()> {
+    write_rows(context, framebuffer, y, 1, clip, alpha, |canvas, y, clip| {
+        canvas.put_pixel(x, y, color, clip)
+    })
 }
 
 pub fn fill_rect(
@@ -78,8 +84,9 @@ pub fn fill_rect(
     height: u32,
     color: Color,
     clip: Clip,
+    alpha: u8,
 ) -> Result<()> {
-    write_rows(context, framebuffer, y, height, clip, |canvas, y, clip| {
+    write_rows(context, framebuffer, y, height, clip, alpha, |canvas, y, clip| {
         canvas.fill_rect(x, y, width, height, color, clip)
     })
 }
@@ -93,8 +100,9 @@ pub fn draw_line(
     y2: i32,
     color: Color,
     clip: Clip,
+    alpha: u8,
 ) -> Result<()> {
-    write_canvas(context, framebuffer, |canvas| canvas.draw_line(x1, y1, x2, y2, color, clip))
+    write_canvas(context, framebuffer, alpha, |canvas| canvas.draw_line(x1, y1, x2, y2, color, clip))
 }
 
 pub fn draw_rect(
@@ -106,8 +114,9 @@ pub fn draw_rect(
     height: u32,
     color: Color,
     clip: Clip,
+    alpha: u8,
 ) -> Result<()> {
-    write_canvas(context, framebuffer, |canvas| canvas.draw_rect(x, y, width, height, color, clip))
+    write_canvas(context, framebuffer, alpha, |canvas| canvas.draw_rect(x, y, width, height, color, clip))
 }
 
 pub fn draw_arc(
@@ -121,8 +130,9 @@ pub fn draw_arc(
     arc_angle: i32,
     color: Color,
     clip: Clip,
+    alpha: u8,
 ) -> Result<()> {
-    write_canvas(context, framebuffer, |canvas| {
+    write_canvas(context, framebuffer, alpha, |canvas| {
         canvas.draw_arc(x, y, width, height, start_angle, arc_angle, color, clip)
     })
 }
@@ -138,8 +148,9 @@ pub fn fill_arc(
     arc_angle: i32,
     color: Color,
     clip: Clip,
+    alpha: u8,
 ) -> Result<()> {
-    write_canvas(context, framebuffer, |canvas| {
+    write_canvas(context, framebuffer, alpha, |canvas| {
         canvas.fill_arc(x, y, width, height, start_angle, arc_angle, color, clip)
     })
 }
@@ -155,8 +166,9 @@ pub fn draw_image(
     source_x: i32,
     source_y: i32,
     clip: Clip,
+    alpha: u8,
 ) -> Result<()> {
-    write_rows(context, framebuffer, y, height, clip, |canvas, y, clip| {
+    write_rows(context, framebuffer, y, height, clip, alpha, |canvas, y, clip| {
         canvas.draw(x, y, width, height, image, source_x, source_y, clip)
     })
 }
@@ -173,7 +185,7 @@ pub fn copy_area(
     clip: Clip,
 ) -> Result<()> {
     let image = framebuffer.image(context)?;
-    write_rows(context, framebuffer, y, height, clip, |canvas, y, clip| {
+    write_rows(context, framebuffer, y, height, clip, 255, |canvas, y, clip| {
         canvas.draw(x, y, width, height, &*image, source_x, source_y, clip)
     })
 }
@@ -189,18 +201,28 @@ pub fn copy_framebuffer(
     source_x: i32,
     source_y: i32,
     clip: Clip,
+    alpha: u8,
 ) -> Result<()> {
     let image = source.image(context)?;
-    write_rows(context, destination, y, height, clip, |canvas, y, clip| {
+    write_rows(context, destination, y, height, clip, alpha, |canvas, y, clip| {
         canvas.draw(x, y, width, height, &*image, source_x, source_y, clip)
     })
 }
 
 /// Draws `string` with its 12px cell top at `y` (ink starts at `y`, like the original
 /// full-cell bitmap fonts). Callers convert from their platform's convention first.
-pub fn draw_text(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, string: &str, x: i32, y: i32, color: Color, clip: Clip) -> Result<()> {
+pub fn draw_text(
+    context: &mut dyn WIPICContext,
+    framebuffer: &FrameBuffer,
+    string: &str,
+    x: i32,
+    y: i32,
+    color: Color,
+    clip: Clip,
+    alpha: u8,
+) -> Result<()> {
     let font = context.system().platform().font().clone();
-    write_canvas(context, framebuffer, |canvas| {
+    write_canvas(context, framebuffer, alpha, |canvas| {
         canvas.draw_text(
             &font,
             string,
@@ -299,7 +321,7 @@ pub fn set_rgb_pixels(
         context.read_bytes(address, &mut pixels[offset..offset + row_bytes])?;
     }
 
-    write_rows(context, framebuffer, y, height as u32, clip, |canvas, y, clip| {
+    write_rows(context, framebuffer, y, height as u32, clip, 255, |canvas, y, clip| {
         for row_index in 0..height {
             let row_offset = row_index as usize * row_bytes;
             let row = &pixels[row_offset..row_offset + row_bytes];
@@ -342,8 +364,8 @@ mod tests {
             b: 0,
         };
 
-        fill_rect(&mut context, &framebuffer, 1, 1, 2, 2, red, clip)?;
-        put_pixel(&mut context, &framebuffer, 0, 0, red, clip)?;
+        fill_rect(&mut context, &framebuffer, 1, 1, 2, 2, red, clip, 255)?;
+        put_pixel(&mut context, &framebuffer, 0, 0, red, clip, 255)?;
 
         let image = framebuffer.image(&mut context)?;
         assert_eq!(image.get_pixel(0, 0).r, 255);
@@ -373,6 +395,7 @@ mod tests {
                 width: 1,
                 height: 1,
             },
+            255,
         )?;
         let image = framebuffer.image(&mut context)?;
 

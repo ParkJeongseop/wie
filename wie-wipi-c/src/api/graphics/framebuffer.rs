@@ -72,7 +72,8 @@ impl FrameBuffer {
         }))
     }
 
-    fn data<T: Pod>(&self, context: &dyn WIPICContext, rows: Range<u32>) -> Result<Vec<T>> {
+    /// The pixels of the framebuffer's `rows`.
+    pub fn data<T: Pod>(&self, context: &dyn WIPICContext, rows: Range<u32>) -> Result<Vec<T>> {
         let (_, bpl) = buffer_size(self.0.width, self.0.height, self.0.bpp / 8)?;
         let mut buf = vec![T::zeroed(); (bpl * rows.len() as u32) as usize / size_of::<T>()];
         context.read_bytes(context.data_ptr(self.0.buf)? + bpl * rows.start, cast_slice_mut(&mut buf))?;
@@ -125,7 +126,8 @@ impl FrameBuffer {
         self.write_rows(context, 0, data)
     }
 
-    fn write_rows(&self, context: &mut dyn WIPICContext, top: u32, data: &[u8]) -> Result<()> {
+    /// Writes whole rows of pixels from the row `top` on.
+    pub fn write_rows(&self, context: &mut dyn WIPICContext, top: u32, data: &[u8]) -> Result<()> {
         context.write_bytes(context.data_ptr(self.0.buf)? + self.0.width * (self.0.bpp / 8) * top, data)?;
 
         // A write into the screen framebuffer is what the next MC_grpRepaint has to present.
@@ -145,6 +147,13 @@ impl FrameBuffer {
         match self.0.bpp {
             16 => Rgb565Pixel::to_color(pixel as u16),
             _ => Rgb8Pixel::to_color(pixel),
+        }
+    }
+
+    pub fn color_to_pixel(&self, color: Color) -> WIPICWord {
+        match self.0.bpp {
+            16 => WIPICWord::from(Rgb565Pixel::from_color(color)),
+            _ => Rgb8Pixel::from_color(color),
         }
     }
 }

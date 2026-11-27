@@ -7,6 +7,7 @@ pub use framebuffer::FrameBuffer;
 pub use grp_context::GraphicsContextLayout;
 pub use image::{Rgb565Image, decode_image_framebuffer};
 
+use alloc::{vec, vec::Vec};
 use core::mem::size_of;
 
 use wie_backend::{
@@ -28,6 +29,10 @@ use self::{
 };
 
 const FRAMEBUFFER_DEPTH: u32 = 16; // XXX hardcode to 16bpp as some game requires 16bpp framebuffer
+
+/// What `MC_grpSetContext` leaves as the context's pixel operation when it is given an alpha: the platform's own
+/// blend, which no title's function can be mistaken for.
+const ALPHA_PIXEL_OP: WIPICWord = 1;
 
 /// Intersects a draw's own rectangle with the graphics context's clip. The record keeps the clip as
 /// [left, top, right, bottom], the right and bottom edges outside it, in the destination's
@@ -66,6 +71,150 @@ fn from_context_origin(context: &dyn WIPICContext, pgc: WIPICWord, x: i32, y: i3
     let [origin_x, origin_y] = gctx.offset.map(|value| i32::from(value as i16));
 
     Ok((x.wrapping_add(origin_x), y.wrapping_add(origin_y)))
+}
+
+/// What a title's pixel operation has yet to decide: the rows a draw reaches as they were, and each pixel the draw
+/// writes, by where it is in them, with the value the draw has for it and how much of it the draw covers, out of 255.
+struct OperatedPixels {
+    function: WIPICWord,
+    param1: WIPICWord,
+    top: u32,
+    rows: Vec<u8>,
+    written: Vec<(usize, WIPICWord, u8)>,
+}
+
+fn pixel_value(bytes: &[u8]) -> WIPICWord {
+    bytes.iter().rev().fold(0, |value, byte| (value << 8) | WIPICWord::from(*byte))
+}
+
+/// Runs a draw the way the graphics context's pixel operation has it written; `reach` is as far as the draw can get.
+/// "The value this function returns is what every drawing function finally writes."
+///
+/// Giving a context an alpha "also sets its pixel operation and that operation's parameter", so the alpha (255
+/// replaces what is there, 0 leaves it) is in force for as long as that operation is the context's. A record that
+/// was only zeroed, or one whose title put the operation back to none after an alpha, draws as it is. The KTF draws
+/// ignored the alpha altogether: 겟앰프드's intro swept opaque white bars over the screen instead of a sheen,
+/// 폴라폴리2007's rule sheet hid the board it lies on, and the fades of 메이플스토리 and 크로노스윙 went black in
+/// one step.
+///
+/// A title's own operation is asked about every pixel the draw writes, with that pixel, the one it lands on and the
+/// context's parameter. 랩업만이살길 and 럭키당구 colour their bitmap fonts this way: the operation keeps what is
+/// there under the glyph's key colour and answers the text colour for the rest, and without it each glyph was a block
+/// of the key colour. 액션히어로3D blends its menu panel with one and 헬싱 passes every draw through one. The draw is
+/// painted over black and over white to find the pixels it writes, and the answers come from
+/// [`write_operated_pixels`]; a pixel that the edge of a glyph covers in part gets that share of its answer.
+fn draw_through_context<F>(
+    context: &mut dyn WIPICContext,
+    framebuffer: &FrameBuffer,
+    pgc: WIPICWord,
+    reach: Clip,
+    draw: F,
+) -> Result<Option<OperatedPixels>>
+where
+    F: Fn(&mut dyn WIPICContext, u8) -> Result<()>,
+{
+    if pgc == 0 {
+        draw(context, 255)?;
+
+        return Ok(None);
+    }
+    let gctx = read_graphics_context(context, pgc)?;
+    match gctx.pixel_op_func_ptr {
+        0 => draw(context, 255)?,
+        ALPHA_PIXEL_OP => draw(context, gctx.alpha.min(255) as u8)?,
+        function => {
+            let reach = reach.intersect(&Clip {
+                x: 0,
+                y: 0,
+                width: framebuffer.0.width,
+                height: framebuffer.0.height,
+            });
+            if reach.width == 0 || reach.height == 0 {
+                return Ok(None);
+            }
+            let lines = reach.y as u32..reach.y as u32 + reach.height;
+            let rows: Vec<u8> = framebuffer.data(context, lines.clone())?;
+            let mut painted = Vec::new();
+            for background in [0x00, 0xff] {
+                framebuffer.write_rows(context, lines.start, &vec![background; rows.len()])?;
+                draw(context, 255)?;
+                painted.push(framebuffer.data::<u8>(context, lines.clone())?);
+            }
+            framebuffer.write_rows(context, lines.start, &rows)?;
+
+            let size = (framebuffer.0.bpp / 8) as usize;
+            let stride = framebuffer.0.width as usize * size;
+            let written = (0..reach.height as usize)
+                .flat_map(|row| {
+                    let start = row * stride + reach.x as usize * size;
+
+                    (start..start + reach.width as usize * size).step_by(size)
+                })
+                .filter_map(|offset| {
+                    let over_black = pixel_value(&painted[0][offset..offset + size]);
+                    let over_white = pixel_value(&painted[1][offset..offset + size]);
+                    if over_black == over_white {
+                        return Some((offset, over_black, 255));
+                    }
+                    // What shows of the white is the share of the pixel the draw left alone; the rest is the draw's,
+                    // and over black it came out as that share of its colour.
+                    let (black, white) = (framebuffer.pixel_to_color(over_black), framebuffer.pixel_to_color(over_white));
+                    let coverage = 255 - white.g.saturating_sub(black.g);
+                    let whole = |channel: u8| (u32::from(channel) * 255 / u32::from(coverage)).min(255) as u8;
+
+                    (coverage != 0).then(|| {
+                        let source = Color {
+                            a: 255,
+                            r: whole(black.r),
+                            g: whole(black.g),
+                            b: whole(black.b),
+                        };
+
+                        (offset, framebuffer.color_to_pixel(source), coverage)
+                    })
+                })
+                .collect();
+
+            return Ok(Some(OperatedPixels {
+                function,
+                param1: gctx.param1,
+                top: lines.start,
+                rows,
+                written,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+async fn write_operated_pixels(context: &mut dyn WIPICContext, framebuffer: &FrameBuffer, pixels: Option<OperatedPixels>) -> Result<()> {
+    let Some(mut pixels) = pixels else {
+        return Ok(());
+    };
+
+    let size = (framebuffer.0.bpp / 8) as usize;
+    for (offset, source, coverage) in pixels.written {
+        let bytes = &mut pixels.rows[offset..offset + size];
+        let existing = pixel_value(bytes);
+        let answer = context.call_function(pixels.function, &[source, existing, pixels.param1]).await?;
+        let pixel = if coverage == 255 {
+            answer
+        } else {
+            let (under, over) = (framebuffer.pixel_to_color(existing), framebuffer.pixel_to_color(answer));
+            let mix = |under: u8, over: u8| ((u32::from(under) * u32::from(255 - coverage) + u32::from(over) * u32::from(coverage)) / 255) as u8;
+
+            framebuffer.color_to_pixel(Color {
+                a: 255,
+                r: mix(under.r, over.r),
+                g: mix(under.g, over.g),
+                b: mix(under.b, over.b),
+            })
+        };
+        bytes.copy_from_slice(&pixel.to_le_bytes()[..size]);
+    }
+
+    framebuffer.write_rows(context, pixels.top, &pixels.rows)
 }
 
 pub async fn fill_polygon(
@@ -142,8 +291,8 @@ pub async fn set_context(context: &mut dyn WIPICContext, p_grp_ctx: WIPICWord, o
         }
         WIPICGraphicsContextIdx::AlphaIdx => {
             grp_ctx.alpha = pv as _;
-            // grp_ctx.pixel_op_func_ptr = todo!();
-            // grp_ctx.param1 = todo!();
+            grp_ctx.pixel_op_func_ptr = ALPHA_PIXEL_OP;
+            grp_ctx.param1 = pv;
         }
         WIPICGraphicsContextIdx::PixelopIdx => {
             grp_ctx.pixel_op_func_ptr = pv;
@@ -210,7 +359,10 @@ pub async fn put_pixel(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr,
         height: framebuffer.0.height,
     };
     let clip = with_context_clip(context, p_gctx, clip)?;
-    primitives::put_pixel(context, &framebuffer, x as _, y as _, color, clip)
+    let pixels = draw_through_context(context, &framebuffer, p_gctx, clip, |context, alpha| {
+        primitives::put_pixel(context, &framebuffer, x as _, y as _, color, clip, alpha)
+    })?;
+    write_operated_pixels(context, &framebuffer, pixels).await
 }
 
 pub async fn fill_rect(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr, x: i32, y: i32, w: i32, h: i32, p_gctx: WIPICWord) -> Result<()> {
@@ -232,7 +384,16 @@ pub async fn fill_rect(context: &mut dyn WIPICContext, dst_fb: WIPICIndirectPtr,
     let clip = with_context_clip(context, p_gctx, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    primitives::fill_rect(context, &framebuffer, x, y, w as u32, h as u32, color, clip)
+    let reach = clip.intersect(&Clip {
+        x,
+        y,
+        width: w as u32,
+        height: h as u32,
+    });
+    let pixels = draw_through_context(context, &framebuffer, p_gctx, reach, |context, alpha| {
+        primitives::fill_rect(context, &framebuffer, x, y, w as u32, h as u32, color, clip, alpha)
+    })?;
+    write_operated_pixels(context, &framebuffer, pixels).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -265,7 +426,22 @@ pub async fn draw_arc(
     let clip = with_context_clip(context, p_gctx, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    primitives::draw_arc(context, &framebuffer, x, y, w as u32, h as u32, start_angle, arc_angle, color, clip)
+    let pixels = draw_through_context(context, &framebuffer, p_gctx, clip, |context, alpha| {
+        primitives::draw_arc(
+            context,
+            &framebuffer,
+            x,
+            y,
+            w as u32,
+            h as u32,
+            start_angle,
+            arc_angle,
+            color,
+            clip,
+            alpha,
+        )
+    })?;
+    write_operated_pixels(context, &framebuffer, pixels).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -298,7 +474,22 @@ pub async fn fill_arc(
     let clip = with_context_clip(context, p_gctx, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    primitives::fill_arc(context, &framebuffer, x, y, w as u32, h as u32, start_angle, arc_angle, color, clip)
+    let pixels = draw_through_context(context, &framebuffer, p_gctx, clip, |context, alpha| {
+        primitives::fill_arc(
+            context,
+            &framebuffer,
+            x,
+            y,
+            w as u32,
+            h as u32,
+            start_angle,
+            arc_angle,
+            color,
+            clip,
+            alpha,
+        )
+    })?;
+    write_operated_pixels(context, &framebuffer, pixels).await
 }
 
 pub async fn create_image(
@@ -420,7 +611,16 @@ pub async fn draw_image(
     };
     let clip = with_context_clip(context, graphics_context, clip)?;
 
-    primitives::draw_image(context, &framebuffer, dx, dy, w as u32, h as u32, &*src_image, sx, sy, clip)
+    let reach = clip.intersect(&Clip {
+        x: dx,
+        y: dy,
+        width: w as u32,
+        height: h as u32,
+    });
+    let pixels = draw_through_context(context, &framebuffer, graphics_context, reach, |context, alpha| {
+        primitives::draw_image(context, &framebuffer, dx, dy, w as u32, h as u32, &*src_image, sx, sy, clip, alpha)
+    })?;
+    write_operated_pixels(context, &framebuffer, pixels).await
 }
 
 pub async fn flush_lcd(
@@ -597,7 +797,28 @@ pub async fn copy_frame_buffer(
     };
     let clip = with_context_clip(context, pgc, clip)?;
 
-    primitives::copy_framebuffer(context, &dst_framebuffer, dx, dy, w as u32, h as u32, &src_framebuffer, sx, sy, clip)
+    let reach = clip.intersect(&Clip {
+        x: dx,
+        y: dy,
+        width: w as u32,
+        height: h as u32,
+    });
+    let pixels = draw_through_context(context, &dst_framebuffer, pgc, reach, |context, alpha| {
+        primitives::copy_framebuffer(
+            context,
+            &dst_framebuffer,
+            dx,
+            dy,
+            w as u32,
+            h as u32,
+            &src_framebuffer,
+            sx,
+            sy,
+            clip,
+            alpha,
+        )
+    })?;
+    write_operated_pixels(context, &dst_framebuffer, pixels).await
 }
 
 pub async fn get_font(_: &mut dyn WIPICContext, face: i32, size: i32, style: i32) -> Result<i32> {
@@ -682,7 +903,15 @@ pub async fn draw_string(
     // y-11..y. LGT's platform takes `y` as the cell top instead (see wie-lgt's
     // draw_string), so the conversion lives here rather than in the primitive.
     let top = y + 1 - FONT_HEIGHT;
-    primitives::draw_text(context, &framebuffer, &string, x, top, color, clip)
+    let reach = clip.intersect(&Clip {
+        y: top,
+        height: FONT_HEIGHT as u32,
+        ..clip
+    });
+    let pixels = draw_through_context(context, &framebuffer, pgc, reach, |context, alpha| {
+        primitives::draw_text(context, &framebuffer, &string, x, top, color, clip, alpha)
+    })?;
+    write_operated_pixels(context, &framebuffer, pixels).await
 }
 
 /// `MC_grpRepaint` asks the handset to put the LCD's framebuffer on the LCD and to run the
@@ -814,7 +1043,10 @@ pub async fn draw_rect(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x:
     let clip = with_context_clip(context, pgc, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    primitives::draw_rect(context, &framebuffer, x, y, w as u32, h as u32, color, clip)
+    let pixels = draw_through_context(context, &framebuffer, pgc, clip, |context, alpha| {
+        primitives::draw_rect(context, &framebuffer, x, y, w as u32, h as u32, color, clip, alpha)
+    })?;
+    write_operated_pixels(context, &framebuffer, pixels).await
 }
 
 pub async fn draw_line(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x1: i32, y1: i32, x2: i32, y2: i32, pgc: WIPICWord) -> Result<()> {
@@ -834,7 +1066,10 @@ pub async fn draw_line(context: &mut dyn WIPICContext, dst: WIPICIndirectPtr, x1
     let clip = with_context_clip(context, pgc, clip)?;
 
     let color = framebuffer.pixel_to_color(gctx.fgpxl);
-    primitives::draw_line(context, &framebuffer, x1, y1, x2, y2, color, clip)
+    let pixels = draw_through_context(context, &framebuffer, pgc, clip, |context, alpha| {
+        primitives::draw_line(context, &framebuffer, x1, y1, x2, y2, color, clip, alpha)
+    })?;
+    write_operated_pixels(context, &framebuffer, pixels).await
 }
 
 pub async fn post_event(context: &mut dyn WIPICContext, id: i32, r#type: i32, param1: i32, param2: i32) -> Result<i32> {
@@ -898,7 +1133,7 @@ pub async fn get_framebuffer_bpp(context: &mut dyn WIPICContext, framebuffer: WI
 
 #[cfg(test)]
 mod tests {
-    use alloc::{boxed::Box, vec};
+    use alloc::{boxed::Box, sync::Arc, vec};
 
     use test_utils::TestPlatform;
 
@@ -931,6 +1166,20 @@ mod tests {
         assert!((0..top).all(|y| (0..32).all(|x| image.get_pixel(x, y).r == 0)));
         assert!((top..=16).any(|y| (0..32).any(|x| image.get_pixel(x, y).r != 0)));
         assert!((bottom..32).all(|y| (0..32).all(|x| image.get_pixel(x, y).r == 0)));
+
+        // A title's operation is asked once about each pixel a glyph touches, and one that answers with what it was
+        // given leaves the edges of the glyph as soft as they were.
+        async fn keep(_: &mut dyn WIPICContext, source: u32, _: u32, _: u32) -> Result<u32> {
+            Ok(source)
+        }
+        context.functions.push((0x1234, Arc::new(keep.into_body())));
+        let plain: Vec<u16> = framebuffer.data(&context, 0..32)?;
+        framebuffer.write(&mut context, &[0; 32 * 32 * 2])?;
+        set_context(&mut context, graphics, WIPICGraphicsContextIdx::PixelopIdx, 0x1234).await?;
+        draw_string(&mut context, destination, 2, 16, text, -1, graphics).await?;
+        assert!(plain.iter().any(|pixel| *pixel != 0 && *pixel != 0xffff));
+        assert_eq!(framebuffer.data::<u16>(&context, 0..32)?, plain);
+        assert_eq!(context.function_calls.len(), plain.iter().filter(|pixel| **pixel != 0).count());
 
         // Half of the character is as wide as all of it.
         assert_eq!(
@@ -1037,6 +1286,46 @@ mod tests {
                     assert_eq!([color.r, color.g, color.b], expected);
                 }
             }
+
+            // An alpha given to the context blends the draw over what is there, for as long as the pixel operation
+            // that came with it is the context's. The record this context started from has no alpha at all.
+            set_context(&mut context, graphics_context, WIPICGraphicsContextIdx::OffsetIdx, 0).await?;
+            for (op, value, green) in [
+                (WIPICGraphicsContextIdx::AlphaIdx, 128, 120..=136),
+                (WIPICGraphicsContextIdx::AlphaIdx, 0, 255..=255),
+                (WIPICGraphicsContextIdx::PixelopIdx, 0, 0..=0),
+            ] {
+                set_context(&mut context, graphics_context, op, value).await?;
+                framebuffer.write(&mut context, &[0xe0, 0x07].repeat(12))?;
+                draw_image(&mut context, destination, 1, 1, 3, 1, image, 0, 0, graphics_context).await?;
+
+                let color = framebuffer.image(&mut context)?.get_pixel(3, 1);
+                assert_eq!([color.r, color.b], [0, 0]);
+                assert!(green.contains(&color.g), "{}", color.g);
+            }
+
+            // A title's own operation answers for each pixel the draw writes, and for no other.
+            async fn recolor(_: &mut dyn WIPICContext, source: u32, original: u32, param1: u32) -> Result<u32> {
+                Ok(if source == 0 { original } else { param1 })
+            }
+            context.functions.push((0x1234, Arc::new(recolor.into_body())));
+            set_context(&mut context, graphics_context, WIPICGraphicsContextIdx::PixelopIdx, 0x1234).await?;
+            set_context(&mut context, graphics_context, WIPICGraphicsContextIdx::PixelParam1Idx, 0x001f).await?;
+            framebuffer.write(&mut context, &[0xe0, 0x07].repeat(12))?;
+            draw_image(&mut context, destination, 1, 1, 3, 1, image, 0, 0, graphics_context).await?;
+
+            let drawn = framebuffer.image(&mut context)?;
+            for index in 0..3 {
+                let color = drawn.get_pixel(index + 1, 1);
+                let expected = if transparent == Some(index) || index == 2 {
+                    [0, 255, 0]
+                } else {
+                    [0, 0, 255]
+                };
+                assert_eq!([color.r, color.g, color.b], expected);
+            }
+            assert_eq!(context.function_calls.len(), if transparent.is_some() { 2 } else { 3 });
+            assert!(context.function_calls.iter().all(|(_, arguments)| arguments[1..] == [0x07e0, 0x001f]));
         }
         Ok(())
     }

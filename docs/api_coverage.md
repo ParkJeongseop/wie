@@ -1859,6 +1859,36 @@ Aggregating crashes during the 30s input scenario:
   destination's coordinates, which is what that title's menus need (their clip is set once, before
   the origin moves) and what the LGT draws already did. Of the 78 KTF C titles only that one sets an
   origin other than zero: the other 77 are byte-identical.
+- A KTF draw is written the way the context's alpha and pixel operation have it (2026-11-27). The
+  record kept both and no KTF draw read either back. `MC_GRP_CONTEXT_ALPHA_IDX` runs from 0 (the
+  draw leaves what is there) to 255 (it replaces it), and setting it "also sets the pixel operation
+  and its parameter"; so `MC_grpSetContext` now marks the record's operation as the alpha one and
+  the draws blend by the alpha for as long as that is the context's operation. A record that was
+  only zeroed, or one whose title put the operation back to none, draws as it is. 겟앰프드's intro
+  swept opaque white bars over the screen instead of a sheen, 폴라폴리2007's rule sheet hid the board
+  under it, and the fades of 메이플스토리 and 크로노스윙 went black in one step; kbo프로야구2009,
+  다크사이드스토리m and 티어즈오브메탈 draw a panel or a highlight a little short of opaque, which
+  now shows as a tint. Six of the 78 KTF C titles changed in the frames the sweep keeps.
+  `MC_GRP_CONTEXT_PIXELOP_IDX` holds a function of the title's: "the value this function returns is
+  what every drawing function finally writes". It is called as `(pixel being written, pixel already
+  there, MC_GRP_CONTEXT_PIXELPARAM1_IDX)`, which the four titles that use one agree on — each
+  compares its first argument with its own key colour and answers the second for it. 랩업만이살길 and
+  럭키당구 colour their bitmap fonts that way (the glyphs were solid blocks of the key colour: green
+  boxes over every line of 랩업만이살길's text), 액션히어로3D blends its menu panel with the alpha it
+  packs into the parameter, and 헬싱 passes every draw through one that fades the screen. The last
+  two never call `MC_grpSetContext` for it; they store the pointer in the record themselves, so a
+  trace of the calls finds only the first two. A draw under such a context is painted twice over the
+  part of the destination it can reach, once on black and once on white, the rows are put back, and
+  the operation is asked about every pixel that came out the same both times. Text is antialiased
+  here, so a pixel at a glyph's edge comes out differently: its coverage is what the white did not
+  show through, the operation is asked about the whole colour, and the answer is mixed over what is
+  there by that coverage (asking only about fully covered pixels left 헬싱's subtitles as scattered
+  strokes). The calls run as guest code inside the draw, which is the cost: 헬싱 takes 1.8 CPU
+  seconds for a virtual minute instead of 0.7, 랩업만이살길 2.5 instead of 1.7, 럭키당구 3.9 instead
+  of 3.5 and 액션히어로3D 1.9 instead of 1.7; the other 74 KTF C titles keep their frames and their
+  sweep status. The transparent pixel,
+  XOR mode and style of the context are still not applied, and the LGT draws apply none of this (no
+  LGT title of the 79 has been seen to need it; their frames are byte-identical).
 
 Keep this document updated in the same change set as the implementation work
 it describes.
